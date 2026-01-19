@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "egr-aggregator-service"
+version = "1.0.0"
+description = "Микросервис для агрегации данных из API ЕГР Республики Беларусь"
+readme = "README.md"
+authors = [{name = "Tendex Team", email = "team@tendex.by"}]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+
+
+
+
+
+
