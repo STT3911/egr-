@@ -1,16 +1,4 @@
 #!/bin/bash
-set -e
-
-if [ ! -f ".env" ] && [ -f ".env.example" ]; then
-  cp .env.example .env
-  echo "Created .env from .env.example"
-fi
-
-if [ ! -f "frontend/.env" ] && [ -f "frontend/.env.example" ]; then
-  cp frontend/.env.example frontend/.env
-  echo "Created frontend/.env from frontend/.env.example"
-fi
-#!/bin/bash
 # Script to create necessary .env files for the project
 
 echo "🔧 Creating environment files..."

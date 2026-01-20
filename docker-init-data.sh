@@ -1,10 +1,6 @@
 #!/bin/bash
 set -e
 
-python auto-import-data.py
-#!/bin/bash
-set -e
-
 DB_HOST="${DB_HOST:-db}"
 DB_PORT="${DB_PORT:-5432}"
 DB_USER="${DB_USER:-postgres}"

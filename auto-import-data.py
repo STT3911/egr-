@@ -1,31 +1,3 @@
-from app.core.database import SessionLocal
-from app.database.models import Company, RawCompanyData
-from app.tasks.sync_tasks import load_companies_from_json
-
-
-def has_data() -> bool:
-    db = SessionLocal()
-    try:
-        if db.query(Company).first():
-            return True
-        if db.query(RawCompanyData).first():
-            return True
-        return False
-    finally:
-        db.close()
-
-
-def main() -> None:
-    if has_data():
-        print("Data already present. Skipping import.")
-        return
-
-    loaded = load_companies_from_json()
-    print(f"Loaded {loaded} companies from JSON.")
-
-
-if __name__ == "__main__":
-    main()
 #!/usr/bin/env python3
 """
 Автоматический импорт и парсинг данных из JSON файлов при запуске
