@@ -30,6 +30,11 @@ celery_app.conf.update(
             "schedule": crontab(day_of_week=6, hour=5, minute=0),
             "args": (),
         },
+        "process-pending-raw": {
+            "task": "app.tasks.sync_tasks.process_pending_raw",
+            "schedule": crontab(minute="*/1"),
+            "args": (2000,),
+        },
         "update-reference-tables": {
             "task": "app.tasks.sync_tasks.update_reference_tables",
             "schedule": crontab(hour=4, minute=0),  # Каждый день в 4:00

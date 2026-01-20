@@ -34,6 +34,10 @@ class CompanyMapper:
         # Check if response is from Legacy API
         elif "base_info" in raw_data:
             return self._map_legacy_api(unp, raw_data)
+
+        # Base-info only payload (from JSON dumps)
+        elif "ngrn" in raw_data or "NGRN" in raw_data:
+            return self._map_legacy_api(unp, {"base_info": raw_data})
             
         else:
             logger.warning(f"Unknown data format for UNP {unp}")
@@ -255,6 +259,33 @@ class CompanyMapper:
                     "full_name_by": None,
                     "valid_from": self._parse_legacy_date(name.get("dfrom")),
                     "valid_to": self._parse_legacy_date(name.get("dto")),
+                })
+
+        if not names_data:
+            fallback_full = (
+                base_info.get("vnaim")
+                or base_info.get("VNAIM")
+                or base_info.get("vfio")
+                or base_info.get("VFIO")
+            )
+            fallback_short = (
+                base_info.get("vnaimk")
+                or base_info.get("VNAIMK")
+                or base_info.get("vn")
+                or base_info.get("VN")
+            )
+            fallback_by = (
+                base_info.get("vnaimb")
+                or base_info.get("VNAIMBY")
+                or base_info.get("vnaimby")
+            )
+            if fallback_full or fallback_short or fallback_by:
+                names_data.append({
+                    "full_name_ru": fallback_full,
+                    "short_name_ru": fallback_short or fallback_full,
+                    "full_name_by": fallback_by,
+                    "valid_from": self._parse_legacy_date(base_info.get("dfrom")),
+                    "valid_to": self._parse_legacy_date(base_info.get("dto")),
                 })
         
         # Parse VED

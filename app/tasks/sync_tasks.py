@@ -17,6 +17,18 @@ from app.core.database import SessionLocal
 logger = get_logger("tasks")
 
 
+def _needs_enrichment(raw_data: dict) -> bool:
+    if not isinstance(raw_data, dict):
+        return False
+    if "base_info" not in raw_data and "common_info" not in raw_data:
+        # Flat base_info payloads from JSON dumps should be enriched too.
+        if "ngrn" in raw_data or "NGRN" in raw_data or "nsi00211" in raw_data:
+            return True
+        return False
+    # If any of these are missing/empty, fetch full history
+    return not raw_data.get("addresses") or not raw_data.get("names") or not raw_data.get("ved")
+
+
 @celery_app.task(bind=True, max_retries=3, time_limit=60, soft_time_limit=45)
 def sync_specific_company(self, unp: int):
     """Process specific company (time limit 60 sec)"""
@@ -63,6 +75,110 @@ def reprocess_failed_rows():
         
         logger.info(f"Reprocessed {count} companies")
     finally:
+        service.close()
+
+
+@celery_app.task
+def process_pending_raw(limit: int = 1000):
+    """Parse pending or stale raw rows into structured tables."""
+    service = AggregatorService()
+    client = EGRClient(settings.EGR_API_URL) if settings.EGR_API_URL else None
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        pending = (
+            service.db.query(RawCompanyData)
+            .filter(
+                (RawCompanyData.processed_at == None)
+                | (RawCompanyData.updated_at > RawCompanyData.processed_at)
+                | (~RawCompanyData.data.has_key("names"))
+                | (~RawCompanyData.data.has_key("addresses"))
+                | (~RawCompanyData.data.has_key("ved"))
+            )
+            .order_by(RawCompanyData.updated_at.asc())
+            .limit(limit)
+            .all()
+        )
+        processed = 0
+        for item in pending:
+            try:
+                if _needs_enrichment(item.data or {}):
+                    if not client:
+                        item.last_error = "enrich_failed:missing_api_url"
+                        service.db.commit()
+                        continue
+                    full_data = loop.run_until_complete(
+                        client.get_full_company_history(item.unp)
+                    )
+                    if not full_data:
+                        item.last_error = "enrich_failed:no_data"
+                        service.db.commit()
+                        continue
+                    logger.info(
+                        "Enriched UNP %s: names=%s addresses=%s ved=%s",
+                        item.unp,
+                        len(full_data.get("names") or []),
+                        len(full_data.get("addresses") or []),
+                        len(full_data.get("ved") or []),
+                    )
+                    item.data = full_data
+                    item.updated_at = datetime.now()
+                    item.processed_at = None
+                    item.last_error = None
+                    service.db.commit()
+                service.process_raw_data(item.unp)
+                processed += 1
+            except Exception as e:
+                logger.error(f"Error processing pending UNP {item.unp}: {e}")
+        logger.info(f"Processed {processed}/{len(pending)} pending raw rows")
+        return processed
+    finally:
+        loop.close()
+        service.close()
+
+
+@celery_app.task
+def enrich_missing_raw(limit: int = 200):
+    """Enrich raw rows that only contain base_info by fetching full history."""
+    service = AggregatorService()
+    if not settings.EGR_API_URL:
+        logger.warning("EGR_API_URL is not configured; enrichment skipped")
+        return 0
+    client = EGRClient(settings.EGR_API_URL)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    enriched = 0
+    try:
+        candidates = (
+            service.db.query(RawCompanyData)
+            .order_by(RawCompanyData.updated_at.asc())
+            .limit(limit * 5)
+            .all()
+        )
+        for item in candidates:
+            if enriched >= limit:
+                break
+            if not _needs_enrichment(item.data or {}):
+                continue
+            try:
+                full_data = loop.run_until_complete(client.get_full_company_history(item.unp))
+                if not full_data:
+                    item.last_error = "enrich_failed"
+                    service.db.commit()
+                    continue
+                item.data = full_data
+                item.updated_at = datetime.now()
+                item.processed_at = None
+                item.last_error = None
+                service.db.commit()
+                enriched += 1
+            except Exception as e:
+                item.last_error = f"enrich_failed:{e}"
+                service.db.commit()
+        logger.info(f"Enriched {enriched} raw rows")
+        return enriched
+    finally:
+        loop.close()
         service.close()
 
 

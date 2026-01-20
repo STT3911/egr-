@@ -1,6 +1,7 @@
 """CRUD operations for companies"""
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_
 from app.database.models import (
     Company,
@@ -34,7 +35,13 @@ class CompanyCRUD:
         if not company:
             company = Company(**company_data)
             self.db.add(company)
-            self.db.flush()
+            try:
+                self.db.flush()
+            except IntegrityError:
+                self.db.rollback()
+                company = self.get_by_unp(unp)
+                if not company:
+                    raise
         else:
             for key, value in company_data.items():
                 if key != "unp":

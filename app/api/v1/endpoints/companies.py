@@ -11,6 +11,7 @@ from app.services.egr_client import EGRClient, MobileEGRClient
 from app.core.logger import get_logger
 from app.core.database import get_db
 from app.database.models import RawCompanyData
+from app.tasks.sync_tasks import process_pending_raw
 
 logger = get_logger("api.companies")
 router = APIRouter()
@@ -237,6 +238,19 @@ async def parse_raw_data(
         "unp": raw_entry.unp,
         "status": "processed",
     }
+
+
+@router.post("/raw/parse-pending")
+async def parse_pending_raw(
+    limit: int = Query(1000, ge=1, le=10000),
+    async_run: bool = Query(False, description="Запустить в фоне через Celery"),
+):
+    """Запустить парсинг необработанных сырых данных."""
+    if async_run:
+        task = process_pending_raw.delay(limit)
+        return {"status": "queued", "task_id": task.id, "limit": limit}
+    processed = process_pending_raw(limit)
+    return {"status": "processed", "count": processed, "limit": limit}
 
 
 @router.get("/{identifier}/compare")

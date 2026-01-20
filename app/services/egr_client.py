@@ -172,12 +172,26 @@ class EGRClient(BaseClient):
             tasks.append(self.get_all_ip_fio(unp))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
+        addresses = results[0] if not isinstance(results[0], Exception) else []
+        ved = results[1] if not isinstance(results[1], Exception) else []
+        names = results[2] if not isinstance(results[2], Exception) else []
+
+        if not addresses or not ved or not names:
+            logger.warning(
+                "History fetch UNP %s: addresses=%s ved=%s names=%s juridical=%s",
+                unp,
+                len(addresses),
+                len(ved),
+                len(names),
+                is_juridical,
+            )
+
         return {
             "base_info": base_info,
-            "addresses": results[0] if not isinstance(results[0], Exception) else [],
-            "ved": results[1] if not isinstance(results[1], Exception) else [],
-            "names": results[2] if not isinstance(results[2], Exception) else []
+            "addresses": addresses,
+            "ved": ved,
+            "names": names
         }
     
     # =====================================================
