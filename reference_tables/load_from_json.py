@@ -15,7 +15,7 @@ from psycopg2.extras import execute_batch
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'port': os.getenv('DB_PORT', '5432'),
-    'dbname': os.getenv('DB_NAME', 'tendex_db'),
+    'dbname': os.getenv('DB_NAME', 'egr_db'),
     'user': os.getenv('DB_USER', 'postgres'),
     'password': os.getenv('DB_PASSWORD', ''),
 }

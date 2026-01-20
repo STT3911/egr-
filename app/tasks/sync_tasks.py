@@ -1,11 +1,15 @@
 """Synchronization tasks"""
 import asyncio
+import json
+import os
 from datetime import date, timedelta, datetime
 from sqlalchemy import or_
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.tasks.celery_app import celery_app
 from app.services.aggregator import AggregatorService
+from app.services.mapper_service import CompanyMapper
+from app.crud.company import CompanyCRUD
 from app.services.egr_client import EGRClient
 from app.database.models import SystemState, RawCompanyData
 from app.core.database import SessionLocal
@@ -328,6 +332,76 @@ def update_reference_tables():
     finally:
         if 'engine' in locals():
             engine.dispose()
+
+
+@celery_app.task
+def load_companies_from_json():
+    """Load raw companies from JSON files if present in data/egr_json_full."""
+    data_dir = os.path.join("data", "egr_json_full")
+    if not os.path.isdir(data_dir):
+        logger.warning(f"JSON data directory not found: {data_dir}")
+        return 0
+
+    db = SessionLocal()
+    mapper = CompanyMapper()
+    company_crud = CompanyCRUD(db)
+    loaded_count = 0
+
+    try:
+        json_files = [
+            os.path.join(data_dir, name)
+            for name in os.listdir(data_dir)
+            if name.lower().endswith(".json")
+        ]
+
+        for file_path in json_files:
+            try:
+                with open(file_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except Exception as e:
+                logger.error(f"Failed to read {file_path}: {e}")
+                continue
+
+            if not isinstance(payload, list):
+                logger.warning(f"Unexpected JSON format in {file_path}")
+                continue
+
+            for item in payload:
+                unp = item.get("ngrn") or item.get("vunp")
+                if not unp:
+                    continue
+
+                raw_data = {"base_info": item}
+
+                raw_entry = db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
+                if raw_entry:
+                    raw_entry.data = raw_data
+                    raw_entry.updated_at = datetime.now()
+                    raw_entry.processed_at = None
+                else:
+                    raw_entry = RawCompanyData(unp=unp, data=raw_data)
+                    db.add(raw_entry)
+
+                db.commit()
+
+                try:
+                    db_structure = mapper.map_to_db_structure(int(unp), raw_data)
+                    company_crud.save_full_company_data(db_structure)
+                    raw_entry.processed_at = datetime.now()
+                    raw_entry.last_error = None
+                    db.commit()
+                    loaded_count += 1
+                except Exception as e:
+                    db.rollback()
+                    raw_entry.last_error = str(e)
+                    db.commit()
+                    logger.error(f"Failed to process UNP {unp}: {e}")
+
+        logger.info(f"Loaded {loaded_count} companies from JSON files")
+        return loaded_count
+
+    finally:
+        db.close()
 
 
 @celery_app.task

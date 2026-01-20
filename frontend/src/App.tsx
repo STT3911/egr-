@@ -9,6 +9,10 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import Search from "./pages/Search";
 import Company from "./pages/Company";
+import References from "./pages/References";
+import ReferenceDetail from "./pages/ReferenceDetail";
+import CompanyRawData from "./pages/CompanyRawData";
+import CompanyCompare from "./pages/CompanyCompare";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +30,10 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/search" element={<Search />} />
           <Route path="/company/:unp" element={<Company />} />
+          <Route path="/company/:unp/raw" element={<CompanyRawData />} />
+          <Route path="/company/:unp/compare" element={<CompanyCompare />} />
+          <Route path="/references" element={<References />} />
+          <Route path="/references/:type" element={<ReferenceDetail />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

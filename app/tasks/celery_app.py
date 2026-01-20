@@ -35,10 +35,9 @@ celery_app.conf.update(
             "schedule": crontab(hour=4, minute=0),  # Каждый день в 4:00
             "args": (),
         },
-        # Задача для первоначальной загрузки данных (каждые 10 минут для тестирования)
-        "initial-data-load": {
-            "task": "app.tasks.sync_tasks.initial_data_load",
-            "schedule": crontab(minute="*/10"),  # Каждые 10 минут
+        "load-from-json": {
+            "task": "app.tasks.sync_tasks.load_companies_from_json",
+            "schedule": crontab(hour=2, minute=0),
             "args": (),
         },
     }

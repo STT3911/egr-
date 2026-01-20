@@ -89,8 +89,8 @@ docker-compose down
 docker-compose logs egr-api | grep -i migration
 
 # Подключиться к БД и проверить таблицы
-docker-compose exec db psql -U postgres -d tendex_db -c "\dt egr_*"
-docker-compose exec db psql -U postgres -d tendex_db -c "\dt ref_*"
+docker-compose exec db psql -U postgres -d egr_db -c "\dt egr_*"
+docker-compose exec db psql -U postgres -d egr_db -c "\dt ref_*"
 ```
 
 ### Пересоздание с чистой БД
@@ -346,7 +346,7 @@ workers/egr_aggregator/
 
 ## Интеграция с Tendex
 
-Сервис использует общую базу данных Tendex (`tendex_db`).
+Сервис использует общую базу данных (`egr_db`).
 
 Все таблицы имеют префикс `egr_` для избежания конфликтов.
 

@@ -34,10 +34,10 @@ reference_tables/
 
 ```bash
 # 1. Создать таблицы справочников
-docker-compose exec db psql -U postgres -d tendex_db -f /app/reference_tables/create_tables.sql
+docker-compose exec db psql -U postgres -d egr_db -f /app/reference_tables/create_tables.sql
 
 # 2. Наполнить справочники
-docker-compose exec db psql -U postgres -d tendex_db -f /app/reference_tables/populate_from_raw.sql
+docker-compose exec db psql -U postgres -d egr_db -f /app/reference_tables/populate_from_raw.sql
 ```
 
 ### Вариант 2: Из JSON файлов напрямую
@@ -46,7 +46,7 @@ docker-compose exec db psql -U postgres -d tendex_db -f /app/reference_tables/po
 
 ```bash
 # 1. Создать таблицы справочников
-docker-compose exec db psql -U postgres -d tendex_db -f /app/reference_tables/create_tables.sql
+docker-compose exec db psql -U postgres -d egr_db -f /app/reference_tables/create_tables.sql
 
 # 2. Загрузить из JSON файлов
 docker-compose exec egr_celery_worker python reference_tables/load_from_json.py \
@@ -58,7 +58,7 @@ docker-compose exec egr_celery_worker python reference_tables/load_from_json.py 
 
 ```bash
 # 1. Создать таблицы
-psql -h localhost -p 5433 -U postgres -d tendex_db -f workers/egr_aggregator/reference_tables/create_tables.sql
+psql -h localhost -p 5433 -U postgres -d egr_db -f workers/egr_aggregator/reference_tables/create_tables.sql
 
 # 2. Загрузить данные
 cd workers/egr_aggregator
@@ -210,7 +210,7 @@ GROUP BY et.id, et.name;
 
 ```bash
 # Из таблицы egr_raw_company_data
-docker-compose exec db psql -U postgres -d tendex_db \
+docker-compose exec db psql -U postgres -d egr_db \
     -f /app/reference_tables/populate_from_raw.sql
 
 # Из новых JSON файлов
@@ -271,7 +271,7 @@ CREATE INDEX IF NOT EXISTS idx_egr_companies_authority_id ON egr_companies(autho
 
 Создайте таблицы:
 ```bash
-docker-compose exec db psql -U postgres -d tendex_db \
+docker-compose exec db psql -U postgres -d egr_db \
     -f /app/reference_tables/create_tables.sql
 ```
 
@@ -304,7 +304,7 @@ def update_reference_tables():
     import subprocess
     
     result = subprocess.run([
-        'psql', '-U', 'postgres', '-d', 'tendex_db',
+        'psql', '-U', 'postgres', '-d', 'egr_db',
         '-f', '/app/reference_tables/populate_from_raw.sql'
     ], capture_output=True, text=True)
     
@@ -320,7 +320,7 @@ def update_references():
     """Обновить справочники"""
     script_path = '/app/reference_tables/populate_from_raw.sql'
     if os.path.exists(script_path):
-        subprocess.run(['psql', '-U', 'postgres', '-d', 'tendex_db', '-f', script_path])
+        subprocess.run(['psql', '-U', 'postgres', '-d', 'egr_db', '-f', script_path])
 ```
 
 ---
