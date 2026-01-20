@@ -4,7 +4,7 @@ export const API_BASE_URL =
   "";
 
 export type CompanyLookupResult = {
-  unp: string;
+  unp: number;
   name: string;
   status?: string;
   address?: string;
@@ -65,9 +65,15 @@ const request = async <T>(path: string) => {
   return response.json() as Promise<T>;
 };
 
+export type CompanyLookupResponse = {
+  query: string;
+  count: number;
+  results: CompanyLookupResult[];
+};
+
 export const lookupCompanies = async (query: string) => {
-  const qs = toQuery({ query });
-  return request<CompanyLookupResult[]>(`/api/v1/companies/search?${qs}`);
+  const qs = toQuery({ q: query });
+  return request<CompanyLookupResponse>(`/api/v1/companies/lookup?${qs}`);
 };
 
 export const getCompanyProfile = async (unp: string) => {

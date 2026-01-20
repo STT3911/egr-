@@ -1,34 +1,62 @@
-import { FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
+import { FormEvent, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { lookupCompanies } from "@/lib/api";
+import { CompanyLookupResult, lookupCompanies } from "@/lib/api";
 
 const Search = () => {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Array<{ unp: string; name: string }>>([]);
+  const navigate = useNavigate();
+  const [suggestions, setSuggestions] = useState<CompanyLookupResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSearch = async (event: FormEvent) => {
     event.preventDefault();
-    if (!query.trim()) {
-      setResults([]);
-      return;
-    }
+    const trimmed = query.trim();
+    if (!trimmed) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await lookupCompanies(query.trim());
-      setResults(data);
+      if (/^\d{9}$/.test(trimmed)) {
+        navigate(`/company/${trimmed}`);
+        return;
+      }
+      if (suggestions.length === 1) {
+        navigate(`/company/${suggestions[0].unp}`);
+        return;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка поиска");
-      setResults([]);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    setSuggesting(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await lookupCompanies(trimmed);
+        setSuggestions(data.results);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Ошибка подсказок");
+        setSuggestions([]);
+      } finally {
+        setSuggesting(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query]);
 
   return (
     <div className="min-h-screen bg-background px-4 py-10">
@@ -50,6 +78,17 @@ const Search = () => {
             {loading ? "Ищем..." : "Поиск"}
           </Button>
         </form>
+        {query.trim().length >= 2 && query.trim().match(/^\d+$/) && suggestions[0] && (
+          <p className="text-sm text-muted-foreground">
+            Найдена организация:{" "}
+            <Link
+              to={`/company/${suggestions[0].unp}`}
+              className="text-primary hover:underline"
+            >
+              {suggestions[0].name} (УНП {suggestions[0].unp})
+            </Link>
+          </p>
+        )}
 
         {error && (
           <Card className="border-destructive">
@@ -58,7 +97,7 @@ const Search = () => {
         )}
 
         <div className="space-y-4">
-          {results.map((item) => (
+          {suggestions.map((item) => (
             <Card key={item.unp}>
               <CardHeader>
                 <CardTitle className="text-lg">
@@ -72,7 +111,7 @@ const Search = () => {
               </CardContent>
             </Card>
           ))}
-          {!loading && results.length === 0 && query.trim() && (
+          {!suggesting && suggestions.length === 0 && query.trim().length >= 2 && (
             <p className="text-muted-foreground">Ничего не найдено.</p>
           )}
         </div>

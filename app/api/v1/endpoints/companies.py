@@ -4,11 +4,13 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.schemas.company import CompanyProfileResponse, CompanyLookupResponse
+from app.crud.company import CompanyCRUD
 from app.services.aggregator import AggregatorService
 from app.core.config import settings
 from app.services.egr_client import EGRClient, MobileEGRClient
 from app.core.logger import get_logger
 from app.core.database import get_db
+from app.database.models import RawCompanyData
 
 logger = get_logger("api.companies")
 router = APIRouter()
@@ -28,6 +30,7 @@ async def lookup_companies(
         raise HTTPException(status_code=400, detail="Параметр 'q' не может быть пустым")
 
     is_digit = query.isdigit()
+    is_full_unp = is_digit and len(query) == 9
     unp_prefix = f"{query}%" if is_digit else None
     name_term = f"%{query}%"
 
@@ -60,7 +63,11 @@ async def lookup_companies(
             OR (n.full_name_by ILIKE :name_term)
         )
         ORDER BY
-            CASE WHEN :is_digit THEN (c.unp::text ILIKE :unp_prefix)::int ELSE 0 END DESC,
+            CASE
+                WHEN :is_full_unp AND c.unp::text = :query THEN 2
+                WHEN :is_digit THEN (c.unp::text ILIKE :unp_prefix)::int
+                ELSE 0
+            END DESC,
             c.unp
         LIMIT :limit
     """)
@@ -70,6 +77,8 @@ async def lookup_companies(
         "name_term": name_term,
         "limit": limit,
         "is_digit": is_digit,
+        "is_full_unp": is_full_unp,
+        "query": query,
     }).mappings().all()
 
     results = []
@@ -94,12 +103,24 @@ async def lookup_companies(
 async def get_company_profile(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП или PAN (9 цифр)"),
     force_refresh: bool = Query(False, description="Принудительное обновление данных"),
-    use_mobile_api: Optional[bool] = Query(None, description="Использовать мобильный API")
+    use_mobile_api: Optional[bool] = Query(None, description="Использовать мобильный API"),
+    db_only: bool = Query(False, description="Вернуть данные только из БД"),
+    db: Session = Depends(get_db),
 ):
     """
     Получить профиль компании или ИП по УНП/PAN
     """
     try:
+        if db_only:
+            company_crud = CompanyCRUD(db)
+            cached = company_crud.get_full_dossier(int(identifier))
+            if not cached:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Компания с идентификатором {identifier} не найдена в БД"
+                )
+            return CompanyProfileResponse(**cached)
+
         aggregator = AggregatorService()
         
         # Check if mobile API is configured
@@ -170,6 +191,52 @@ async def get_raw_data(
     except Exception as e:
         logger.error(f"Error getting raw data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{identifier}/raw/status")
+async def get_raw_status(
+    identifier: str = Path(..., regex=r'^\d{9}$'),
+    db: Session = Depends(get_db),
+):
+    """Статус обработки сырых данных из БД"""
+    raw_entry = db.query(RawCompanyData).filter(RawCompanyData.unp == int(identifier)).first()
+    if not raw_entry:
+        raise HTTPException(status_code=404, detail="Сырые данные не найдены в БД")
+    return {
+        "unp": raw_entry.unp,
+        "processed_at": raw_entry.processed_at.isoformat() if raw_entry.processed_at else None,
+        "last_error": raw_entry.last_error,
+        "updated_at": raw_entry.updated_at.isoformat() if raw_entry.updated_at else None,
+    }
+
+
+@router.post("/{identifier}/parse")
+async def parse_raw_data(
+    identifier: str = Path(..., regex=r'^\d{9}$'),
+    force: bool = Query(False, description="Перепарсить даже если уже обработано"),
+    db: Session = Depends(get_db),
+):
+    """Запустить парсинг сырых данных из БД в структурные таблицы"""
+    raw_entry = db.query(RawCompanyData).filter(RawCompanyData.unp == int(identifier)).first()
+    if not raw_entry:
+        raise HTTPException(status_code=404, detail="Сырые данные не найдены в БД")
+    if raw_entry.processed_at and not force:
+        return {
+            "unp": raw_entry.unp,
+            "status": "already_processed",
+            "processed_at": raw_entry.processed_at.isoformat(),
+        }
+
+    aggregator = AggregatorService()
+    try:
+        aggregator.process_raw_data(int(identifier))
+    finally:
+        aggregator.close()
+
+    return {
+        "unp": raw_entry.unp,
+        "status": "processed",
+    }
 
 
 @router.get("/{identifier}/compare")
