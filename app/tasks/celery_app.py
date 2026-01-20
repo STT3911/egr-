@@ -1,6 +1,7 @@
 """Celery application configuration"""
 from celery import Celery
 from celery.schedules import crontab
+from datetime import timedelta
 from app.core.config import settings
 
 celery_app = Celery(
@@ -32,8 +33,8 @@ celery_app.conf.update(
         },
         "process-pending-raw": {
             "task": "app.tasks.sync_tasks.process_pending_raw",
-            "schedule": crontab(minute="*/1"),
-            "args": (2000,),
+            "schedule": timedelta(seconds=30),
+            "args": (5000,),
         },
         "update-reference-tables": {
             "task": "app.tasks.sync_tasks.update_reference_tables",

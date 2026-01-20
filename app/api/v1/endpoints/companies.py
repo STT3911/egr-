@@ -100,6 +100,18 @@ async def lookup_companies(
     }
 
 
+@router.get("/search", response_model=CompanyLookupResponse)
+async def search_companies(
+    query: str = Query(..., min_length=1, description="Поиск по УНП или названию"),
+    limit: int = Query(10, ge=1, le=50, description="Максимум результатов"),
+    db: Session = Depends(get_db),
+):
+    """
+    Совместимость: /search?query=... (алиас на /lookup?q=...)
+    """
+    return await lookup_companies(q=query, limit=limit, db=db)
+
+
 @router.get("/{identifier}", response_model=CompanyProfileResponse)
 async def get_company_profile(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП или PAN (9 цифр)"),

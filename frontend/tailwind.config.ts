@@ -4,6 +4,16 @@ import animate from "tailwindcss-animate";
 export default {
   darkMode: ["class"],
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  safelist: [
+    "gradient-hero",
+    "text-gradient",
+    "gradient-primary",
+    "glass",
+    "shadow-soft",
+    "shadow-glow",
+    "shadow-card",
+    "animate-float",
+  ],
   theme: {
     container: {
       center: true,
