@@ -35,15 +35,32 @@ async def lookup_companies(
     unp_prefix = f"{query}%" if is_digit else None
     name_term = f"%{query}%"
 
-    # Простой быстрый поиск только по УНП без JOIN
+    # Быстрый поиск с именами (если есть)
     sql = text("""
         SELECT
             c.unp,
-            NULL as full_name_ru,
-            NULL as short_name_ru,
-            NULL as full_name_by
+            n.full_name_ru,
+            n.short_name_ru,
+            n.full_name_by
         FROM egr_companies c
-        WHERE c.unp::text ILIKE :unp_prefix
+        LEFT JOIN LATERAL (
+            SELECT
+                n.full_name_ru,
+                n.short_name_ru,
+                n.full_name_by
+            FROM egr_company_names_history n
+            WHERE n.company_id = c.id
+            ORDER BY
+                (n.valid_to IS NULL) DESC,
+                n.valid_to DESC NULLS LAST
+            LIMIT 1
+        ) n ON true
+        WHERE (:is_digit AND c.unp::text ILIKE :unp_prefix)
+           OR (NOT :is_digit AND (
+               n.full_name_ru ILIKE :name_term
+               OR n.short_name_ru ILIKE :name_term
+               OR n.full_name_by ILIKE :name_term
+           ))
         ORDER BY
             CASE WHEN :is_full_unp AND c.unp::text = :query THEN 1 ELSE 0 END DESC,
             c.unp
