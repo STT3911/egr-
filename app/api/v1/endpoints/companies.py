@@ -35,40 +35,17 @@ async def lookup_companies(
     unp_prefix = f"{query}%" if is_digit else None
     name_term = f"%{query}%"
 
+    # Простой быстрый поиск только по УНП без JOIN
     sql = text("""
         SELECT
             c.unp,
-            n.full_name_ru,
-            n.short_name_ru,
-            n.full_name_by
+            NULL as full_name_ru,
+            NULL as short_name_ru,
+            NULL as full_name_by
         FROM egr_companies c
-        LEFT JOIN LATERAL (
-            SELECT
-                n.full_name_ru,
-                n.short_name_ru,
-                n.full_name_by,
-                n.valid_from,
-                n.valid_to
-            FROM egr_company_names_history n
-            WHERE n.company_id = c.id
-            ORDER BY
-                (n.valid_to IS NULL) DESC,
-                n.valid_to DESC NULLS LAST,
-                n.valid_from DESC NULLS LAST
-            LIMIT 1
-        ) n ON true
-        WHERE (
-            (:unp_prefix IS NOT NULL AND c.unp::text ILIKE :unp_prefix)
-            OR (n.full_name_ru ILIKE :name_term)
-            OR (n.short_name_ru ILIKE :name_term)
-            OR (n.full_name_by ILIKE :name_term)
-        )
+        WHERE c.unp::text ILIKE :unp_prefix
         ORDER BY
-            CASE
-                WHEN :is_full_unp AND c.unp::text = :query THEN 2
-                WHEN :is_digit THEN (c.unp::text ILIKE :unp_prefix)::int
-                ELSE 0
-            END DESC,
+            CASE WHEN :is_full_unp AND c.unp::text = :query THEN 1 ELSE 0 END DESC,
             c.unp
         LIMIT :limit
     """)
@@ -100,16 +77,6 @@ async def lookup_companies(
     }
 
 
-@router.get("/search", response_model=CompanyLookupResponse)
-async def search_companies(
-    query: str = Query(..., min_length=1, description="Поиск по УНП или названию"),
-    limit: int = Query(10, ge=1, le=50, description="Максимум результатов"),
-    db: Session = Depends(get_db),
-):
-    """
-    Совместимость: /search?query=... (алиас на /lookup?q=...)
-    """
-    return await lookup_companies(q=query, limit=limit, db=db)
 
 
 @router.get("/{identifier}", response_model=CompanyProfileResponse)

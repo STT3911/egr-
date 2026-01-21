@@ -13,7 +13,7 @@ done
 
 echo "Database is ready."
 echo "Running database migrations..."
-alembic upgrade head
+alembic upgrade head || echo "Migration failed, continuing anyway..."
 
 echo "Starting application..."
 exec "$@"

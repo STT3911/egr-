@@ -19,37 +19,23 @@ export const Header = () => {
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2">
             <div className="w-8 h-8 sm:w-10 sm:h-10 gradient-primary rounded-lg flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-lg sm:text-xl">S</span>
+              <span className="text-primary-foreground font-bold text-lg sm:text-xl">E</span>
             </div>
-            <span className="text-xl sm:text-2xl font-bold text-foreground">Service</span>
+            <span className="text-xl sm:text-2xl font-bold text-foreground">ЕГР</span>
           </Link>
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-8">
-            <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors">
-              Возможности
-            </a>
-            <a href="#about" className="text-muted-foreground hover:text-foreground transition-colors">
-              О сервисе
-            </a>
-            <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors">
-              Тарифы
-            </a>
+            <Link to="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors">
+              Главная
+            </Link>
+            <Link to="/search" className="text-muted-foreground hover:text-foreground transition-colors">
+              Поиск
+            </Link>
+            <Link to="/references" className="text-muted-foreground hover:text-foreground transition-colors">
+              Справочники
+            </Link>
           </nav>
-
-          {/* Desktop Auth Buttons */}
-          <div className="hidden md:flex items-center gap-3">
-            <Link to="/login">
-              <Button variant="ghost" className="text-muted-foreground hover:text-foreground">
-                Войти
-              </Button>
-            </Link>
-            <Link to="/register">
-              <Button className="gradient-primary text-primary-foreground shadow-soft hover:shadow-glow transition-shadow">
-                Регистрация
-              </Button>
-            </Link>
-          </div>
 
           {/* Mobile Menu Button */}
           <button 
@@ -69,23 +55,15 @@ export const Header = () => {
             className="md:hidden py-4 border-t border-border"
           >
             <nav className="flex flex-col gap-4">
-              <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors py-2">
-                Возможности
-              </a>
-              <a href="#about" className="text-muted-foreground hover:text-foreground transition-colors py-2">
-                О сервисе
-              </a>
-              <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors py-2">
-                Тарифы
-              </a>
-              <div className="flex flex-col gap-2 pt-4 border-t border-border">
-                <Link to="/login">
-                  <Button variant="outline" className="w-full">Войти</Button>
-                </Link>
-                <Link to="/register">
-                  <Button className="w-full gradient-primary text-primary-foreground">Регистрация</Button>
-                </Link>
-              </div>
+              <Link to="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors py-2">
+                Главная
+              </Link>
+              <Link to="/search" className="text-muted-foreground hover:text-foreground transition-colors py-2">
+                Поиск
+              </Link>
+              <Link to="/references" className="text-muted-foreground hover:text-foreground transition-colors py-2">
+                Справочники
+              </Link>
             </nav>
           </motion.div>
         )}

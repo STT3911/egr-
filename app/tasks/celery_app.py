@@ -33,8 +33,8 @@ celery_app.conf.update(
         },
         "process-pending-raw": {
             "task": "app.tasks.sync_tasks.process_pending_raw",
-            "schedule": timedelta(seconds=30),
-            "args": (5000,),
+            "schedule": timedelta(minutes=5),
+            "args": (500,),
         },
         "update-reference-tables": {
             "task": "app.tasks.sync_tasks.update_reference_tables",
