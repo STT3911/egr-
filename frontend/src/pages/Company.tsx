@@ -9,7 +9,7 @@ const fieldLabels: Record<string, string> = {
   current_short_name_ru: "Краткое название",
   current_name_by: "Название на белорусском",
   unp: "УНП",
-  current_status_code: "Код статуса",
+  current_status_name: "Статус",
   registration_date: "Дата регистрации",
   liquidation_date: "Дата ликвидации",
   entity_type_id: "Тип субъекта",

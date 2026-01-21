@@ -164,6 +164,14 @@ class CompanyCRUD:
             }
 
         current_name_fields = _pick_current_name(company.names_history)
+        
+        # Get status name from ref_statuses
+        status_name = None
+        if company.current_status_code:
+            from app.database.models import ReferenceStatus
+            status = self.db.query(ReferenceStatus).filter(ReferenceStatus.id == company.current_status_code).first()
+            if status:
+                status_name = status.name
 
         if not current_name_fields["current_name_ru"]:
             raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
@@ -189,6 +197,7 @@ class CompanyCRUD:
         return {
             "unp": company.unp,
             "current_status_code": company.current_status_code,
+            "current_status_name": status_name,
             "registration_date": company.registration_date.isoformat() if company.registration_date else None,
             "liquidation_date": company.liquidation_date.isoformat() if company.liquidation_date else None,
             **current_name_fields,

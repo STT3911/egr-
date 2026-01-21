@@ -43,6 +43,7 @@ class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
     current_status_code: Optional[int] = None
+    current_status_name: Optional[str] = None
     registration_date: Optional[str] = None
     liquidation_date: Optional[str] = None
     current_name_ru: Optional[str] = None
