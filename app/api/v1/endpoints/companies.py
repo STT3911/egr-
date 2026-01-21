@@ -25,58 +25,78 @@ async def lookup_companies(
 ):
     """
     Автокомплит по УНП или названию компании.
+    Оптимизированная версия с разделением на два типа запросов.
     """
     query = q.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Параметр 'q' не может быть пустым")
 
     is_digit = query.isdigit()
-    is_full_unp = is_digit and len(query) == 9
-    unp_prefix = f"{query}%" if is_digit else None
-    name_term = f"%{query}%"
+    results = []
 
-    # Быстрый поиск с именами (если есть)
-    sql = text("""
-        SELECT
-            c.unp,
-            n.full_name_ru,
-            n.short_name_ru,
-            n.full_name_by
-        FROM egr_companies c
-        LEFT JOIN LATERAL (
-            SELECT
+    if is_digit:
+        # Поиск по УНП - быстрый запрос только по индексу
+        unp_prefix = f"{query}%"
+        sql = text("""
+            WITH found_companies AS (
+                SELECT c.id, c.unp
+                FROM egr_companies c
+                WHERE c.unp::text LIKE :unp_prefix
+                ORDER BY c.unp
+                LIMIT :limit
+            )
+            SELECT 
+                fc.unp,
                 n.full_name_ru,
                 n.short_name_ru,
                 n.full_name_by
-            FROM egr_company_names_history n
-            WHERE n.company_id = c.id
-            ORDER BY
-                (n.valid_to IS NULL) DESC,
-                n.valid_to DESC NULLS LAST
-            LIMIT 1
-        ) n ON true
-        WHERE (:is_digit AND c.unp::text ILIKE :unp_prefix)
-           OR (NOT :is_digit AND (
-               n.full_name_ru ILIKE :name_term
-               OR n.short_name_ru ILIKE :name_term
-               OR n.full_name_by ILIKE :name_term
-           ))
-        ORDER BY
-            CASE WHEN :is_full_unp AND c.unp::text = :query THEN 1 ELSE 0 END DESC,
-            c.unp
-        LIMIT :limit
-    """)
+            FROM found_companies fc
+            LEFT JOIN LATERAL (
+                SELECT full_name_ru, short_name_ru, full_name_by
+                FROM egr_company_names_history
+                WHERE company_id = fc.id
+                ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST
+                LIMIT 1
+            ) n ON true
+            ORDER BY fc.unp
+        """)
+        
+        rows = db.execute(sql, {
+            "unp_prefix": unp_prefix,
+            "limit": limit,
+        }).mappings().all()
+        
+    else:
+        # Поиск по названию - используем индексы на названиях
+        name_term = f"{query}%"
+        sql = text("""
+            WITH ranked_names AS (
+                SELECT DISTINCT ON (n.company_id)
+                    c.unp,
+                    n.full_name_ru,
+                    n.short_name_ru,
+                    n.full_name_by
+                FROM egr_company_names_history n
+                INNER JOIN egr_companies c ON c.id = n.company_id
+                WHERE 
+                    n.full_name_ru ILIKE :name_term
+                    OR n.short_name_ru ILIKE :name_term
+                    OR n.full_name_by ILIKE :name_term
+                ORDER BY 
+                    n.company_id,
+                    (n.valid_to IS NULL) DESC,
+                    n.valid_to DESC NULLS LAST
+            )
+            SELECT * FROM ranked_names
+            ORDER BY unp
+            LIMIT :limit
+        """)
+        
+        rows = db.execute(sql, {
+            "name_term": name_term,
+            "limit": limit,
+        }).mappings().all()
 
-    rows = db.execute(sql, {
-        "unp_prefix": unp_prefix,
-        "name_term": name_term,
-        "limit": limit,
-        "is_digit": is_digit,
-        "is_full_unp": is_full_unp,
-        "query": query,
-    }).mappings().all()
-
-    results = []
     for row in rows:
         name = row["full_name_ru"] or row["short_name_ru"] or row["full_name_by"]
         results.append({

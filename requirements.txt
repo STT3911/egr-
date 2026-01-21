@@ -30,7 +30,3 @@ structlog==23.2.0
 # Утилиты
 click==8.1.7
 tenacity==8.2.3
-
-
-
-

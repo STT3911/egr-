@@ -1,16 +1,8 @@
-import { useState } from "react";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Search, ArrowRight, Building2, Shield, Zap } from "lucide-react";
+import { Building2, Shield, Zap } from "lucide-react";
+import { CompanySearch } from "@/components/CompanySearch";
 
 export const HeroSection = () => {
-  const [searchQuery, setSearchQuery] = useState("");
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log("Searching for:", searchQuery);
-  };
 
   return (
     <section className="relative min-h-screen flex items-center justify-center gradient-hero overflow-hidden pt-20">
@@ -56,34 +48,17 @@ export const HeroSection = () => {
           </motion.p>
 
           {/* Search Form */}
-          <motion.form
+          <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.3 }}
-            onSubmit={handleSearch}
-            className="max-w-2xl mx-auto mb-12"
+            className="mb-12"
           >
-            <div className="relative flex items-center gap-3 p-2 bg-card rounded-2xl shadow-card border border-border">
-              <div className="flex-1 flex items-center gap-3 pl-4">
-                <Search className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                <Input
-                  type="text"
-                  placeholder="Введите УНП или название компании"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-base sm:text-lg placeholder:text-muted-foreground/60"
-                />
-              </div>
-              <Button 
-                type="submit"
-                size="lg"
-                className="gradient-primary text-primary-foreground shadow-soft hover:shadow-glow transition-all px-6 sm:px-8"
-              >
-                <span className="hidden sm:inline">Найти</span>
-                <ArrowRight className="w-5 h-5 sm:ml-2" />
-              </Button>
-            </div>
-          </motion.form>
+            <CompanySearch 
+              variant="hero"
+              placeholder="Введите УНП или название компании"
+            />
+          </motion.div>
 
           {/* Stats */}
           <motion.div

@@ -1,120 +1,90 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CompanyLookupResult, lookupCompanies } from "@/lib/api";
+import { CompanySearch } from "@/components/CompanySearch";
+import { Card, CardContent } from "@/components/ui/card";
+import { Building2, Search as SearchIcon, TrendingUp } from "lucide-react";
 
 const Search = () => {
-  const [query, setQuery] = useState("");
-  const navigate = useNavigate();
-  const [suggestions, setSuggestions] = useState<CompanyLookupResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [suggesting, setSuggesting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSearch = async (event: FormEvent) => {
-    event.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed) return;
-    setLoading(true);
-    setError(null);
-    try {
-      if (/^\d{9}$/.test(trimmed)) {
-        navigate(`/company/${trimmed}`);
-        return;
-      }
-      if (suggestions.length === 1) {
-        navigate(`/company/${suggestions[0].unp}`);
-        return;
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка поиска");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    setSuggesting(true);
-    const timer = setTimeout(async () => {
-      try {
-        const data = await lookupCompanies(trimmed);
-        setSuggestions(data.results);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Ошибка подсказок");
-        setSuggestions([]);
-      } finally {
-        setSuggesting(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [query]);
-
   return (
     <div className="min-h-screen bg-background px-4 py-10">
-      <div className="max-w-4xl mx-auto space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Поиск компаний</h1>
-          <p className="text-muted-foreground mt-2">
-            Введите УНП или часть названия компании.
+      <div className="max-w-4xl mx-auto space-y-8">
+        {/* Header */}
+        <div className="text-center space-y-3">
+          <h1 className="text-4xl font-bold text-foreground">Поиск компаний</h1>
+          <p className="text-lg text-muted-foreground">
+            Введите УНП или часть названия компании для поиска
           </p>
         </div>
 
-        <form onSubmit={handleSearch} className="flex gap-3">
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="УНП или название"
+        {/* Search Box */}
+        <div className="max-w-2xl mx-auto">
+          <CompanySearch 
+            variant="compact"
+            placeholder="Поиск по УНП или названию..."
           />
-          <Button type="submit" disabled={loading}>
-            {loading ? "Ищем..." : "Поиск"}
-          </Button>
-        </form>
-        {query.trim().length >= 2 && query.trim().match(/^\d+$/) && suggestions[0] && (
-          <p className="text-sm text-muted-foreground">
-            Найдена организация:{" "}
-            <Link
-              to={`/company/${suggestions[0].unp}`}
-              className="text-primary hover:underline"
-            >
-              {suggestions[0].name} (УНП {suggestions[0].unp})
-            </Link>
-          </p>
-        )}
-
-        {error && (
-          <Card className="border-destructive">
-            <CardContent className="py-4 text-destructive">{error}</CardContent>
-          </Card>
-        )}
-
-        <div className="space-y-4">
-          {suggestions.map((item) => (
-            <Card key={item.unp}>
-              <CardHeader>
-                <CardTitle className="text-lg">
-                  {item.name} (УНП {item.unp})
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Link to={`/company/${item.unp}`}>
-                  <Button variant="outline">Открыть профиль</Button>
-                </Link>
-              </CardContent>
-            </Card>
-          ))}
-          {!suggesting && suggestions.length === 0 && query.trim().length >= 2 && (
-            <p className="text-muted-foreground">Ничего не найдено.</p>
-          )}
         </div>
+
+        {/* Info Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-6">
+          <Card className="p-6 hover:shadow-lg transition-shadow">
+            <div className="flex items-start gap-4">
+              <div className="p-3 rounded-lg bg-primary/10">
+                <Building2 className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-foreground mb-1">500K+ компаний</h3>
+                <p className="text-sm text-muted-foreground">
+                  Полный реестр ЮЛ и ИП Республики Беларусь
+                </p>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6 hover:shadow-lg transition-shadow">
+            <div className="flex items-start gap-4">
+              <div className="p-3 rounded-lg bg-primary/10">
+                <SearchIcon className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-foreground mb-1">Быстрый поиск</h3>
+                <p className="text-sm text-muted-foreground">
+                  Автодополнение и мгновенные подсказки
+                </p>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6 hover:shadow-lg transition-shadow">
+            <div className="flex items-start gap-4">
+              <div className="p-3 rounded-lg bg-primary/10">
+                <TrendingUp className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-foreground mb-1">Актуальные данные</h3>
+                <p className="text-sm text-muted-foreground">
+                  Информация обновляется в реальном времени
+                </p>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Hints */}
+        <Card className="p-6 bg-primary/5 border-primary/20">
+          <h3 className="font-semibold text-foreground mb-3">Советы по поиску:</h3>
+          <ul className="space-y-2 text-sm text-muted-foreground">
+            <li className="flex items-start gap-2">
+              <span className="text-primary mt-0.5">•</span>
+              <span>Введите полный УНП (9 цифр) для моментального перехода к профилю компании</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-primary mt-0.5">•</span>
+              <span>Начните вводить название компании для появления подсказок</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-primary mt-0.5">•</span>
+              <span>Используйте первые цифры УНП для поиска похожих компаний</span>
+            </li>
+          </ul>
+        </Card>
       </div>
     </div>
   );
