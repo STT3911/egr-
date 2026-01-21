@@ -88,7 +88,7 @@ services:
       - egr-api
     networks:
       - egr_default
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=1000
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 --prefetch-multiplier=2 --max-tasks-per-child=1000
 
   egr-celery-beat:
     build:

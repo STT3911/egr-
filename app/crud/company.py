@@ -46,6 +46,7 @@ class CompanyCRUD:
             for key, value in company_data.items():
                 if key != "unp":
                     setattr(company, key, value)
+            self.db.add(company)  # FIXED: Explicitly mark as modified
             self.db.flush()
         
         # Save names history

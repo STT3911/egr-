@@ -170,11 +170,16 @@ class CompanyMapper:
         company_data = {
             "unp": unp,
             "current_status_code": base_info.get("nsi00219", {}).get("nksost"),
-            "registration_date": self._parse_legacy_date(base_info.get("dfrom")),
-            "liquidation_date": self._parse_legacy_date(base_info.get("dto")),
+            "registration_date": self._parse_iso_date(base_info.get("dfrom")),  # FIXED: Use ISO parser
+            "liquidation_date": self._parse_iso_date(base_info.get("dto")),  # FIXED: Use ISO parser
             "liquidation_reason_id": base_info.get("nsi00228", {}).get("nkslkv"),
             "liquidation_decision_no": base_info.get("vnrlkv"),
             "liquidation_authority_id": base_info.get("nsi00212LKV", {}).get("nkuz"),
+            "creation_method_id": base_info.get("nsi00208", {}).get("nkscrt"),  # ADDED
+            "creation_decision_no": base_info.get("vnrcrt"),  # ADDED
+            "creation_authority_id": base_info.get("nsi00212CRT", {}).get("nkuz"),  # ADDED
+            "current_authority_id": base_info.get("nsi00212", {}).get("nkuz"),  # ADDED
+            "entity_type_id": base_info.get("nsi00211", {}).get("nkvob"),  # ADDED: Critical fix!
         }
         
         # Parse addresses - assemble full address from components
@@ -229,8 +234,8 @@ class CompanyMapper:
                 "postal_code": addr.get("nindex"),
                 "region": addr.get("vregion"),
                 "district": addr.get("nsi00202", {}).get("vnsfull"),  # More detailed district info
-                "valid_from": self._parse_legacy_date(addr.get("dfrom")),
-                "valid_to": self._parse_legacy_date(addr.get("dto")),
+                "valid_from": self._parse_iso_date(addr.get("dfrom")),  # FIXED: Use ISO parser
+                "valid_to": self._parse_iso_date(addr.get("dto")),  # FIXED: Use ISO parser
             })
         
         # Parse names
@@ -243,8 +248,8 @@ class CompanyMapper:
                     "full_name_ru": name.get("vnaim"),
                     "short_name_ru": name.get("vn"),  # Corrected from vnaimk
                     "full_name_by": name.get("vnaimb"),  # Corrected from vnbel
-                    "valid_from": self._parse_legacy_date(name.get("dfrom")),
-                    "valid_to": self._parse_legacy_date(name.get("dto")),
+                    "valid_from": self._parse_iso_date(name.get("dfrom")),  # FIXED: Use ISO parser
+                    "valid_to": self._parse_iso_date(name.get("dto")),  # FIXED: Use ISO parser
                 })
             else:
                 # IP FIO - EGR API provides full name in 'vfio' field
@@ -257,8 +262,8 @@ class CompanyMapper:
                     "full_name_ru": full_name,
                     "short_name_ru": full_name,
                     "full_name_by": None,
-                    "valid_from": self._parse_legacy_date(name.get("dfrom")),
-                    "valid_to": self._parse_legacy_date(name.get("dto")),
+                    "valid_from": self._parse_iso_date(name.get("dfrom")),  # FIXED: Use ISO parser
+                    "valid_to": self._parse_iso_date(name.get("dto")),  # FIXED: Use ISO parser
                 })
 
         if not names_data:
@@ -284,19 +289,25 @@ class CompanyMapper:
                     "full_name_ru": fallback_full,
                     "short_name_ru": fallback_short or fallback_full,
                     "full_name_by": fallback_by,
-                    "valid_from": self._parse_legacy_date(base_info.get("dfrom")),
-                    "valid_to": self._parse_legacy_date(base_info.get("dto")),
+                    "valid_from": self._parse_iso_date(base_info.get("dfrom")),  # FIXED: Use ISO parser
+                    "valid_to": self._parse_iso_date(base_info.get("dto")),  # FIXED: Use ISO parser
                 })
         
         # Parse VED
         ved_data = []
         for ved in egr_data.get("ved", []):
-            ved_data.append({
-                "ved_code": ved.get("nsi00118", {}).get("nkved"),
-                "ved_name": ved.get("nsi00118", {}).get("vnved"),
-                "valid_from": self._parse_legacy_date(ved.get("dfrom")),
-                "valid_to": self._parse_legacy_date(ved.get("dto")),
-            })
+            # Try nsi00118 first (detailed VED), then fallback to nsi00114 (basic VED)
+            ved_info = ved.get("nsi00118") or ved.get("nsi00114", {})
+            ved_code = ved_info.get("nkved") or ved_info.get("vkvdn")  # FIXED: Support both codes
+            ved_name = ved_info.get("vnved") or ved_info.get("vnvdnp")  # FIXED: Support both names
+            
+            if ved_code:  # Only add if we have a code
+                ved_data.append({
+                    "ved_code": ved_code,
+                    "ved_name": ved_name,
+                    "valid_from": self._parse_iso_date(ved.get("dfrom")),  # FIXED: Use ISO parser
+                    "valid_to": self._parse_iso_date(ved.get("dto")),  # FIXED: Use ISO parser
+                })
 
         # Parse contacts from addresses (Legacy API stores contacts in address records)
         contacts_data = []
@@ -323,8 +334,8 @@ class CompanyMapper:
                 contact_info.update({
                     "website": None,  # Legacy API doesn't have website
                     "fax": None,      # Legacy API doesn't have fax
-                    "valid_from": self._parse_legacy_date(addr.get("dfrom")),
-                    "valid_to": self._parse_legacy_date(addr.get("dto")),
+                    "valid_from": self._parse_iso_date(addr.get("dfrom")),  # FIXED: Use ISO parser
+                    "valid_to": self._parse_iso_date(addr.get("dto")),  # FIXED: Use ISO parser
                 })
                 contacts_data.append(contact_info)
 

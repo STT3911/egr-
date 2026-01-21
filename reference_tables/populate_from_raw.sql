@@ -121,7 +121,10 @@ END $$;
 -- В. Орган ликвидации (nsi00212LKV)
 -- ---------------------------------------------------------
 INSERT INTO ref_authorities (id, name, system_id)
-SELECT DISTINCT id, name, system_id FROM (
+SELECT id, 
+       MAX(name) as name,  -- Берем MAX(name) для группировки дубликатов
+       MAX(system_id) as system_id
+FROM (
     -- А. Текущий орган учета (nsi00212)
     SELECT 
         ((data::jsonb->'base_info'->'nsi00212'->>'nkuz')::int) as id,
@@ -131,6 +134,7 @@ SELECT DISTINCT id, name, system_id FROM (
     WHERE 
         data::jsonb->'base_info'->'nsi00212' IS NOT NULL
         AND data::jsonb->'base_info'->'nsi00212'->>'nkuz' IS NOT NULL
+        AND data::jsonb->'base_info'->'nsi00212'->>'vnuzp' IS NOT NULL
     
     UNION ALL
     
@@ -143,6 +147,7 @@ SELECT DISTINCT id, name, system_id FROM (
     WHERE 
         data::jsonb->'base_info'->'nsi00212CRT' IS NOT NULL
         AND data::jsonb->'base_info'->'nsi00212CRT'->>'nkuz' IS NOT NULL
+        AND data::jsonb->'base_info'->'nsi00212CRT'->>'vnuzp' IS NOT NULL
     
     UNION ALL
     
@@ -155,8 +160,10 @@ SELECT DISTINCT id, name, system_id FROM (
     WHERE 
         data::jsonb->'base_info'->'nsi00212LKV' IS NOT NULL
         AND data::jsonb->'base_info'->'nsi00212LKV'->>'nkuz' IS NOT NULL
+        AND data::jsonb->'base_info'->'nsi00212LKV'->>'vnuzp' IS NOT NULL
 ) as all_auths
-WHERE id IS NOT NULL
+WHERE id IS NOT NULL AND name IS NOT NULL
+GROUP BY id
 ON CONFLICT (id) DO UPDATE 
 SET 
     name = EXCLUDED.name,
