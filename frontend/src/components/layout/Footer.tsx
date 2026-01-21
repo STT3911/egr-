@@ -27,16 +27,6 @@ export const Footer = () => {
                   Возможности
                 </a>
               </li>
-              <li>
-                <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-                  Тарифы
-                </a>
-              </li>
-              <li>
-                <a href="/docs" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-                  API Документация
-                </a>
-              </li>
             </ul>
           </div>
 
