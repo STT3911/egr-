@@ -45,3 +45,272 @@
 - **РђРІС‚РѕРјР°С‚РёС‡РµСЃРєР°СЏ РѕР±СЂР°Р±РѕС‚РєР°**: ~40,000-120,000 Р·Р°РїРёСЃРµР№/С‡Р°СЃ
 - **РџР°СЂСЃРёРЅРі СЂР°Р±РѕС‚Р°РµС‚** РІ С„РѕРЅРµ С‡РµСЂРµР· Celery Beat
 
+
+## рџљЂ Р‘С‹СЃС‚СЂС‹Р№ СЃС‚Р°СЂС‚
+
+### Docker Compose (СЂРµРєРѕРјРµРЅРґСѓРµС‚СЃСЏ)
+
+```bash
+# 1. РљР»РѕРЅРёСЂРѕРІР°С‚СЊ СЂРµРїРѕР·РёС‚РѕСЂРёР№
+git clone <repository-url>
+cd egr-service
+
+# 2. Р—Р°РїСѓСЃС‚РёС‚СЊ РІСЃРµ СЃРµСЂРІРёСЃС‹
+docker-compose up -d
+
+# 3. РџСЂРѕРІРµСЂРёС‚СЊ СЃС‚Р°С‚СѓСЃ
+docker-compose ps
+```
+
+Р­С‚Рѕ Р·Р°РїСѓСЃС‚РёС‚:
+- **API СЃРµСЂРІРµСЂ** в†’ http://localhost:8002
+- **Frontend** в†’ http://localhost (http://localhost:5173 РґР»СЏ dev)
+- **Celery Worker** - РѕР±СЂР°Р±РѕС‚РєР° РґР°РЅРЅС‹С…
+- **Celery Beat** - РїР»Р°РЅРёСЂРѕРІС‰РёРє Р·Р°РґР°С‡
+- **PostgreSQL** - Р±Р°Р·Р° РґР°РЅРЅС‹С…
+- **Redis** - Р±СЂРѕРєРµСЂ СЃРѕРѕР±С‰РµРЅРёР№  
+- **Nginx** - РѕР±СЂР°С‚РЅС‹Р№ РїСЂРѕРєСЃРё
+
+## рџ“Ў API Endpoints
+
+### Р”РѕРєСѓРјРµРЅС‚Р°С†РёСЏ
+
+- **Swagger UI**: http://localhost:8002/docs
+- **ReDoc**: http://localhost:8002/redoc
+
+### РћСЃРЅРѕРІРЅС‹Рµ endpoints
+
+#### РљРѕРјРїР°РЅРёРё
+
+```bash
+# РџРѕР»СѓС‡РёС‚СЊ РїСЂРѕС„РёР»СЊ РєРѕРјРїР°РЅРёРё
+GET /api/v1/companies/{unp}
+
+# РђРІС‚РѕРєРѕРјРїР»РёС‚ РїРѕ РЈРќРџ/РЅР°Р·РІР°РЅРёСЋ
+GET /api/v1/companies/lookup?q=500000306&limit=10
+
+# РЎС‹СЂС‹Рµ РґР°РЅРЅС‹Рµ РєРѕРјРїР°РЅРёРё
+GET /api/v1/companies/{unp}/raw
+
+# РЎС‚Р°С‚СѓСЃ РѕР±СЂР°Р±РѕС‚РєРё
+GET /api/v1/companies/{unp}/raw/status
+
+# Р—Р°РїСѓСЃС‚РёС‚СЊ РїР°СЂСЃРёРЅРі РІСЂСѓС‡РЅСѓСЋ
+POST /api/v1/companies/{unp}/parse?force=true
+```
+
+#### РЎРїСЂР°РІРѕС‡РЅРёРєРё
+
+```bash
+# РЎРїРёСЃРѕРє РІСЃРµС… СЃРїСЂР°РІРѕС‡РЅРёРєРѕРІ
+GET /api/v1/references/
+
+# РџРѕР»СѓС‡РёС‚СЊ РґР°РЅРЅС‹Рµ СЃРїСЂР°РІРѕС‡РЅРёРєР°
+GET /api/v1/references/statuses
+GET /api/v1/references/authorities
+GET /api/v1/references/ved
+```
+
+
+## рџ”§ РЈРїСЂР°РІР»РµРЅРёРµ РїР°СЂСЃРёРЅРіРѕРј РґР°РЅРЅС‹С…
+
+### РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРёР№ РїР°СЂСЃРёРЅРі (С‡РµСЂРµР· Celery)
+
+РџР°СЂСЃРёРЅРі Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ **Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё** РєР°Р¶РґС‹Рµ 30 СЃРµРєСѓРЅРґ:
+- РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ 2000 Р·Р°РїРёСЃРµР№ Р·Р° СЂР°Р·
+- РСЃРїРѕР»СЊР·СѓРµС‚ 4 РїР°СЂР°Р»Р»РµР»СЊРЅС‹С… РїРѕС‚РѕРєР°
+- РЎРєРѕСЂРѕСЃС‚СЊ: ~40,000-120,000 Р·Р°РїРёСЃРµР№/С‡Р°СЃ
+
+### Р СѓС‡РЅРѕР№ Р·Р°РїСѓСЃРє РїР°СЂСЃРёРЅРіР°
+
+**Windows:**
+```cmd
+.\run-parsing.bat --limit 5000
+```
+
+**Linux/Mac:**
+```bash
+./run-parsing.sh --limit 5000
+```
+
+РџР°СЂР°РјРµС‚СЂС‹:
+- `--limit N` - РєРѕР»РёС‡РµСЃС‚РІРѕ Р·Р°РїРёСЃРµР№ (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ: 1000)
+- `--async` - Р·Р°РїСѓСЃС‚РёС‚СЊ РІ С„РѕРЅРµ С‡РµСЂРµР· Celery
+
+### РњРѕРЅРёС‚РѕСЂРёРЅРі РїСЂРѕРіСЂРµСЃСЃР°
+
+```bash
+# РџСЂРѕРІРµСЂРёС‚СЊ РЅРµРѕР±СЂР°Р±РѕС‚Р°РЅРЅС‹Рµ Р·Р°РїРёСЃРё
+docker exec egr_db psql -U postgres -d egr_db -c "SELECT COUNT(*) FILTER (WHERE processed_at IS NULL) AS pending FROM egr_raw_company_data;"
+
+# РџСЂРѕРІРµСЂРёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РєРѕРјРїР°РЅРёР№  
+docker exec egr_db psql -U postgres -d egr_db -c "SELECT COUNT(*) FILTER (WHERE registration_date IS NOT NULL) as with_date, COUNT(*) as total FROM egr_companies;"
+```
+
+### РЈРїСЂР°РІР»РµРЅРёРµ Celery
+
+```bash
+# РџРµСЂРµР·Р°РїСѓСЃС‚РёС‚СЊ Celery
+docker-compose restart egr-celery-worker
+
+# Р›РѕРіРё Celery
+docker-compose logs -f egr-celery-worker
+
+# РћСЃС‚Р°РЅРѕРІРёС‚СЊ Р°РІС‚РѕРїР°СЂСЃРёРЅРі
+docker-compose stop egr-celery-beat
+```
+
+
+## рџ“љ Р—Р°РіСЂСѓР·РєР° СЃРїСЂР°РІРѕС‡РЅРёРєРѕРІ
+
+### РћСЃРЅРѕРІРЅС‹Рµ СЃРїСЂР°РІРѕС‡РЅРёРєРё (РёР· raw data)
+
+```bash
+# РљРѕРїРёСЂРѕРІР°С‚СЊ СЃРєСЂРёРїС‚
+docker cp reference_tables/populate_from_raw.sql egr_db:/tmp/
+
+# Р’С‹РїРѕР»РЅРёС‚СЊ
+docker exec egr_db psql -U postgres -d egr_db -f /tmp/populate_from_raw.sql
+```
+
+Р—Р°РіСЂСѓР¶Р°РµС‚: СЃС‚Р°С‚СѓСЃС‹, СЃРїРѕСЃРѕР±С‹ СЃРѕР·РґР°РЅРёСЏ, С‚РёРїС‹ СЃСѓР±СЉРµРєС‚РѕРІ, РѕСЂРіР°РЅС‹ СЂРµРіРёСЃС‚СЂР°С†РёРё, СЃРїРѕСЃРѕР±С‹ Р»РёРєРІРёРґР°С†РёРё.
+
+### РЎРїСЂР°РІРѕС‡РЅРёРє Р’Р­Р” (РёР· РёСЃС‚РѕСЂРёРё)
+
+```bash
+docker cp reference_tables/populate_ved_opf_soato.sql egr_db:/tmp/
+docker exec egr_db psql -U postgres -d egr_db -f /tmp/populate_ved_opf_soato.sql
+```
+
+## рџ’ѕ Р‘Р°Р·Р° РґР°РЅРЅС‹С…
+
+### РћСЃРЅРѕРІРЅС‹Рµ С‚Р°Р±Р»РёС†С‹
+
+| РўР°Р±Р»РёС†Р° | РћРїРёСЃР°РЅРёРµ |
+|---------|----------|
+| `egr_companies` | РћСЃРЅРѕРІРЅР°СЏ С‚Р°Р±Р»РёС†Р° РєРѕРјРїР°РЅРёР№ |
+| `egr_company_names_history` | РСЃС‚РѕСЂРёСЏ РЅР°Р·РІР°РЅРёР№ |
+| `egr_company_addresses_history` | РСЃС‚РѕСЂРёСЏ Р°РґСЂРµСЃРѕРІ |
+| `egr_company_ved_history` | РСЃС‚РѕСЂРёСЏ Р’Р­Р” |
+| `egr_company_contacts_history` | РљРѕРЅС‚Р°РєС‚С‹ |
+| `egr_raw_company_data` | Р‘СѓС„РµСЂ СЃС‹СЂС‹С… РґР°РЅРЅС‹С… |
+
+### РЎРїСЂР°РІРѕС‡РЅС‹Рµ С‚Р°Р±Р»РёС†С‹
+
+- `ref_statuses` - РЎС‚Р°С‚СѓСЃС‹ РєРѕРјРїР°РЅРёР№  
+- `ref_authorities` - РћСЂРіР°РЅС‹ СЂРµРіРёСЃС‚СЂР°С†РёРё
+- `ref_ved` - РљРѕРґС‹ Р’Р­Р”
+- `ref_entity_types` - РўРёРїС‹ СЃСѓР±СЉРµРєС‚РѕРІ
+- Р РґСЂСѓРіРёРµ...
+
+
+## рџ”„ Celery Tasks
+
+### РџРµСЂРёРѕРґРёС‡РµСЃРєРёРµ Р·Р°РґР°С‡Рё
+
+| Р—Р°РґР°С‡Р° | Р§Р°СЃС‚РѕС‚Р° | РћРїРёСЃР°РЅРёРµ |
+|--------|---------|----------|
+| `process_pending_raw` | РљР°Р¶РґС‹Рµ 30 СЃРµРє | РџР°СЂСЃРёРЅРі РґР°РЅРЅС‹С… (2000 Р·Р°РїРёСЃРµР№) |
+| `update_reference_tables` | Р•Р¶РµРґРЅРµРІРЅРѕ 04:00 | РћР±РЅРѕРІР»РµРЅРёРµ СЃРїСЂР°РІРѕС‡РЅРёРєРѕРІ |
+| `load_companies_from_json` | Р•Р¶РµРґРЅРµРІРЅРѕ 02:00 | Р—Р°РіСЂСѓР·РєР° РёР· JSON |
+| `reprocess_failed_rows` | РЎСѓР±Р±РѕС‚Р° 05:00 | РџРµСЂРµРѕР±СЂР°Р±РѕС‚РєР° РѕС€РёР±РѕРє |
+
+### РќР°СЃС‚СЂРѕР№РєРё РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚Рё
+
+**РўРµРєСѓС‰РёРµ (РѕРїС‚РёРјР°Р»СЊРЅС‹Рµ):**
+- Concurrency: 4 РїРѕС‚РѕРєР°
+- Batch: 2000 Р·Р°РїРёСЃРµР№
+- Р§Р°СЃС‚РѕС‚Р°: 30 СЃРµРєСѓРЅРґ
+- РЎРєРѕСЂРѕСЃС‚СЊ: ~40,000-120,000/С‡Р°СЃ
+
+**Р”Р»СЏ СѓСЃРєРѕСЂРµРЅРёСЏ** (docker-compose.yml):
+```yaml
+command: celery -A app.tasks.celery_app worker --concurrency=8
+```
+
+**Р”Р»СЏ СЃРЅРёР¶РµРЅРёСЏ РЅР°РіСЂСѓР·РєРё** (app/tasks/celery_app.py):
+```python
+"schedule": timedelta(minutes=5),
+"args": (500,),
+```
+
+## рџ“Љ РњРѕРЅРёС‚РѕСЂРёРЅРі
+
+### Health Check
+```bash
+curl http://localhost:8002/api/v1/health
+```
+
+### Р›РѕРіРё
+```bash
+docker-compose logs -f egr-api        # API
+docker-compose logs -f egr-celery-worker  # Celery
+docker-compose logs -f egr_db         # Р‘Р”
+```
+
+
+## рџђ› РЈСЃС‚СЂР°РЅРµРЅРёРµ РЅРµРїРѕР»Р°РґРѕРє
+
+### Celery РЅРµ СЂР°Р±РѕС‚Р°РµС‚
+```bash
+docker-compose restart egr-celery-worker
+docker-compose logs -f egr-celery-worker
+```
+
+### РњРµРґР»РµРЅРЅС‹Р№ РїР°СЂСЃРёРЅРі
+РЈРІРµР»РёС‡СЊС‚Рµ `concurrency` РІ docker-compose.yml:
+```yaml
+command: celery ... --concurrency=8
+```
+
+### РћС€РёР±РєРё РјРёРіСЂР°С†РёР№
+```bash
+docker exec egr_db psql -U postgres -d egr_db -c "SELECT * FROM alembic_version;"
+docker-compose exec egr-api alembic upgrade head
+```
+
+## рџ› пёЏ Р Р°Р·СЂР°Р±РѕС‚РєР°
+
+### РњРёРіСЂР°С†РёРё
+```bash
+alembic revision --autogenerate -m "РѕРїРёСЃР°РЅРёРµ"
+alembic upgrade head
+alembic downgrade -1
+```
+
+### РўРµСЃС‚РёСЂРѕРІР°РЅРёРµ
+```bash
+pytest
+pytest --cov=app tests/
+```
+
+## рџ“ќ РџРµСЂРµРјРµРЅРЅС‹Рµ РѕРєСЂСѓР¶РµРЅРёСЏ
+
+```bash
+# Р‘Р°Р·Р° РґР°РЅРЅС‹С…
+DB_HOST=db
+DB_NAME=egr_db
+DB_USER=postgres
+DB_PASSWORD=your_password
+
+# Redis
+REDIS_URL=redis://redis:6379/3
+CELERY_BROKER_URL=redis://redis:6379/4
+
+# API
+EGR_API_URL=http://egr.gov.by/api/v2/egr
+EGR_MOBILE_API_URL=https://egr.gov.by/egrmobile/api/v1
+
+# CORS
+CORS_ORIGINS=http://localhost:5173,http://localhost
+```
+
+## рџ“„ Р›РёС†РµРЅР·РёСЏ
+
+MIT License
+
+---
+
+**Р’РµСЂСЃРёСЏ:** 2.0.0  
+**Р”Р°С‚Р° РѕР±РЅРѕРІР»РµРЅРёСЏ:** РЇРЅРІР°СЂСЊ 2026  
+**РЎС‚Р°С‚СѓСЃ:** вњ… Production Ready
