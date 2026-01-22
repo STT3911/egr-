@@ -7,35 +7,60 @@ logger = get_logger("egr_client")
 
 
 class BaseClient:
-    """Base HTTP client"""
+    """Base HTTP client with connection pooling"""
     
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
+        # Connection pool for better performance
+        self._client = None
+        self._limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
+        self._timeout = httpx.Timeout(30.0, connect=10.0)
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client with connection pool"""
+        if self._client is None or self._client.is_closed:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            }
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout,
+                headers=headers,
+                verify=False,
+                limits=self._limits,
+                http2=True  # Enable HTTP/2 for better performance
+            )
+        return self._client
+
+    async def close(self):
+        """Close HTTP client"""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
     async def _make_request(self, method: str, endpoint: str, **kwargs) -> Any:
         """Make HTTP request"""
         url = f"{self.base_url}/{endpoint}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json"
-        }
+        client = await self._get_client()
         
-        async with httpx.AsyncClient(timeout=30.0, headers=headers, verify=False) as client:
-            try:
-                response = await client.request(method, url, **kwargs)
-                if response.status_code == 404:
-                    return None
-                response.raise_for_status()
-                if response.status_code == 204:
-                    return None
-                return response.json()
-            except Exception as e:
-                logger.error(f"API Request Error ({url}): {e}")
+        try:
+            response = await client.request(method, url, **kwargs)
+            if response.status_code == 404:
                 return None
+            response.raise_for_status()
+            if response.status_code == 204:
+                return None
+            return response.json()
+        except Exception as e:
+            logger.error(f"API Request Error ({url}): {e}")
+            return None
 
 
 class MobileEGRClient(BaseClient):
     """Client for https://egr.gov.by/egrmobile/api/v1"""
+    
+    def __init__(self, base_url: str = "https://egr.gov.by/egrmobile/api/v1"):
+        super().__init__(base_url)
     
     async def get_common_info(self, identifier: str) -> Optional[Dict]:
         """Get common company information"""
@@ -49,7 +74,10 @@ class MobileEGRClient(BaseClient):
 
 
 class EGRClient(BaseClient):
-    """Client for http://egr.gov.by/api/v2/egr"""
+    """Client for https://egr.gov.by/api/v2/egr (HTTPS)"""
+    
+    def __init__(self, base_url: str = "https://egr.gov.by/api/v2/egr"):
+        super().__init__(base_url)
 
     async def get_base_info_by_period_raw(self, start_date: str, end_date: str) -> List[Dict]:
         """

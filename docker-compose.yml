@@ -55,10 +55,19 @@ services:
     ports:
       - "8002:8000"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - egr_default
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
@@ -158,6 +167,13 @@ services:
       - "3000:80"
     networks:
       - egr_default
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   frontend-dev:
     build:
@@ -183,10 +199,13 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./ssl:/etc/nginx/ssl:ro
     depends_on:
-      - egr-api
-      - frontend
+      egr-api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     networks:
       - egr_default
+    restart: unless-stopped
 
 networks:
   egr_default:

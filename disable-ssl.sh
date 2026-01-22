@@ -1,10 +1,28 @@
+#!/bin/bash
+set -e
+
+echo "🔓 Disabling HTTPS (reverting to HTTP only)"
+echo ""
+
+if [ -f "nginx/conf.d/test.tendex.by.conf.backup" ]; then
+    echo "📋 Restoring backup configuration..."
+    cp nginx/conf.d/test.tendex.by.conf.backup nginx/conf.d/test.tendex.by.conf
+    echo "✅ Backup restored"
+else
+    echo "⚠️  No backup found, creating HTTP-only config..."
+    cat > nginx/conf.d/test.tendex.by.conf << 'EOF'
 # EGR Service - test.tendex.by (HTTP Only)
+upstream backend {
+  server egr-api:8000;
+}
+
+upstream frontend {
+  server frontend:80;
+}
+
 server {
   listen 80;
   server_name test.tendex.by _;
-
-  # Docker DNS resolver
-  resolver 127.0.0.11 valid=30s;
 
   client_max_body_size 100M;
 
@@ -13,8 +31,7 @@ server {
   add_header X-XSS-Protection "1; mode=block" always;
 
   location / {
-    set $frontend_upstream http://frontend:80;
-    proxy_pass $frontend_upstream;
+    proxy_pass http://frontend;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection 'upgrade';
@@ -26,8 +43,7 @@ server {
   }
 
   location /api {
-    set $backend_upstream http://egr-api:8000;
-    proxy_pass $backend_upstream;
+    proxy_pass http://backend;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -39,8 +55,7 @@ server {
   }
 
   location ~ ^/(docs|redoc|openapi.json) {
-    set $backend_upstream http://egr-api:8000;
-    proxy_pass $backend_upstream;
+    proxy_pass http://backend;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -49,14 +64,12 @@ server {
   }
 
   location /health {
-    set $backend_upstream http://egr-api:8000;
-    proxy_pass $backend_upstream/api/v1/health;
+    proxy_pass http://backend/api/v1/health;
     access_log off;
   }
 
-  location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
-    set $frontend_upstream http://frontend:80;
-    proxy_pass $frontend_upstream;
+  location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot|webmanifest)$ {
+    proxy_pass http://frontend;
     expires 1y;
     add_header Cache-Control "public, immutable";
   }
@@ -64,3 +77,16 @@ server {
   access_log /var/log/nginx/access.log;
   error_log /var/log/nginx/error.log;
 }
+EOF
+    echo "✅ HTTP-only config created"
+fi
+
+echo ""
+echo "📋 Reloading nginx..."
+docker compose exec egr-nginx nginx -t
+docker compose exec egr-nginx nginx -s reload
+echo "✅ Nginx reloaded"
+echo ""
+echo "🌐 Your site is now available at:"
+echo "   http://test.tendex.by"
+echo ""

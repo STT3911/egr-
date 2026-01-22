@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://redis:6379/4"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/5"
 
-    # EGR API
-    EGR_API_URL: str = "http://egr.gov.by/api/v2/egr"
+    # EGR API (все запросы через HTTPS для безопасности и скорости)
+    EGR_API_URL: str = "https://egr.gov.by/api/v2/egr"
     EGR_MOBILE_API_URL: str = "https://egr.gov.by/egrmobile/api/v1"
 
     # Application

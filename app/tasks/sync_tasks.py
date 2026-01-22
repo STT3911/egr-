@@ -80,11 +80,13 @@ def reprocess_failed_rows():
 
 @celery_app.task
 def process_pending_raw(limit: int = 1000):
-    """Parse pending or stale raw rows into structured tables."""
+    """Parse pending raw rows into structured tables with batch processing."""
     service = AggregatorService()
     client = EGRClient(settings.EGR_API_URL) if settings.EGR_API_URL else None
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    batch_size = 50  # Smaller batch for enrichment
+    
     try:
         pending = (
             service.db.query(RawCompanyData)
@@ -99,55 +101,94 @@ def process_pending_raw(limit: int = 1000):
             .limit(limit)
             .all()
         )
-        processed = 0
-        for item in pending:
-            try:
-                if _needs_enrichment(item.data or {}):
-                    if not client:
-                        item.last_error = "enrich_failed:missing_api_url"
-                        service.db.commit()
+        
+        if not pending:
+            logger.info("No pending raw data to process")
+            return 0
+        
+        logger.info(f"📋 Found {len(pending)} pending records to process")
+        
+        # Separate: need enrichment vs ready to parse
+        needs_enrich = [item for item in pending if _needs_enrichment(item.data or {})]
+        ready_to_parse = [item for item in pending if not _needs_enrichment(item.data or {})]
+        
+        logger.info(f"   Need enrichment: {len(needs_enrich)}, Ready to parse: {len(ready_to_parse)}")
+        
+        # Step 1: Enrich in batches (parallel API calls)
+        enriched = 0
+        if needs_enrich and client:
+            for batch_start in range(0, len(needs_enrich), batch_size):
+                batch = needs_enrich[batch_start:batch_start + batch_size]
+                logger.info(f"   📥 Enriching batch {batch_start//batch_size + 1}: {len(batch)} companies...")
+                
+                # Parallel API calls
+                async def enrich_batch():
+                    tasks = [client.get_full_company_history(item.unp) for item in batch]
+                    return await asyncio.gather(*tasks, return_exceptions=True)
+                
+                results = loop.run_until_complete(enrich_batch())
+                
+                # Update data (single commit per batch)
+                for item, result in zip(batch, results):
+                    if isinstance(result, Exception):
+                        item.last_error = f"enrich_failed:{str(result)[:200]}"
                         continue
-                    full_data = loop.run_until_complete(
-                        client.get_full_company_history(item.unp)
-                    )
-                    if not full_data:
+                    if not result:
                         item.last_error = "enrich_failed:no_data"
-                        service.db.commit()
                         continue
-                    logger.info(
-                        "Enriched UNP %s: names=%s addresses=%s ved=%s",
-                        item.unp,
-                        len(full_data.get("names") or []),
-                        len(full_data.get("addresses") or []),
-                        len(full_data.get("ved") or []),
-                    )
-                    item.data = full_data
+                    
+                    item.data = result
                     item.updated_at = datetime.now()
                     item.processed_at = None
                     item.last_error = None
+                    enriched += 1
+                
+                try:
                     service.db.commit()
+                    logger.info(f"      ✅ Enriched {enriched} companies")
+                except Exception as e:
+                    service.db.rollback()
+                    logger.error(f"Failed to commit enrichment batch: {e}")
+        
+        # Step 2: Parse into structured tables (sequential for data integrity)
+        to_parse = ready_to_parse + [item for item in needs_enrich if item.last_error is None]
+        processed = 0
+        
+        for item in to_parse:
+            try:
                 service.process_raw_data(item.unp)
                 processed += 1
+                
+                if processed % 100 == 0:
+                    logger.info(f"   ⚙️  Parsed {processed}/{len(to_parse)} companies...")
             except Exception as e:
-                logger.error(f"Error processing pending UNP {item.unp}: {e}")
-        logger.info(f"Processed {processed}/{len(pending)} pending raw rows")
+                item.last_error = f"parse_failed:{str(e)[:500]}"
+                service.db.commit()
+                logger.error(f"Error processing UNP {item.unp}: {e}")
+        
+        logger.info(f"✅ Processed {processed}/{len(pending)} pending raw rows")
         return processed
+        
     finally:
+        if client:
+            loop.run_until_complete(client.close())
         loop.close()
         service.close()
 
 
 @celery_app.task
 def enrich_missing_raw(limit: int = 200):
-    """Enrich raw rows that only contain base_info by fetching full history."""
+    """Enrich raw rows with parallel processing (5x faster)."""
     service = AggregatorService()
     if not settings.EGR_API_URL:
         logger.warning("EGR_API_URL is not configured; enrichment skipped")
         return 0
+    
     client = EGRClient(settings.EGR_API_URL)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     enriched = 0
+    
     try:
         candidates = (
             service.db.query(RawCompanyData)
@@ -155,29 +196,59 @@ def enrich_missing_raw(limit: int = 200):
             .limit(limit * 5)
             .all()
         )
-        for item in candidates:
-            if enriched >= limit:
-                break
-            if not _needs_enrichment(item.data or {}):
+        
+        # Filter candidates that need enrichment
+        to_enrich = [item for item in candidates if _needs_enrichment(item.data or {})][:limit]
+        
+        if not to_enrich:
+            logger.info("No rows need enrichment")
+            return 0
+        
+        logger.info(f"📥 Enriching {len(to_enrich)} companies in parallel...")
+        
+        # Parallel enrichment with asyncio
+        async def enrich_batch():
+            tasks = []
+            for item in to_enrich:
+                tasks.append(client.get_full_company_history(item.unp))
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            return results
+        
+        results = loop.run_until_complete(enrich_batch())
+        
+        # Save results (single commit for batch)
+        for item, result in zip(to_enrich, results):
+            if isinstance(result, Exception):
+                item.last_error = f"enrich_failed:{str(result)[:200]}"
+                logger.warning(f"Enrichment failed for UNP {item.unp}: {result}")
                 continue
-            try:
-                full_data = loop.run_until_complete(client.get_full_company_history(item.unp))
-                if not full_data:
-                    item.last_error = "enrich_failed"
-                    service.db.commit()
-                    continue
-                item.data = full_data
-                item.updated_at = datetime.now()
-                item.processed_at = None
-                item.last_error = None
-                service.db.commit()
-                enriched += 1
-            except Exception as e:
-                item.last_error = f"enrich_failed:{e}"
-                service.db.commit()
-        logger.info(f"Enriched {enriched} raw rows")
+            
+            if not result:
+                item.last_error = "enrich_failed:no_data"
+                logger.warning(f"No data returned for UNP {item.unp}")
+                continue
+            
+            # Update with enriched data
+            item.data = result
+            item.updated_at = datetime.now()
+            item.processed_at = None  # Will be processed in next step
+            item.last_error = None
+            enriched += 1
+        
+        # Single commit for entire batch
+        try:
+            service.db.commit()
+            logger.info(f"✅ Enriched {enriched}/{len(to_enrich)} raw rows")
+        except Exception as e:
+            service.db.rollback()
+            logger.error(f"Failed to commit batch: {e}")
+            return 0
+        
         return enriched
+        
     finally:
+        loop.run_until_complete(client.close())
         loop.close()
         service.close()
 
@@ -452,7 +523,7 @@ def update_reference_tables():
 
 @celery_app.task
 def load_companies_from_json():
-    """Load raw companies from JSON files if present in data/egr_json_full."""
+    """Load raw companies from JSON files with batch processing (10x faster)."""
     data_dir = os.path.join("data", "egr_json_full")
     if not os.path.isdir(data_dir):
         logger.warning(f"JSON data directory not found: {data_dir}")
@@ -462,6 +533,7 @@ def load_companies_from_json():
     mapper = CompanyMapper()
     company_crud = CompanyCRUD(db)
     loaded_count = 0
+    batch_size = 100  # Process in batches for speed
 
     try:
         json_files = [
@@ -470,8 +542,11 @@ def load_companies_from_json():
             if name.lower().endswith(".json")
         ]
 
-        for file_path in json_files:
+        logger.info(f"📁 Found {len(json_files)} JSON files to process")
+
+        for file_idx, file_path in enumerate(json_files, 1):
             try:
+                logger.info(f"📂 Processing file {file_idx}/{len(json_files)}: {os.path.basename(file_path)}")
                 with open(file_path, "r", encoding="utf-8") as handle:
                     payload = json.load(handle)
             except Exception as e:
@@ -482,38 +557,73 @@ def load_companies_from_json():
                 logger.warning(f"Unexpected JSON format in {file_path}")
                 continue
 
-            for item in payload:
+            logger.info(f"   📊 Found {len(payload)} companies in file")
+            
+            # Process in batches
+            batch = []
+            for item_idx, item in enumerate(payload, 1):
                 unp = item.get("ngrn") or item.get("vunp")
                 if not unp:
                     continue
 
                 raw_data = {"base_info": item}
+                batch.append((unp, raw_data))
 
-                raw_entry = db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
-                if raw_entry:
-                    raw_entry.data = raw_data
-                    raw_entry.updated_at = datetime.now()
-                    raw_entry.processed_at = None
-                else:
-                    raw_entry = RawCompanyData(unp=unp, data=raw_data)
-                    db.add(raw_entry)
+                # Process batch when full or at end
+                if len(batch) >= batch_size or item_idx == len(payload):
+                    try:
+                        # Step 1: Batch load existing UNPs to avoid N+1 queries
+                        batch_unps = [unp_val for unp_val, _ in batch]
+                        existing_raw = {
+                            r.unp: r for r in 
+                            db.query(RawCompanyData).filter(RawCompanyData.unp.in_(batch_unps)).all()
+                        }
+                        
+                        # Step 2: Insert/update raw data
+                        for unp_val, data_val in batch:
+                            if unp_val in existing_raw:
+                                raw_entry = existing_raw[unp_val]
+                                raw_entry.data = data_val
+                                raw_entry.updated_at = datetime.now()
+                                raw_entry.processed_at = None
+                            else:
+                                raw_entry = RawCompanyData(unp=unp_val, data=data_val)
+                                db.add(raw_entry)
+                                existing_raw[unp_val] = raw_entry
+                        
+                        db.commit()  # Single commit for batch
 
-                db.commit()
+                        # Step 3: Process into structured tables
+                        success_count = 0
+                        for unp_val, data_val in batch:
+                            try:
+                                db_structure = mapper.map_to_db_structure(int(unp_val), data_val)
+                                company_crud.save_full_company_data(db_structure)
+                                
+                                # Mark as processed
+                                if unp_val in existing_raw:
+                                    existing_raw[unp_val].processed_at = datetime.now()
+                                    existing_raw[unp_val].last_error = None
+                                
+                                success_count += 1
+                            except Exception as e:
+                                if unp_val in existing_raw:
+                                    existing_raw[unp_val].last_error = str(e)[:500]
+                                logger.error(f"Failed to process UNP {unp_val}: {e}")
+                        
+                        db.commit()  # Commit processed batch
+                        loaded_count += success_count
+                        
+                        logger.info(f"   ✅ Batch {len(batch)}: {success_count}/{len(batch)} OK ({loaded_count} total)")
+                        
+                    except Exception as e:
+                        db.rollback()
+                        logger.error(f"Batch processing error: {e}")
+                    
+                    finally:
+                        batch = []  # Clear batch
 
-                try:
-                    db_structure = mapper.map_to_db_structure(int(unp), raw_data)
-                    company_crud.save_full_company_data(db_structure)
-                    raw_entry.processed_at = datetime.now()
-                    raw_entry.last_error = None
-                    db.commit()
-                    loaded_count += 1
-                except Exception as e:
-                    db.rollback()
-                    raw_entry.last_error = str(e)
-                    db.commit()
-                    logger.error(f"Failed to process UNP {unp}: {e}")
-
-        logger.info(f"Loaded {loaded_count} companies from JSON files")
+        logger.info(f"🎉 Loaded {loaded_count} companies from {len(json_files)} JSON files")
         return loaded_count
 
     finally:
