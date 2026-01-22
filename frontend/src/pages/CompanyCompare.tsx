@@ -38,12 +38,20 @@ const CompanyCompare = () => {
     }}>
       {/* Background Decorative Elements */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
+        <div className="hidden sm:block absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
           backgroundColor: 'hsl(var(--primary) / 0.08)'
         }} />
-        <div className="absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
+        <div className="hidden sm:block absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
           backgroundColor: 'hsl(var(--accent) / 0.06)',
           animationDelay: "2s"
+        }} />
+        {/* Mobile decorative elements */}
+        <div className="sm:hidden absolute top-10 right-10 w-32 h-32 rounded-full blur-2xl animate-pulse dark:opacity-20" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.06)'
+        }} />
+        <div className="sm:hidden absolute bottom-10 left-10 w-24 h-24 rounded-full blur-xl animate-pulse dark:opacity-25" style={{
+          backgroundColor: 'hsl(var(--accent) / 0.05)',
+          animationDelay: "1.5s"
         }} />
       </div>
 
@@ -59,7 +67,7 @@ const CompanyCompare = () => {
         </div>
 
         <div className="space-y-2">
-          <h1 className="text-3xl sm:text-4xl font-bold text-gradient">Сравнение API</h1>
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground">Сравнение API</h1>
           {unp && (
             <div className="flex items-center gap-2">
               <span className="glass px-3 py-1 rounded-full text-sm text-primary font-medium">

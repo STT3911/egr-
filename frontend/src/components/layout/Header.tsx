@@ -65,11 +65,7 @@ export const Header = () => {
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-6 flex-shrink-0">
-            {!isHomePage && (
-              <Link to="/references" className="text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap">
-                Справочники
-              </Link>
-            )}
+            {/* Navigation removed as requested */}
           </nav>
 
           {/* Theme Toggle & Mobile Menu */}
@@ -131,13 +127,6 @@ export const Header = () => {
                   Главная
                 </Link>
               )}
-              <Link
-                to="/references"
-                className="text-muted-foreground hover:text-foreground transition-colors py-2"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                Справочники
-              </Link>
             </nav>
           </motion.div>
         )}
