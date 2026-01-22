@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ArrowLeft } from "lucide-react";
 import { getReferenceData, searchReference, ReferenceItem } from "@/lib/api";
 
 const ReferenceDetail = () => {
@@ -52,6 +53,16 @@ const ReferenceDetail = () => {
   return (
     <div className="min-h-screen bg-background px-4 py-10">
       <div className="max-w-5xl mx-auto space-y-6">
+        {/* Back to Home Button */}
+        <div className="flex items-center justify-start">
+          <Link to="/">
+            <Button variant="ghost" className="flex items-center gap-2 glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300">
+              <ArrowLeft className="w-4 h-4" />
+              На главную
+            </Button>
+          </Link>
+        </div>
+
         <div>
           <h1 className="text-3xl font-bold text-foreground">{type}</h1>
           <p className="text-muted-foreground mt-2">

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Search, ArrowRight, Building2, Loader2 } from "lucide-react";
+import { Search, ArrowRight, Building2, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { lookupCompanies, CompanyLookupResult } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -22,8 +22,29 @@ export const CompanySearch = ({
   const [suggestions, setSuggestions] = useState<CompanyLookupResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [dropdownDirection, setDropdownDirection] = useState<'down' | 'up'>('down');
   const navigate = useNavigate();
   const searchRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  
+  const MAX_SUGGESTIONS = 5;
+
+  // Определяем направление dropdown (вверх или вниз)
+  useEffect(() => {
+    if (showSuggestions && dropdownRef.current && searchRef.current) {
+      const searchRect = searchRef.current.getBoundingClientRect();
+      const dropdownHeight = dropdownRef.current.offsetHeight;
+      const spaceBelow = window.innerHeight - searchRect.bottom;
+      const spaceAbove = searchRect.top;
+      
+      // Если места снизу недостаточно, но сверху больше места - показываем dropdown вверх
+      if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
+        setDropdownDirection('up');
+      } else {
+        setDropdownDirection('down');
+      }
+    }
+  }, [showSuggestions, suggestions]);
 
   // Закрытие подсказок при клике вне компонента
   useEffect(() => {
@@ -91,13 +112,21 @@ export const CompanySearch = ({
     }
 
     // Иначе показываем подсказки
-    setShowSuggestions(true);
+    if (suggestions.length > 0) {
+      setShowSuggestions(true);
+    }
   };
 
   const handleSelectCompany = (unp: number) => {
     navigate(`/company/${unp}`);
     setShowSuggestions(false);
     setQuery("");
+  };
+
+  const handleInputFocus = () => {
+    if (suggestions.length > 0) {
+      setShowSuggestions(true);
+    }
   };
 
   const isHero = variant === "hero";
@@ -117,7 +146,7 @@ export const CompanySearch = ({
               placeholder={placeholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+              onFocus={handleInputFocus}
               className={`border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60 ${
                 isHero ? 'text-base sm:text-lg' : 'text-sm'
               }`}
@@ -144,23 +173,27 @@ export const CompanySearch = ({
       </form>
 
       {/* Dropdown с подсказками */}
-      {showSuggestions && suggestions.length > 0 && (
-        <div
-          style={{ zIndex: 9999 }}
-          className={`absolute top-full mt-2 w-full min-w-full bg-card rounded-lg shadow-xl border border-border ${
-            isHero ? 'max-w-2xl mx-auto left-0 right-0' : ''
-          }`}
-        >
-          <div 
-            className="custom-scrollbar" 
-            style={{ 
-              maxHeight: '300px',
-              overflowY: 'scroll',
-              overflowX: 'hidden',
-              WebkitOverflowScrolling: 'touch'
-            }}
+      <AnimatePresence>
+        {showSuggestions && suggestions.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: dropdownDirection === 'down' ? -10 : 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: dropdownDirection === 'down' ? -10 : 10, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            ref={dropdownRef}
+            style={{ zIndex: 9999 }}
+            className={`absolute ${
+              dropdownDirection === 'down' 
+                ? 'top-full mt-2' 
+                : 'bottom-full mb-2'
+            } w-full min-w-full bg-card rounded-lg shadow-xl border border-border ${
+              isHero ? 'max-w-2xl mx-auto left-0 right-0' : ''
+            }`}
           >
-              {suggestions.map((item, index) => (
+            <div 
+              className="overflow-y-auto max-h-[400px] custom-scrollbar"
+            >
+              {suggestions.slice(0, MAX_SUGGESTIONS).map((item) => (
                 <button
                   key={item.unp}
                   onClick={() => handleSelectCompany(item.unp)}
@@ -188,13 +221,25 @@ export const CompanySearch = ({
                 </button>
               ))}
             </div>
-          {suggestions.length >= 10 && (
-            <div className="px-4 py-2 bg-muted/30 text-xs text-muted-foreground text-center border-t border-border">
-              Показаны первые {suggestions.length} результатов. Уточните запрос для более точного поиска.
+            {suggestions.length > MAX_SUGGESTIONS && (
+              <div className="px-4 py-2 bg-muted/30 text-xs text-muted-foreground text-center border-t border-border">
+                Показаны первые {MAX_SUGGESTIONS} из {suggestions.length} результатов. Уточните запрос для более точного поиска.
+              </div>
+            )}
+            
+            {/* Стрелка направления dropdown */}
+            <div 
+              className={`absolute ${
+                dropdownDirection === 'down'
+                  ? '-top-2 left-4 transform -translate-x-1/2'
+                  : '-bottom-2 left-4 transform -translate-x-1/2 rotate-180'
+              } w-4 h-4 overflow-hidden`}
+            >
+              <div className="w-4 h-4 bg-card border-t border-l border-border transform rotate-45 translate-y-1/2"></div>
             </div>
-          )}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

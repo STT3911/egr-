@@ -8,9 +8,25 @@ export const HeroSection = () => {
     <section className="relative min-h-screen flex items-center justify-center gradient-hero overflow-hidden pt-20">
       {/* Background Elements */}
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-primary/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-accent/10 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-3xl" />
+        <div className="absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.08)'
+        }} />
+        <div className="absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-40" style={{
+          backgroundColor: 'hsl(var(--accent) / 0.06)',
+          animationDelay: "2s"
+        }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full blur-3xl animate-pulse dark:opacity-20" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.03)',
+          animationDelay: "4s"
+        }} />
+        <div className="absolute top-10 right-1/4 w-32 h-32 rounded-full blur-2xl animate-bounce dark:opacity-25" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.06)',
+          animationDelay: "1s"
+        }} />
+        <div className="absolute bottom-10 left-1/4 w-48 h-48 rounded-full blur-2xl animate-bounce dark:opacity-35" style={{
+          backgroundColor: 'hsl(var(--accent) / 0.04)',
+          animationDelay: "3s"
+        }} />
       </div>
 
       <div className="container mx-auto px-4 sm:px-6 relative z-10">
@@ -49,6 +65,7 @@ export const HeroSection = () => {
 
           {/* Search Form */}
           <motion.div
+            id="hero-search"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.3 }}
@@ -67,17 +84,17 @@ export const HeroSection = () => {
             transition={{ duration: 0.6, delay: 0.4 }}
             className="grid grid-cols-2 sm:grid-cols-3 gap-6 sm:gap-8 max-w-xl mx-auto"
           >
-            <div className="text-center">
-              <div className="text-3xl sm:text-4xl font-bold text-foreground">500K+</div>
-              <div className="text-sm text-muted-foreground mt-1">Компаний</div>
+            <div className="text-center glass p-4 rounded-2xl shadow-soft hover:shadow-glow transition-all duration-300">
+              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1">500K+</div>
+              <div className="text-sm text-muted-foreground">Компаний</div>
             </div>
-            <div className="text-center">
-              <div className="text-3xl sm:text-4xl font-bold text-foreground">24/7</div>
-              <div className="text-sm text-muted-foreground mt-1">Доступность</div>
+            <div className="text-center glass p-4 rounded-2xl shadow-soft hover:shadow-glow transition-all duration-300">
+              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1">24/7</div>
+              <div className="text-sm text-muted-foreground">Доступность</div>
             </div>
-            <div className="text-center col-span-2 sm:col-span-1">
-              <div className="text-3xl sm:text-4xl font-bold text-foreground">99.9%</div>
-              <div className="text-sm text-muted-foreground mt-1">Точность</div>
+            <div className="text-center glass p-4 rounded-2xl shadow-soft hover:shadow-glow transition-all duration-300 col-span-2 sm:col-span-1">
+              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1">99.9%</div>
+              <div className="text-sm text-muted-foreground">Точность</div>
             </div>
           </motion.div>
         </div>
@@ -90,7 +107,7 @@ export const HeroSection = () => {
         transition={{ duration: 0.8, delay: 0.6 }}
         className="hidden lg:block absolute left-10 top-1/3 animate-float"
       >
-        <div className="glass p-4 rounded-xl shadow-card">
+        <div className="glass p-4 rounded-xl shadow-card hover:shadow-glow transition-shadow duration-300">
           <Building2 className="w-8 h-8 text-primary mb-2" />
           <p className="text-sm font-medium text-foreground">Реестр ЮЛ и ИП</p>
         </div>
@@ -103,9 +120,34 @@ export const HeroSection = () => {
         className="hidden lg:block absolute right-10 bottom-1/3 animate-float"
         style={{ animationDelay: "1s" }}
       >
-        <div className="glass p-4 rounded-xl shadow-card">
+        <div className="glass p-4 rounded-xl shadow-card hover:shadow-glow transition-shadow duration-300">
           <Shield className="w-8 h-8 text-accent mb-2" />
           <p className="text-sm font-medium text-foreground">Безопасный API</p>
+        </div>
+      </motion.div>
+
+      {/* Additional Decorative Elements */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.8, delay: 0.8 }}
+        className="hidden lg:block absolute right-20 top-20 animate-float"
+        style={{ animationDelay: "2s" }}
+      >
+        <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center shadow-glow">
+          <Zap className="w-8 h-8 text-primary-foreground" />
+        </div>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, scale: 0 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.8, delay: 0.9 }}
+        className="hidden lg:block absolute left-20 bottom-20 animate-float"
+        style={{ animationDelay: "3s" }}
+      >
+        <div className="w-12 h-12 bg-accent/20 rounded-full flex items-center justify-center shadow-soft backdrop-blur-sm">
+          <div className="w-6 h-6 bg-accent rounded-full animate-pulse" />
         </div>
       </motion.div>
     </section>

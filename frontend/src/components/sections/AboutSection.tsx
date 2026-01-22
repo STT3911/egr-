@@ -15,8 +15,24 @@ export const AboutSection = () => {
     <section id="about" className="py-20 sm:py-32 bg-secondary/30 relative overflow-hidden">
       {/* Background Elements */}
       <div className="absolute inset-0">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 left-0 w-72 h-72 bg-accent/5 rounded-full blur-3xl" />
+        <div className="absolute top-0 right-0 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-20" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.05)'
+        }} />
+        <div className="absolute bottom-0 left-0 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
+          backgroundColor: 'hsl(var(--accent) / 0.04)',
+          animationDelay: "2s"
+        }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full blur-3xl dark:opacity-15" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.03)'
+        }} />
+        <div className="absolute top-20 left-10 w-24 h-24 rounded-full blur-xl animate-bounce dark:opacity-30" style={{
+          backgroundColor: 'hsl(var(--accent) / 0.06)',
+          animationDelay: "1s"
+        }} />
+        <div className="absolute bottom-20 right-10 w-32 h-32 rounded-full blur-xl animate-bounce dark:opacity-25" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.05)',
+          animationDelay: "3s"
+        }} />
       </div>
 
       <div className="container mx-auto px-4 sm:px-6 relative z-10">
@@ -66,22 +82,38 @@ export const AboutSection = () => {
           >
             <div className="bg-card rounded-3xl p-8 sm:p-10 shadow-card border border-border">
               <div className="grid grid-cols-2 gap-8">
-                <div className="text-center p-6 rounded-2xl bg-primary/5">
+                <motion.div
+                  className="text-center p-6 rounded-2xl bg-primary/5 hover:bg-primary/10 transition-all duration-300 shadow-soft hover:shadow-glow glass"
+                  whileHover={{ scale: 1.05 }}
+                  transition={{ duration: 0.2 }}
+                >
                   <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">500K+</div>
                   <div className="text-muted-foreground">Компаний в базе</div>
-                </div>
-                <div className="text-center p-6 rounded-2xl bg-accent/5">
+                </motion.div>
+                <motion.div
+                  className="text-center p-6 rounded-2xl bg-accent/5 hover:bg-accent/10 transition-all duration-300 shadow-soft hover:shadow-glow glass"
+                  whileHover={{ scale: 1.05 }}
+                  transition={{ duration: 0.2 }}
+                >
                   <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">20+</div>
                   <div className="text-muted-foreground">Справочников</div>
-                </div>
-                <div className="text-center p-6 rounded-2xl bg-accent/5">
+                </motion.div>
+                <motion.div
+                  className="text-center p-6 rounded-2xl bg-accent/5 hover:bg-accent/10 transition-all duration-300 shadow-soft hover:shadow-glow glass"
+                  whileHover={{ scale: 1.05 }}
+                  transition={{ duration: 0.2 }}
+                >
                   <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">99.9%</div>
                   <div className="text-muted-foreground">Uptime</div>
-                </div>
-                <div className="text-center p-6 rounded-2xl bg-primary/5">
+                </motion.div>
+                <motion.div
+                  className="text-center p-6 rounded-2xl bg-primary/5 hover:bg-primary/10 transition-all duration-300 shadow-soft hover:shadow-glow glass"
+                  whileHover={{ scale: 1.05 }}
+                  transition={{ duration: 0.2 }}
+                >
                   <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">&lt;100ms</div>
                   <div className="text-muted-foreground">Время ответа</div>
-                </div>
+                </motion.div>
               </div>
             </div>
 

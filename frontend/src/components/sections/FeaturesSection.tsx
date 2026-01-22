@@ -70,8 +70,22 @@ const itemVariants = {
 
 export const FeaturesSection = () => {
   return (
-    <section id="features" className="py-20 sm:py-32 bg-background relative">
-      <div className="container mx-auto px-4 sm:px-6">
+    <section id="features" className="py-20 sm:py-32 bg-background relative overflow-hidden">
+      {/* Background Decorative Elements */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-20 left-1/4 w-64 h-64 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.05)'
+        }} />
+        <div className="absolute bottom-20 right-1/4 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
+          backgroundColor: 'hsl(var(--accent) / 0.04)',
+          animationDelay: "2s"
+        }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl dark:opacity-15" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.03)'
+        }} />
+      </div>
+
+      <div className="container mx-auto px-4 sm:px-6 relative z-10">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}

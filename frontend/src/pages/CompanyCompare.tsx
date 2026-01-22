@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ArrowLeft } from "lucide-react";
 import { compareCompanyApis } from "@/lib/api";
 
 const CompanyCompare = () => {
@@ -31,11 +33,40 @@ const CompanyCompare = () => {
   }, [unp]);
 
   return (
-    <div className="min-h-screen bg-background px-4 py-10">
-      <div className="max-w-5xl mx-auto space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Сравнение API</h1>
-          {unp && <p className="text-muted-foreground mt-2">УНП {unp}</p>}
+    <div className="min-h-screen bg-background px-4 py-10 relative overflow-hidden" style={{
+      background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)'
+    }}>
+      {/* Background Decorative Elements */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
+          backgroundColor: 'hsl(var(--primary) / 0.08)'
+        }} />
+        <div className="absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
+          backgroundColor: 'hsl(var(--accent) / 0.06)',
+          animationDelay: "2s"
+        }} />
+      </div>
+
+      <div className="max-w-5xl mx-auto space-y-6 relative z-10">
+        {/* Back to Home Button */}
+        <div className="flex items-center justify-start">
+          <Link to="/">
+            <Button variant="ghost" className="flex items-center gap-2 glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300">
+              <ArrowLeft className="w-4 h-4" />
+              На главную
+            </Button>
+          </Link>
+        </div>
+
+        <div className="space-y-2">
+          <h1 className="text-3xl sm:text-4xl font-bold text-gradient">Сравнение API</h1>
+          {unp && (
+            <div className="flex items-center gap-2">
+              <span className="glass px-3 py-1 rounded-full text-sm text-primary font-medium">
+                УНП {unp}
+              </span>
+            </div>
+          )}
         </div>
 
         {loading && <p className="text-muted-foreground">Загрузка...</p>}
@@ -46,14 +77,21 @@ const CompanyCompare = () => {
         )}
 
         {data && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Сравнение источников</CardTitle>
+          <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
+            <CardHeader className="rounded-t-lg" style={{
+              background: 'linear-gradient(90deg, hsl(var(--accent) / 0.1) 0%, hsl(var(--secondary) / 0.1) 100%)'
+            }}>
+              <CardTitle className="text-gradient flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-accent animate-pulse"></div>
+                Сравнение источников
+              </CardTitle>
             </CardHeader>
-            <CardContent>
-              <pre className="text-sm overflow-x-auto whitespace-pre-wrap">
-                {JSON.stringify(data, null, 2)}
-              </pre>
+            <CardContent className="p-6">
+              <div className="glass p-4 rounded-lg bg-secondary/30">
+                <pre className="text-sm overflow-x-auto whitespace-pre-wrap text-foreground font-mono leading-relaxed">
+                  {JSON.stringify(data, null, 2)}
+                </pre>
+              </div>
             </CardContent>
           </Card>
         )}
