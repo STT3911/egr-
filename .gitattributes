@@ -1,0 +1,33 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Shell scripts should always use LF
+*.sh text eol=lf
+
+# Docker files should use LF
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# SQL files should use LF
+*.sql text eol=lf
+
+# Python files should use LF
+*.py text eol=lf
+
+# Config files should use LF
+*.conf text eol=lf
+*.ini text eol=lf
+.env* text eol=lf
+
+# Markdown files should use LF
+*.md text eol=lf
+
+# Explicitly declare binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

@@ -178,8 +178,10 @@ services:
     container_name: egr_nginx
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
     depends_on:
       - egr-api
       - frontend

@@ -1,14 +1,12 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
-
+# robots.txt for test.tendex.by
 User-agent: *
 Allow: /
+
+# Disallow admin or API docs if needed in future
+# Disallow: /admin/
+
+# Sitemap (uncomment when sitemap is available)
+# Sitemap: https://test.tendex.by/sitemap.xml
+
+# Crawl-delay for all bots
+Crawl-delay: 1
