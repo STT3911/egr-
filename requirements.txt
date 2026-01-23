@@ -14,7 +14,7 @@ asyncpg==0.29.0
 redis==5.0.1
 
 # HTTP клиент
-httpx==0.25.1
+httpx[http2]==0.25.1
 
 # Очереди задач
 celery==5.3.4

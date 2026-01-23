@@ -22,7 +22,7 @@ services:
     image: redis:7-alpine
     container_name: egr_redis
     ports:
-      - "6380:6379"
+      - "6381:6379"
     networks:
       - egr_default
     healthcheck:
@@ -169,11 +169,11 @@ services:
       - egr_default
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
   frontend-dev:
     build:
