@@ -49,40 +49,27 @@ const Index = () => {
       <main className="scroll-smooth">
         <HeroSection />
 
-        {/* Section Divider */}
-        <div className="relative h-24 bg-gradient-to-b from-background via-background/80 to-background">
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-accent/5" />
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-px h-12 bg-gradient-to-b from-primary/20 to-transparent" />
+        {/* Smooth Section Transition */}
+        <div className="relative h-32 bg-gradient-to-b from-background via-background/95 to-background/90">
+          <div className="absolute inset-0 bg-gradient-to-r from-primary/[0.02] via-transparent to-accent/[0.02]" />
         </div>
 
-        <div className="relative">
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/50 to-background pointer-events-none" />
-          <FeaturesSection />
+        <FeaturesSection />
+
+        {/* Smooth Section Transition */}
+        <div className="relative h-32 bg-gradient-to-b from-background/90 via-background/95 to-background">
+          <div className="absolute inset-0 bg-gradient-to-r from-accent/[0.02] via-transparent to-primary/[0.02]" />
         </div>
 
-        {/* Section Divider */}
-        <div className="relative h-24 bg-gradient-to-b from-background via-secondary/30 to-background">
-          <div className="absolute inset-0 bg-gradient-to-r from-accent/5 via-transparent to-primary/5" />
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-px h-12 bg-gradient-to-b from-accent/20 to-transparent" />
+        <AboutSection />
+
+        {/* Smooth Section Transition */}
+        <div className="relative h-32 bg-gradient-to-b from-background via-background/95 to-background/90">
+          <div className="absolute inset-0 bg-gradient-to-r from-primary/[0.02] via-transparent to-accent/[0.02]" />
         </div>
 
-        <div className="relative">
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-secondary/30 to-transparent pointer-events-none" />
-          <AboutSection />
-        </div>
-
-        {/* Section Divider */}
-        <div className="relative h-24 bg-gradient-to-b from-background via-background/80 to-background">
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-accent/5" />
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-px h-12 bg-gradient-to-b from-primary/20 to-transparent" />
-        </div>
-
-        <div className="relative">
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/50 to-background pointer-events-none" />
-          <CTASection />
-        </div>
+        <CTASection />
       </main>
-      <Footer />
     </div>
   );
 };

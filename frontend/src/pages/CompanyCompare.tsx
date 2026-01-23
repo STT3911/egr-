@@ -56,8 +56,14 @@ const CompanyCompare = () => {
       </div>
 
       <div className="max-w-5xl mx-auto space-y-6 relative z-10">
-        {/* Back to Home Button */}
-        <div className="flex items-center justify-start">
+        {/* Navigation Buttons */}
+        <div className="flex items-center justify-start gap-4">
+          <Link to={unp ? `/company/${unp}` : "/"}>
+            <Button variant="ghost" className="flex items-center gap-2 glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300">
+              <ArrowLeft className="w-4 h-4" />
+              К компании
+            </Button>
+          </Link>
           <Link to="/">
             <Button variant="ghost" className="flex items-center gap-2 glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300">
               <ArrowLeft className="w-4 h-4" />
