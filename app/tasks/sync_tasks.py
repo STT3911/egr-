@@ -522,8 +522,17 @@ def update_reference_tables():
 
 
 @celery_app.task
-def load_companies_from_json():
-    """Load raw companies from JSON files with batch processing (10x faster)."""
+def load_companies_from_json(auto_process: bool = True):
+    """
+    Load companies from JSON files into DB with automatic processing.
+    
+    Supports two types of JSON files:
+    1. Full data (with names, addresses, ved) - processes directly into tables
+    2. Base info only - saves to raw_data, needs enrichment later
+    
+    Args:
+        auto_process: If True, automatically process full data into structured tables
+    """
     data_dir = os.path.join("data", "egr_json_full")
     if not os.path.isdir(data_dir):
         logger.warning(f"JSON data directory not found: {data_dir}")
@@ -532,8 +541,11 @@ def load_companies_from_json():
     db = SessionLocal()
     mapper = CompanyMapper()
     company_crud = CompanyCRUD(db)
+    
     loaded_count = 0
-    batch_size = 100  # Process in batches for speed
+    processed_count = 0
+    needs_enrich_count = 0
+    batch_size = 500
 
     try:
         json_files = [
@@ -566,13 +578,20 @@ def load_companies_from_json():
                 if not unp:
                     continue
 
-                raw_data = {"base_info": item}
+                # Detect if this is full data or base_info only
+                if isinstance(item, dict) and any(k in item for k in ["base_info", "names", "addresses", "ved"]):
+                    # Full data format (already has all fields)
+                    raw_data = item
+                else:
+                    # Base info only - needs enrichment
+                    raw_data = {"base_info": item}
+                
                 batch.append((unp, raw_data))
 
                 # Process batch when full or at end
                 if len(batch) >= batch_size or item_idx == len(payload):
                     try:
-                        # Step 1: Batch load existing UNPs to avoid N+1 queries
+                        # Step 1: Batch load existing UNPs
                         batch_unps = [unp_val for unp_val, _ in batch]
                         existing_raw = {
                             r.unp: r for r in 
@@ -582,52 +601,322 @@ def load_companies_from_json():
                         # Step 2: Insert/update raw data
                         for unp_val, data_val in batch:
                             if unp_val in existing_raw:
-                                raw_entry = existing_raw[unp_val]
-                                raw_entry.data = data_val
-                                raw_entry.updated_at = datetime.now()
-                                raw_entry.processed_at = None
+                                existing_entry = existing_raw[unp_val]
+                                # Update if new data is more complete
+                                if not _needs_enrichment(data_val) or _needs_enrichment(existing_entry.data or {}):
+                                    existing_entry.data = data_val
+                                    existing_entry.updated_at = datetime.now()
+                                    existing_entry.processed_at = None
+                                    existing_entry.last_error = None
                             else:
-                                raw_entry = RawCompanyData(unp=unp_val, data=data_val)
+                                raw_entry = RawCompanyData(
+                                    unp=unp_val, 
+                                    data=data_val,
+                                    processed_at=None
+                                )
                                 db.add(raw_entry)
                                 existing_raw[unp_val] = raw_entry
+                                loaded_count += 1
                         
-                        db.commit()  # Single commit for batch
-
-                        # Step 3: Process into structured tables
-                        success_count = 0
-                        for unp_val, data_val in batch:
-                            try:
-                                db_structure = mapper.map_to_db_structure(int(unp_val), data_val)
-                                company_crud.save_full_company_data(db_structure)
-                                
-                                # Mark as processed
-                                if unp_val in existing_raw:
-                                    existing_raw[unp_val].processed_at = datetime.now()
-                                    existing_raw[unp_val].last_error = None
-                                
-                                success_count += 1
-                            except Exception as e:
-                                if unp_val in existing_raw:
-                                    existing_raw[unp_val].last_error = str(e)[:500]
-                                logger.error(f"Failed to process UNP {unp_val}: {e}")
+                        db.commit()
                         
-                        db.commit()  # Commit processed batch
-                        loaded_count += success_count
+                        # Step 3: Auto-process full data into structured tables
+                        if auto_process:
+                            for unp_val, data_val in batch:
+                                # Only process if data is complete
+                                if not _needs_enrichment(data_val):
+                                    try:
+                                        db_structure = mapper.map_to_db_structure(int(unp_val), data_val)
+                                        company_crud.save_full_company_data(db_structure)
+                                        
+                                        # Mark as processed
+                                        if unp_val in existing_raw:
+                                            existing_raw[unp_val].processed_at = datetime.now()
+                                            existing_raw[unp_val].last_error = None
+                                        
+                                        processed_count += 1
+                                    except Exception as e:
+                                        if unp_val in existing_raw:
+                                            existing_raw[unp_val].last_error = str(e)[:500]
+                                        logger.error(f"Failed to process UNP {unp_val}: {e}")
+                                else:
+                                    needs_enrich_count += 1
+                            
+                            db.commit()
                         
-                        logger.info(f"   ✅ Batch {len(batch)}: {success_count}/{len(batch)} OK ({loaded_count} total)")
+                        logger.info(f"   ✅ Batch: {len(batch)} saved, {processed_count} processed total")
                         
                     except Exception as e:
                         db.rollback()
                         logger.error(f"Batch processing error: {e}")
                     
                     finally:
-                        batch = []  # Clear batch
+                        batch = []
 
-        logger.info(f"🎉 Loaded {loaded_count} companies from {len(json_files)} JSON files")
-        return loaded_count
+        logger.info(f"")
+        logger.info(f"🎉 COMPLETE!")
+        logger.info(f"   Loaded: {loaded_count} new records")
+        logger.info(f"   Processed: {processed_count} companies")
+        logger.info(f"   Need enrichment: {needs_enrich_count}")
+        
+        if needs_enrich_count > 0:
+            logger.info(f"")
+            logger.info(f"📌 {needs_enrich_count} records need enrichment:")
+            logger.info(f"   Run: python enrich-data.py")
+        
+        return processed_count
 
     finally:
         db.close()
+
+
+@celery_app.task
+def fetch_period_to_json(start_date: str, end_date: str, output_dir: str = "data/egr_json_full"):
+    """
+    Fetch companies for period from API and save to JSON with FULL data.
+    
+    This task:
+    1. Gets list of UNPs from getBaseInfoByPeriod
+    2. Fetches full company history for each UNP (names, addresses, ved)
+    3. Saves to JSON file with complete data
+    4. JSON can then be quickly loaded without API calls
+    
+    Args:
+        start_date: Start date in DD.MM.YYYY format
+        end_date: End date in DD.MM.YYYY format
+        output_dir: Directory to save JSON files
+    
+    Returns:
+        Number of companies saved to JSON
+    """
+    async def _fetch():
+        client = EGRClient(settings.EGR_API_URL)
+        companies_data = []
+        
+        try:
+            # Step 1: Get list of companies for period
+            logger.info(f"📥 Fetching companies for period {start_date} - {end_date}")
+            base_items = await client.get_base_info_by_period(start_date, end_date)
+            logger.info(f"✅ Found {len(base_items)} companies")
+            
+            # Get unique UNPs
+            unps = set()
+            for item in base_items:
+                unp = item.get("ngrn") or item.get("vunp")
+                if unp:
+                    unps.add(unp)
+            
+            logger.info(f"📋 Total unique UNPs: {len(unps)}")
+            
+            # Step 2: Fetch full data for each company
+            logger.info(f"📥 Fetching full data for {len(unps)} companies...")
+            
+            batch_size = 100
+            unp_list = list(unps)
+            
+            for batch_start in range(0, len(unp_list), batch_size):
+                batch = unp_list[batch_start:batch_start + batch_size]
+                batch_num = batch_start // batch_size + 1
+                total_batches = (len(unp_list) + batch_size - 1) // batch_size
+                
+                logger.info(f"   Batch {batch_num}/{total_batches}: {len(batch)} companies...")
+                
+                # Parallel fetch
+                tasks = [client.get_full_company_history(unp) for unp in batch]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                for unp, result in zip(batch, results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"Failed to fetch UNP {unp}: {result}")
+                        continue
+                    
+                    if result:
+                        companies_data.append({
+                            "unp": unp,
+                            "base_info": result.get("base_info", {}),
+                            "names": result.get("names", []),
+                            "addresses": result.get("addresses", []),
+                            "ved": result.get("ved", [])
+                        })
+                
+                # Rate limiting
+                if batch_start + batch_size < len(unp_list):
+                    await asyncio.sleep(1)
+            
+            logger.info(f"✅ Fetched full data for {len(companies_data)} companies")
+            
+            # Step 3: Save to JSON file
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f"{start_date.replace('.', '-')}_to_{end_date.replace('.', '-')}.json"
+            filepath = os.path.join(output_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(companies_data, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"✅ Saved to {filepath}")
+            logger.info(f"   File size: {os.path.getsize(filepath) / 1024 / 1024:.2f} MB")
+            
+            return len(companies_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching period: {e}")
+            raise
+        finally:
+            await client.close()
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_fetch())
+    finally:
+        loop.close()
+
+
+@celery_app.task
+def auto_fetch_and_load(start_date: str, end_date: str):
+    """
+    Automatic: Fetch from API to JSON, then load JSON to DB.
+    
+    This is a high-level task that combines:
+    1. fetch_period_to_json() - download full data to JSON
+    2. load_companies_from_json() - process JSON into DB
+    
+    Use this for automatic periodic updates.
+    """
+    logger.info(f"🚀 AUTO FETCH AND LOAD: {start_date} - {end_date}")
+    
+    # Step 1: Fetch to JSON
+    logger.info(f"📥 Step 1/2: Fetching from API to JSON...")
+    count = fetch_period_to_json(start_date, end_date)
+    logger.info(f"✅ Fetched {count} companies to JSON")
+    
+    # Step 2: Load from JSON
+    logger.info(f"📂 Step 2/2: Loading from JSON to DB...")
+    processed = load_companies_from_json(auto_process=True)
+    logger.info(f"✅ Processed {processed} companies")
+    
+    logger.info(f"🎉 AUTO FETCH AND LOAD COMPLETE!")
+    return processed
+
+
+@celery_app.task
+def auto_fetch_recent_to_json_and_db(days_back: int = 3):
+    """
+    Automatically fetch recent data (last N days) from API to JSON, then load to DB.
+    
+    This task runs periodically to keep data up-to-date:
+    1. Calculates date range (today - N days to today)
+    2. Fetches full company data from API
+    3. Saves to JSON file
+    4. Immediately processes into DB
+    
+    Args:
+        days_back: Number of days to fetch (default: 3)
+    """
+    from datetime import date, timedelta
+    
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days_back)
+    
+    start_str = start_date.strftime("%d.%m.%Y")
+    end_str = end_date.strftime("%d.%m.%Y")
+    
+    logger.info(f"")
+    logger.info(f"╔═══════════════════════════════════════════════════════════╗")
+    logger.info(f"║  AUTO UPDATE: Fetching last {days_back} days ({start_str} - {end_str})  ║")
+    logger.info(f"╚═══════════════════════════════════════════════════════════╝")
+    logger.info(f"")
+    
+    try:
+        # Fetch and load
+        result = auto_fetch_and_load(start_str, end_str)
+        
+        logger.info(f"")
+        logger.info(f"✅ AUTO UPDATE COMPLETE: {result} companies processed")
+        logger.info(f"")
+        
+        return result
+    except Exception as e:
+        logger.error(f"❌ AUTO UPDATE FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+@celery_app.task
+def auto_fetch_historical_data(start_year: int = 1900, period_months: int = 12):
+    """
+    Automatically fetch ALL historical data from start_year to today.
+    
+    Loads data in periods (default: 1 year at a time) to avoid overwhelming the system.
+    
+    Args:
+        start_year: Year to start from (default: 1900)
+        period_months: Number of months per period (default: 12 = 1 year)
+    
+    Returns:
+        Total number of companies processed
+    """
+    from datetime import date, timedelta
+    from dateutil.relativedelta import relativedelta
+    
+    logger.info("")
+    logger.info("╔═════════════════════════════════════════════════════════════╗")
+    logger.info(f"║  HISTORICAL LOAD: {start_year} → {date.today().year}                    ║")
+    logger.info("╚═════════════════════════════════════════════════════════════╝")
+    logger.info("")
+    
+    start_date = date(start_year, 1, 1)
+    end_date = date.today()
+    
+    current_date = start_date
+    total_processed = 0
+    period_count = 0
+    
+    try:
+        while current_date < end_date:
+            # Calculate period end
+            period_end = current_date + relativedelta(months=period_months)
+            if period_end > end_date:
+                period_end = end_date
+            
+            period_count += 1
+            start_str = current_date.strftime("%d.%m.%Y")
+            end_str = period_end.strftime("%d.%m.%Y")
+            
+            logger.info(f"")
+            logger.info(f"📅 Period {period_count}: {start_str} - {end_str}")
+            logger.info(f"")
+            
+            try:
+                # Fetch and load this period
+                result = auto_fetch_and_load(start_str, end_str)
+                total_processed += result
+                
+                logger.info(f"✅ Period {period_count} complete: {result} companies")
+                
+            except Exception as e:
+                logger.error(f"❌ Period {period_count} failed: {e}")
+                # Continue with next period even if this one failed
+            
+            # Move to next period
+            current_date = period_end + timedelta(days=1)
+        
+        logger.info("")
+        logger.info("╔═════════════════════════════════════════════════════════════╗")
+        logger.info(f"║  HISTORICAL LOAD COMPLETE                                   ║")
+        logger.info(f"║  Total: {total_processed} companies processed                      ║")
+        logger.info(f"║  Periods: {period_count}                                           ║")
+        logger.info("╚═════════════════════════════════════════════════════════════╝")
+        logger.info("")
+        
+        return total_processed
+        
+    except Exception as e:
+        logger.error(f"❌ HISTORICAL LOAD FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 @celery_app.task

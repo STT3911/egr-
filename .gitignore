@@ -87,3 +87,6 @@ celerybeat.pid
 # Temporary files
 *.tmp
 *.temp
+
+# Auto Claude data directory
+.auto-claude/

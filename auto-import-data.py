@@ -63,18 +63,39 @@ def auto_import():
         return True
     
     # Импортировать через Celery задачу
-    logger.info("🚀 Triggering import task...")
+    logger.info("🚀 Starting 3-step import process...")
+    logger.info("")
     try:
-        from app.tasks.sync_tasks import load_companies_from_json
+        from app.tasks.sync_tasks import load_companies_from_json, enrich_missing_raw, process_pending_raw
         
-        # Запустить синхронно (это init скрипт, можем подождать)
-        result = load_companies_from_json()
+        # Step 1: Load base_info from JSON files
+        logger.info("📥 STEP 1/3: Loading base data from JSON files...")
+        loaded = load_companies_from_json()
+        if not loaded or loaded == 0:
+            logger.warning("⚠️  No data was loaded from JSON files")
+            return False
+        logger.info(f"✅ Step 1 complete: {loaded} companies loaded to raw_data")
+        logger.info("")
         
-        if result and result > 0:
-            logger.info(f"✅ Auto-import completed successfully! Loaded {result} companies")
+        # Step 2: Enrich with full data from API
+        logger.info("📥 STEP 2/3: Enriching data from EGR API...")
+        logger.info("   (This may take a while for large datasets)")
+        enriched = enrich_missing_raw(limit=loaded)
+        logger.info(f"✅ Step 2 complete: {enriched}/{loaded} companies enriched")
+        logger.info("")
+        
+        # Step 3: Process into structured tables
+        logger.info("⚙️  STEP 3/3: Processing into structured tables...")
+        processed = process_pending_raw(limit=loaded)
+        logger.info(f"✅ Step 3 complete: {processed} companies processed")
+        logger.info("")
+        
+        if processed > 0:
+            logger.info(f"🎉 Auto-import completed successfully!")
+            logger.info(f"   Total: {processed} companies ready to use")
             return True
         else:
-            logger.warning("⚠️  Import completed but no data was loaded")
+            logger.warning("⚠️  Import completed but no data was processed")
             return False
             
     except Exception as e:

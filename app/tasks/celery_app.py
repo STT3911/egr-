@@ -21,29 +21,46 @@ celery_app.conf.update(
     timezone="Europe/Minsk",
     enable_utc=True,
     beat_schedule={
+        # Historical data load (1900 to today) - runs once per week on Sunday at 1 AM
+        "auto-fetch-historical": {
+            "task": "app.tasks.sync_tasks.auto_fetch_historical_data",
+            "schedule": crontab(day_of_week=0, hour=1, minute=0),  # Sunday 1 AM
+            "args": (1900, 12),  # From 1900, 12 months (1 year) per period
+        },
+        # Auto-fetch from API to JSON, then load to DB (every 6 hours)
+        "auto-fetch-and-load-recent": {
+            "task": "app.tasks.sync_tasks.auto_fetch_recent_to_json_and_db",
+            "schedule": crontab(hour="*/6"),  # Every 6 hours
+            "args": (),
+        },
+        # Process any pending raw data every 30 seconds
+        "process-pending-raw": {
+            "task": "app.tasks.sync_tasks.process_pending_raw",
+            "schedule": timedelta(seconds=30),
+            "args": (2000,),  # 2000 records per batch
+        },
+        # Load existing JSON files (if any) every night at 2 AM
+        "load-from-json": {
+            "task": "app.tasks.sync_tasks.load_companies_from_json",
+            "schedule": crontab(hour=2, minute=0),
+            "args": (True,),  # auto_process=True
+        },
+        # Sync daily changes (backup method) at 3 AM
         "sync-daily-changes": {
             "task": "app.tasks.sync_tasks.sync_daily_changes",
             "schedule": crontab(hour=3, minute=0),
             "args": (),
         },
+        # Update reference tables at 4 AM
+        "update-reference-tables": {
+            "task": "app.tasks.sync_tasks.update_reference_tables",
+            "schedule": crontab(hour=4, minute=0),
+            "args": (),
+        },
+        # Reprocess failed rows on Saturday at 5 AM
         "reprocess-failed-rows": {
             "task": "app.tasks.sync_tasks.reprocess_failed_rows",
             "schedule": crontab(day_of_week=6, hour=5, minute=0),
-            "args": (),
-        },
-        "process-pending-raw": {
-            "task": "app.tasks.sync_tasks.process_pending_raw",
-            "schedule": timedelta(seconds=30),  # INCREASED: Every 30 seconds
-            "args": (2000,),  # INCREASED: 2000 records per batch
-        },
-        "update-reference-tables": {
-            "task": "app.tasks.sync_tasks.update_reference_tables",
-            "schedule": crontab(hour=4, minute=0),  # Каждый день в 4:00
-            "args": (),
-        },
-        "load-from-json": {
-            "task": "app.tasks.sync_tasks.load_companies_from_json",
-            "schedule": crontab(hour=2, minute=0),
             "args": (),
         },
     }

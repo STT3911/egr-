@@ -267,6 +267,7 @@ class CompanyMapper:
                 })
 
         if not names_data:
+            # Try lowercase first (JSON dumps), then uppercase (some API responses)
             fallback_full = (
                 base_info.get("vnaim")
                 or base_info.get("VNAIM")
@@ -274,13 +275,13 @@ class CompanyMapper:
                 or base_info.get("VFIO")
             )
             fallback_short = (
-                base_info.get("vnaimk")
+                base_info.get("vn")  # FIXED: Try lowercase 'vn' first (correct field name)
+                or base_info.get("vnaimk")
                 or base_info.get("VNAIMK")
-                or base_info.get("vn")
                 or base_info.get("VN")
             )
             fallback_by = (
-                base_info.get("vnaimb")
+                base_info.get("vnaimb")  # FIXED: Try lowercase 'vnaimb' first
                 or base_info.get("VNAIMBY")
                 or base_info.get("vnaimby")
             )

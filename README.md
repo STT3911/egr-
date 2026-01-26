@@ -110,42 +110,126 @@ GET /api/v1/references/authorities
 GET /api/v1/references/ved
 ```
 
-## Управление парсингом данных
+## Загрузка данных
 
-### Автоматический парсинг (через Celery)
+### 🚀 Автоматическая загрузка (НОВОЕ!)
+
+**Система работает полностью автоматически!**
+
+При запуске через `docker-compose up`:
+- **Каждые 6 часов**: загружает данные за последние 3 дня из API → JSON → БД
+- **Каждые 30 секунд**: обрабатывает 2000 записей из очереди
+- **Ежедневно в 2:00**: загружает новые JSON файлы
+
+**Схема работы:**
+```
+EGR API → JSON (полные данные) → PostgreSQL
+  ↓           ↓ (быстро)            ↓
+Медленно    Резервная копия      Готово!
+```
+
+**Преимущества:**
+- ✅ В 10-50 раз быстрее старого способа
+- ✅ Автоматическое обновление
+- ✅ JSON файлы как резервная копия
+- ✅ Не нужно обогащение через API
+
+См. **[AUTOMATIC_PARSING.md](AUTOMATIC_PARSING.md)** для деталей
+
+### 📥 Ручная загрузка данных
+
+#### Вариант 1: Загрузить из API в JSON с полными данными (РЕКОМЕНДУЕТСЯ)
+
+**Windows:**
+```cmd
+fetch-to-json.bat
+```
+
+**Linux/Mac:**
+```bash
+./fetch-to-json.sh
+```
+
+Этот способ:
+- Загружает **ПОЛНЫЕ данные** из API (names, addresses, ved)
+- Сохраняет в JSON для быстрой повторной загрузки
+- Автоматически обрабатывает в БД
+- **В 10-50 раз быстрее** старого способа
+
+#### Вариант 2: Загрузить существующие JSON файлы
+
+Если у вас уже есть JSON файлы:
+
+```bash
+python load_json_data.py --sync
+```
+
+Система автоматически определит формат JSON:
+- **Новый формат** (с полными данными) → сразу в БД (быстро)
+- **Старый формат** (только base_info) → требует обогащение (медленно)
+
+#### Вариант 3: Только обогащение старых данных
+
+Если у вас старые JSON с base_info:
+
+```bash
+python enrich-data.py
+```
+
+#### Программный доступ
+
+```python
+from app.tasks.sync_tasks import auto_fetch_and_load
+
+# Загрузить за период: API → JSON → БД
+result = auto_fetch_and_load("01.01.2024", "31.01.2024")
+```
+
+### ⚙️ Управление парсингом данных
+
+#### Автоматический парсинг (через Celery)
 
 Парсинг запускается **автоматически** каждые 30 секунд:
 - Обрабатывает 2000 записей за раз
 - Использует 4 параллельных потока
 - Скорость: ~40,000-120,000 записей/час
 
-### Ручной запуск парсинга
+#### Ручной запуск парсинга
 
 **Windows:**
 ```cmd
-.\run-parsing.bat --limit 5000
+.\run-parsing.bat 5000
 ```
 
 **Linux/Mac:**
 ```bash
-./run-parsing.sh --limit 5000
+./run-parsing.sh 5000
 ```
 
 Параметры:
-- `--limit N` - количество записей (по умолчанию: 1000)
-- `--async` - запустить в фоне через Celery
+- Первый аргумент - количество записей (по умолчанию: 5000)
+- Второй аргумент - `true`/`false` для async режима
 
-### Мониторинг прогресса
+### 📊 Мониторинг прогресса
 
 ```bash
-# Проверить необработанные записи
-docker exec egr_db psql -U postgres -d egr_db -c "SELECT COUNT(*) FILTER (WHERE processed_at IS NULL) AS pending FROM egr_raw_company_data;"
+# Проверить статус загрузки
+docker exec egr_db psql -U postgres -d egr_db -c "
+SELECT 
+    COUNT(*) as total,
+    COUNT(*) FILTER (WHERE processed_at IS NULL) as pending,
+    COUNT(*) FILTER (WHERE last_error IS NOT NULL) as errors,
+    COUNT(*) FILTER (WHERE NOT (data ? 'names')) as needs_enrich
+FROM egr_raw_company_data;
+"
 
-# Проверить статистику компаний
-docker exec egr_db psql -U postgres -d egr_db -c "SELECT COUNT(*) FILTER (WHERE registration_date IS NOT NULL) as with_date, COUNT(*) as total FROM egr_companies;"
+# Проверить обработанные компании
+docker exec egr_db psql -U postgres -d egr_db -c "
+SELECT COUNT(*) as companies FROM egr_companies;
+"
 ```
 
-### Управление Celery
+### 🔧 Управление Celery
 
 ```bash
 # Перезапустить Celery
