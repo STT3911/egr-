@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Moon, Sun } from "lucide-react";
 import { getRawCompanyData } from "@/lib/api";
 
 const CompanyRawData = () => {
@@ -10,7 +10,22 @@ const CompanyRawData = () => {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isDark, setIsDark] = useState(false);
 
+  useEffect(() => {
+    const theme = localStorage.getItem("theme");
+    const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+    if (theme === "dark" || (!theme && systemPrefersDark)) {
+      setIsDark(true);
+      document.documentElement.classList.add("dark");
+    } else {
+      setIsDark(false);
+      document.documentElement.classList.remove("dark");
+    }
+  }, []);
+
+  
   useEffect(() => {
     const load = async () => {
       if (!unp) {
@@ -32,10 +47,31 @@ const CompanyRawData = () => {
     load();
   }, [unp]);
 
+  const toggleTheme = () => {
+    const newTheme = !isDark;
+    setIsDark(newTheme);
+    localStorage.setItem("theme", newTheme ? "dark" : "light");
+
+    if (newTheme) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background px-4 py-10 relative overflow-hidden" style={{
       background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)'
     }}>
+
+      {/* Floating Theme Toggle */}
+      <button
+        onClick={toggleTheme}
+        className="fixed top-6 right-6 z-50 w-12 h-12 rounded-full glass shadow-card hover:shadow-glow transition-all duration-300 flex items-center justify-center"
+        aria-label="Переключить тему"
+      >
+        {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+      </button>
       {/* Background Decorative Elements */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="hidden sm:block absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
