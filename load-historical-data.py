@@ -49,9 +49,9 @@ def main():
             print("❌ Неверный год")
             sys.exit(1)
     
-    period_months = input("Загружать по сколько месяцев за раз? (Enter = 12): ").strip()
+    period_months = input("Загружать по сколько месяцев за раз? (Enter = 60 = 5 лет): ").strip()
     if period_months == "":
-        period_months = 12
+        period_months = 60
     else:
         try:
             period_months = int(period_months)

@@ -25,7 +25,7 @@ celery_app.conf.update(
         "auto-fetch-historical": {
             "task": "app.tasks.sync_tasks.auto_fetch_historical_data",
             "schedule": crontab(day_of_week=0, hour=1, minute=0),  # Sunday 1 AM
-            "args": (1900, 12),  # From 1900, 12 months (1 year) per period
+            "args": (1900, 60),  # From 1900, 60 months (5 years) per period
         },
         # Auto-fetch from API to JSON, then load to DB (every 6 hours)
         "auto-fetch-and-load-recent": {
