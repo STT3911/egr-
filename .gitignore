@@ -90,3 +90,7 @@ celerybeat.pid
 
 # Auto Claude data directory
 .auto-claude/
+data\egr_json_full
+ds.py
+ngrn_list_stats.txt
+ngrn_list.csv
