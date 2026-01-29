@@ -1,224 +1,213 @@
-services:
-  db:
-    image: postgres:15-alpine
-    container_name: egr_db
-    environment:
-      POSTGRES_DB: egr_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 3911
-    volumes:
-      - egr_postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5434:5432"
-    networks:
-      - egr_default
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  services:
+    db:
+      image: postgres:15-alpine
+      container_name: egr_db
+      environment:
+        POSTGRES_DB: egr_db
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: 3911
+      volumes:
+        - egr_postgres_data:/var/lib/postgresql/data
+      ports:
+        - "5434:5432"
+      networks:
+        - egr_default
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U postgres"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
 
-  redis:
-    image: redis:7-alpine
-    container_name: egr_redis
-    ports:
-      - "6381:6379"
-    networks:
-      - egr_default
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+    redis:
+      image: redis:7-alpine
+      container_name: egr_redis
+      ports:
+        - "6381:6379"
+      networks:
+        - egr_default
+      healthcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 10s
+        timeout: 3s
+        retries: 5
 
-  egr-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: egr_api
-    environment:
-      DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: egr_db
-      DB_USER: postgres
-      DB_PASSWORD: 3911
-      REDIS_URL: redis://redis:6379/3
-      CELERY_BROKER_URL: redis://redis:6379/4
-      CELERY_RESULT_BACKEND: redis://redis:6379/5
-      EGR_API_URL: http://egr.gov.by/api/v2/egr
-      EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
-      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
-      LOG_LEVEL: INFO
-    volumes:
-      - .:/app
-      - ./data/egr_json_full:/app/data/egr_json_full
-      - ./data/grp_json:/app/data/grp_json
-    ports:
-      - "8002:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - egr_default
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    command: >
-      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    egr-api:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: egr_api
+      environment:
+        DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
+        DB_HOST: db
+        DB_PORT: 5432
+        DB_NAME: egr_db
+        DB_USER: postgres
+        DB_PASSWORD: 3911
+        REDIS_URL: redis://redis:6379/3
+        CELERY_BROKER_URL: redis://redis:6379/4
+        CELERY_RESULT_BACKEND: redis://redis:6379/5
+        EGR_API_URL: http://egr.gov.by/api/v2/egr
+        EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+        LOG_LEVEL: INFO
+      volumes:
+        - .:/app
+        - ./data/egr_json_full:/app/data/egr_json_full
+      ports:
+        - "8002:8000"
+      depends_on:
+        db:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+      networks:
+        - egr_default
+      restart: unless-stopped
+      healthcheck:
+        test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+        start_period: 30s
+      command: >
+        sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  egr-celery-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: egr_celery_worker
-    environment:
-      DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: egr_db
-      DB_USER: postgres
-      DB_PASSWORD: 3911
-      REDIS_URL: redis://redis:6379/3
-      CELERY_BROKER_URL: redis://redis:6379/4
-      CELERY_RESULT_BACKEND: redis://redis:6379/5
-      EGR_API_URL: http://egr.gov.by/api/v2/egr
-      EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
-      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
-    volumes:
-      - .:/app
-      - ./data/egr_json_full:/app/data/egr_json_full
-      - ./data/grp_json:/app/data/grp_json
-    depends_on:
-      - db
-      - redis
-      - egr-api
-    networks:
-      - egr_default
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 --prefetch-multiplier=2 --max-tasks-per-child=1000
+    egr-celery-worker:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: egr_celery_worker
+      environment:
+        DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
+        DB_HOST: db
+        DB_PORT: 5432
+        DB_NAME: egr_db
+        DB_USER: postgres
+        DB_PASSWORD: 3911
+        REDIS_URL: redis://redis:6379/3
+        CELERY_BROKER_URL: redis://redis:6379/4
+        CELERY_RESULT_BACKEND: redis://redis:6379/5
+        EGR_API_URL: http://egr.gov.by/api/v2/egr
+        EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+      volumes:
+        - .:/app
+        - ./data/egr_json_full:/app/data/egr_json_full
+      depends_on:
+        - db
+        - redis
+        - egr-api
+      networks:
+        - egr_default
+      command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 --prefetch-multiplier=2 --max-tasks-per-child=1000
 
-  egr-celery-beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: egr_celery_beat
-    environment:
-      DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: egr_db
-      DB_USER: postgres
-      DB_PASSWORD: 3911
-      REDIS_URL: redis://redis:6379/3
-      CELERY_BROKER_URL: redis://redis:6379/4
-      CELERY_RESULT_BACKEND: redis://redis:6379/5
-      EGR_API_URL: http://egr.gov.by/api/v2/egr
-      EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
-      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
-    volumes:
-      - .:/app
-      - ./data/egr_json_full:/app/data/egr_json_full
-      - ./data/grp_json:/app/data/grp_json
-    depends_on:
-      - db
-      - redis
-      - egr-api
-    networks:
-      - egr_default
-    command: celery -A app.tasks.celery_app beat --loglevel=info
+    egr-celery-beat:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: egr_celery_beat
+      environment:
+        DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
+        DB_HOST: db
+        DB_PORT: 5432
+        DB_NAME: egr_db
+        DB_USER: postgres
+        DB_PASSWORD: 3911
+        REDIS_URL: redis://redis:6379/3
+        CELERY_BROKER_URL: redis://redis:6379/4
+        CELERY_RESULT_BACKEND: redis://redis:6379/5
+        EGR_API_URL: http://egr.gov.by/api/v2/egr
+        EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+      volumes:
+        - .:/app
+        - ./data/egr_json_full:/app/data/egr_json_full
+      depends_on:
+        - db
+        - redis
+        - egr-api
+      networks:
+        - egr_default
+      command: celery -A app.tasks.celery_app beat --loglevel=info
 
-  data-init:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: egr_data_init
-    environment:
-      DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: egr_db
-      DB_USER: postgres
-      DB_PASSWORD: 3911
-      REDIS_URL: redis://redis:6379/3
-      CELERY_BROKER_URL: redis://redis:6379/4
-      CELERY_RESULT_BACKEND: redis://redis:6379/5
-      EGR_API_URL: http://egr.gov.by/api/v2/egr
-      EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
-      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
-      LOG_LEVEL: INFO
-    volumes:
-      - .:/app
-      - ./data/egr_json_full:/app/data/egr_json_full
-      - ./data/grp_json:/app/data/grp_json
-    depends_on:
-      - db
-      - redis
-      - egr-api
-    networks:
-      - egr_default
-    command: /bin/bash /app/docker-init-data.sh
+    data-init:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: egr_data_init
+      environment:
+        DATABASE_URL: postgresql://postgres:3911@db:5432/egr_db?client_encoding=utf8
+        DB_HOST: db
+        DB_PORT: 5432
+        DB_NAME: egr_db
+        DB_USER: postgres
+        DB_PASSWORD: 3911
+        REDIS_URL: redis://redis:6379/3
+        CELERY_BROKER_URL: redis://redis:6379/4
+        CELERY_RESULT_BACKEND: redis://redis:6379/5
+        EGR_API_URL: http://egr.gov.by/api/v2/egr
+        EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+        LOG_LEVEL: INFO
+      volumes:
+        - .:/app
+        - ./data/egr_json_full:/app/data/egr_json_full
+      depends_on:
+        - db
+        - redis
+        - egr-api
+      networks:
+        - egr_default
+      command: /bin/bash /app/docker-init-data.sh
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_URL: ""
-    container_name: egr_frontend
-    ports:
-      - "3000:80"
-    networks:
-      - egr_default
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    frontend:
+      build:
+        context: ./frontend
+        dockerfile: Dockerfile
+        args:
+          VITE_API_URL: ""
+      container_name: egr_frontend
+      ports:
+        - "3000:80"
+      networks:
+        - egr_default
+      restart: unless-stopped
+      healthcheck:
+        test: ["CMD-SHELL", "curl -f http://127.0.0.1/ || exit 1"]
+        interval: 10s
+        timeout: 5s
+        retries: 3
+        start_period: 30s
 
-  frontend-dev:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
-    container_name: egr_frontend_dev
-    environment:
-      VITE_API_URL: http://localhost:8002
-    ports:
-      - "5173:5173"
-    networks:
-      - egr_default
-    profiles:
-      - dev
+    frontend-dev:
+      build:
+        context: ./frontend
+        dockerfile: Dockerfile.dev
+      container_name: egr_frontend_dev
+      environment:
+        VITE_API_URL: http://localhost:8002
+      ports:
+        - "5173:5173"
+      networks:
+        - egr_default
+      profiles:
+        - dev
 
-  egr-nginx:
-    image: nginx:1.25-alpine
-    container_name: egr_nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    depends_on:
-      egr-api:
-        condition: service_healthy
-      frontend:
-        condition: service_healthy
-    networks:
-      - egr_default
-    restart: unless-stopped
+    egr-nginx:
+      image: nginx:1.25-alpine
+      container_name: egr_nginx
+      ports:
+        - "80:80"
+        - "443:443"
+      volumes:
+        - ./nginx/conf.d:/etc/nginx/conf.d:ro
+        - ./ssl:/etc/nginx/ssl:ro
+        - ./nginx-entrypoint.sh:/docker-entrypoint.d/40-check-ssl.sh:ro  # Добавится к стандартным
+      depends_on:
+        egr-api:
+          condition: service_healthy
+        frontend:
+          condition: service_healthy
+      networks:
+        - egr_default
+      restart: unless-stopped
 
-networks:
-  egr_default:
-    driver: bridge
-
-volumes:
-  egr_postgres_data:
-    driver: local
+  volumes:
+    egr_postgres_data:
+      driver: local
