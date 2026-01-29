@@ -267,7 +267,7 @@ class CompanyMapper:
                 })
 
         if not names_data:
-            # Try lowercase first (JSON dumps), then uppercase (some API responses)
+                # Try lowercase first (JSON dumps), then uppercase (some API responses)
             fallback_full = (
                 base_info.get("vnaim")
                 or base_info.get("VNAIM")
