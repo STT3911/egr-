@@ -48,10 +48,12 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/5
       EGR_API_URL: http://egr.gov.by/api/v2/egr
       EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
       LOG_LEVEL: INFO
     volumes:
       - .:/app
       - ./data/egr_json_full:/app/data/egr_json_full
+      - ./data/grp_json:/app/data/grp_json
     ports:
       - "8002:8000"
     depends_on:
@@ -88,9 +90,11 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/5
       EGR_API_URL: http://egr.gov.by/api/v2/egr
       EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
     volumes:
       - .:/app
       - ./data/egr_json_full:/app/data/egr_json_full
+      - ./data/grp_json:/app/data/grp_json
     depends_on:
       - db
       - redis
@@ -116,9 +120,11 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/5
       EGR_API_URL: http://egr.gov.by/api/v2/egr
       EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
     volumes:
       - .:/app
       - ./data/egr_json_full:/app/data/egr_json_full
+      - ./data/grp_json:/app/data/grp_json
     depends_on:
       - db
       - redis
@@ -144,10 +150,12 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/5
       EGR_API_URL: http://egr.gov.by/api/v2/egr
       EGR_MOBILE_API_URL: https://egr.gov.by/egrmobile/api/v1
+      GRP_API_URL: http://grp.nalog.gov.by/api/grp-public/data
       LOG_LEVEL: INFO
     volumes:
       - .:/app
       - ./data/egr_json_full:/app/data/egr_json_full
+      - ./data/grp_json:/app/data/grp_json
     depends_on:
       - db
       - redis

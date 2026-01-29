@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Moon, Sun } from "lucide-react";
-import { getCompanyProfile, CompanyProfile } from "@/lib/api";
+import { getCompanyProfile, CompanyProfile, getGrpTaxpayerData, GrpTaxpayerData } from "@/lib/api";
 
 const fieldLabels: Record<string, string> = {
   current_name_ru: "Полное название",
@@ -24,6 +24,9 @@ const Company = () => {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [grpData, setGrpData] = useState<GrpTaxpayerData | null>(null);
+  const [grpLoading, setGrpLoading] = useState(false);
+  const [grpError, setGrpError] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
 
@@ -67,6 +70,28 @@ const Company = () => {
     load();
   }, [unp]);
 
+  const loadGrp = async (forceRefresh = false) => {
+    if (!unp) return;
+    setGrpLoading(true);
+    setGrpError(null);
+    try {
+      const data = await getGrpTaxpayerData(unp, forceRefresh);
+      setGrpData(data);
+    } catch (err) {
+      setGrpError(err instanceof Error ? err.message : "Ошибка загрузки данных ГРП");
+      setGrpData(null);
+    } finally {
+      setGrpLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // Load cached GRP record (if present). User can force refresh from UI.
+    if (!unp) return;
+    loadGrp(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unp]);
+
   const toggleTheme = () => {
     const newTheme = !isDark;
     setIsDark(newTheme);
@@ -77,6 +102,23 @@ const Company = () => {
     } else {
       document.documentElement.classList.remove("dark");
     }
+  };
+
+  const formatUpdatedAtUTC = (iso?: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+
+    return (
+      new Intl.DateTimeFormat("ru-RU", {
+        timeZone: "UTC",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(d) + " UTC"
+    );
   };
 
   return (
@@ -128,7 +170,7 @@ const Company = () => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground leading-tight">
-              {profile?.name || "Профиль компании"}
+              {profile?.current_name_ru || profile?.current_short_name_ru || "Профиль компании"}
             </h1>
             {unp && (
               <div className="flex items-center gap-2">
@@ -174,10 +216,11 @@ const Company = () => {
               </CardHeader>
               <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
                 {Object.entries(fieldLabels).map(([key, label]) => {
-                  const value = (profile as Record<string, string | undefined>)[key];
-                  if (!value) {
+                  const rawValue = (profile as Record<string, unknown>)[key];
+                  if (rawValue === undefined || rawValue === null || rawValue === "") {
                     return null;
                   }
+                  const value = typeof rawValue === "string" ? rawValue : String(rawValue);
                   return (
                     <div key={key} className="glass p-3 sm:p-4 rounded-lg hover:bg-primary/5 dark:hover:bg-primary/10 transition-all duration-300">
                       <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">{label}</span>
@@ -432,6 +475,100 @@ const Company = () => {
               </CardContent>
             </Card>
           )}
+
+          {/* Данные налоговой (GRP) */}
+          <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/15">
+            <CardHeader className="rounded-t-lg" style={{
+              background: 'linear-gradient(90deg, hsl(var(--primary) / 0.08) 0%, hsl(var(--secondary) / 0.08) 100%)'
+            }}>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                  Данные налоговой
+                </CardTitle>
+                {unp && (
+                  <Button
+                    variant="outline"
+                    className="w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300"
+                    onClick={() => loadGrp(true)}
+                    disabled={grpLoading}
+                  >
+                    {grpLoading ? "Обновление..." : "Обновить"}
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 sm:p-6">
+              {grpLoading && !grpData && (
+                <p className="text-muted-foreground text-sm">Загрузка данных из налоговой...</p>
+              )}
+
+              {grpError && (
+                <div className="glass p-3 rounded-lg border border-destructive/30 text-destructive text-sm mb-4">
+                  {grpError}
+                </div>
+              )}
+
+              {!grpLoading && !grpError && !grpData && (
+                <p className="text-muted-foreground text-sm">
+                  Данных пока нет. Нажмите «Обновить», чтобы подтянуть информацию из ГРП.
+                </p>
+              )}
+
+              {grpData && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <tbody className="divide-y divide-border/50">
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Полное наименование</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.full_name || "—"}</td>
+                      </tr>
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Краткое наименование</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.short_name || "—"}</td>
+                      </tr>
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Дата регистрации</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.registration_date || "—"}</td>
+                      </tr>
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Инспекция (код)</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.inspectorate_code || "—"}</td>
+                      </tr>
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Инспекция (название)</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.inspectorate_name || "—"}</td>
+                      </tr>
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Код состояния</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.status_code || "—"}</td>
+                      </tr>
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Дата изменения состояния</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.status_date || "—"}</td>
+                      </tr>
+                      <tr className="hover:bg-primary/5 transition-colors">
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Адрес (ГРП)</td>
+                        <td className="py-2 font-medium text-foreground">{grpData.address || "—"}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  {grpData.last_error && (
+                    <div className="mt-4 text-xs text-muted-foreground">
+                      Последняя ошибка обновления: <span className="text-destructive">{grpData.last_error}</span>
+                    </div>
+                  )}
+                  {grpData.updated_at && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Обновлено (UTC): {formatUpdatedAtUTC(grpData.updated_at)}
+                    </div>
+                  )}
+
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
         )}
       </div>

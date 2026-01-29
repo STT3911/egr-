@@ -11,27 +11,41 @@ export type CompanyLookupResult = {
 };
 
 export type CompanyProfile = {
-  unp: string;
-  name: string;
-  status?: string;
-  status_code?: string;
-  address?: string;
+  unp: number;
+  current_status_code?: number;
+  current_status_name?: string;
   registration_date?: string;
-  last_update?: string;
-  oked?: string;
-  oked_name?: string;
-  opf?: string;
-  opf_name?: string;
-  region?: string;
-  district?: string;
-  city?: string;
-  inspectorate?: string;
-  kfv?: string;
-  kfv_name?: string;
-  kfsp?: string;
-  kfsp_name?: string;
-  medium?: string;
-  medium_name?: string;
+  liquidation_date?: string;
+  current_name_ru?: string;
+  current_short_name_ru?: string;
+  current_name_by?: string;
+  names: {
+    full_name_ru?: string;
+    short_name_ru?: string;
+    full_name_by?: string;
+    valid_from?: string;
+    valid_to?: string;
+  }[];
+  addresses: {
+    full_address?: string;
+    postal_code?: number;
+    region?: string;
+    district?: string;
+    valid_from?: string;
+    valid_to?: string;
+  }[];
+  ved: {
+    ved_code?: string;
+    ved_name?: string;
+    valid_from?: string;
+    valid_to?: string;
+  }[];
+  contacts: {
+    email?: string;
+    website?: string;
+    phone?: string;
+    fax?: string;
+  }[];
 };
 
 export type ReferenceItem = {
@@ -55,14 +69,41 @@ const toQuery = (params: Record<string, string | number | undefined>) => {
   return search.toString();
 };
 
-const request = async <T>(path: string) => {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+const request = async <T>(path: string, init?: RequestInit) => {
+  const headers = new Headers(init?.headers || {});
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json");
+  }
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+  });
   if (!response.ok) {
     const data = (await response.json().catch(() => ({}))) as ApiError;
     const message = data.detail || data.message || "Request failed";
     throw new Error(message);
   }
   return response.json() as Promise<T>;
+};
+
+export type GrpTaxpayerData = {
+  unp: number;
+  full_name?: string;
+  short_name?: string;
+  registration_date?: string;
+  inspectorate_code?: string;
+  inspectorate_name?: string;
+  status_code?: string;
+  status_date?: string;
+  address?: string;
+  fetched_at?: string;
+  updated_at?: string;
+  http_status?: number;
+  last_error?: string;
+  raw?: Record<string, unknown>;
 };
 
 export type CompanyLookupResponse = {
@@ -89,6 +130,21 @@ export const getRawCompanyData = async (unp: string) => {
 export const compareCompanyApis = async (unp: string) => {
   return request<Record<string, unknown>>(
     `/api/v1/companies/${encodeURIComponent(unp)}/compare`
+  );
+};
+
+export const getGrpTaxpayerData = async (unp: string, forceRefresh = false) => {
+  const qs = forceRefresh ? "?force_refresh=true" : "";
+  return request<GrpTaxpayerData>(
+    `/api/v1/grp/${encodeURIComponent(unp)}${qs}`
+  );
+};
+
+export const syncGrpTaxpayerData = async (onlyMissing = true, limit = 5000) => {
+  const qs = toQuery({ only_missing: onlyMissing ? 1 : 0, limit });
+  return request<{ queued: boolean; task_id: string; limit: number; only_missing: boolean }>(
+    `/api/v1/grp/sync?${qs}`,
+    { method: "POST" }
   );
 };
 
