@@ -57,6 +57,13 @@ celery_app.conf.update(
             "schedule": crontab(hour=4, minute=0),
             "args": (),
         },
+        # Fetch GRP (налоговая) data for companies (daily, only missing)
+        "sync-grp-missing": {
+            "task": "app.tasks.sync_tasks.sync_grp_for_all",
+            "schedule": crontab(hour=5, minute=0),
+            "args": (),
+            "kwargs": {"limit": 5000, "only_missing": True},
+        },
         # Reprocess failed rows on Saturday at 5 AM
         "reprocess-failed-rows": {
             "task": "app.tasks.sync_tasks.reprocess_failed_rows",

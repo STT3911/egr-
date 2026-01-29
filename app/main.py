@@ -1,7 +1,7 @@
 """Main FastAPI application"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.endpoints import companies, references
+from app.api.v1.endpoints import companies, references, grp
 from app.core.config import settings
 from app.core.logger import logger
 
@@ -26,6 +26,7 @@ app.add_middleware(
 # Include routers
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])
 app.include_router(references.router, prefix="/api/v1/references", tags=["References"])
+app.include_router(grp.router, prefix="/api/v1/grp", tags=["GRP"])
 
 
 @app.on_event("startup")

@@ -11,7 +11,9 @@ from app.services.aggregator import AggregatorService
 from app.services.mapper_service import CompanyMapper
 from app.crud.company import CompanyCRUD
 from app.services.egr_client import EGRClient
-from app.database.models import SystemState, RawCompanyData
+from app.services.grp_client import GRPClient
+from app.database.models import SystemState, RawCompanyData, GrpTaxpayerData
+from app.crud.grp import GrpCRUD
 from app.core.database import SessionLocal
 
 logger = get_logger("tasks")
@@ -957,3 +959,416 @@ def initial_data_load():
         service.close()
 
 
+@celery_app.task(bind=True, max_retries=2, time_limit=3600, soft_time_limit=3500)
+def sync_grp_for_all(self, limit: int = 5000, only_missing: bool = True, batch_size: int = 50):
+    """Fetch GRP (налоговая) data for companies from our DB and store into grp_taxpayer_data.
+
+    This task is intentionally conservative (batch processing) to avoid overload / timeouts.
+    """
+    from app.database.models import Company, GrpTaxpayerData  # local import to avoid cyclic
+    from app.crud.grp import GrpCRUD
+    from app.services.grp_client import GRPClient
+    from sqlalchemy import and_
+
+    db = SessionLocal()
+    try:
+        base_query = db.query(Company.unp)
+        if only_missing:
+            base_query = (
+                base_query
+                .outerjoin(GrpTaxpayerData, Company.unp == GrpTaxpayerData.unp)
+                .filter(GrpTaxpayerData.unp == None)  # noqa: E711
+            )
+
+        unps = [row[0] for row in base_query.order_by(Company.unp.asc()).limit(limit).all()]
+
+        if not unps:
+            logger.info("GRP sync: nothing to do")
+            return {"processed": 0, "errors": 0, "limit": limit, "only_missing": only_missing}
+
+        logger.info(f"GRP sync: starting for {len(unps)} companies (only_missing={only_missing})")
+
+        async def _fetch_batch(batch_unps):
+            client = GRPClient()
+            sem = asyncio.Semaphore(3)  # Conservative concurrency to avoid rate limits
+
+            async def _one(u: int):
+                async with sem:
+                    max_retries = 3
+                    base_delay = 1.5
+
+                    for retry in range(max_retries):
+                        try:
+                            payload = await client.get_taxpayer(int(u))
+                            # Add delay between successful requests
+                            await asyncio.sleep(base_delay)
+                            return int(u), payload, 200, None
+                        except Exception as e:
+                            error_msg = str(e)
+                            if "429" in error_msg and retry < max_retries - 1:
+                                # Rate limit - exponential backoff
+                                delay = base_delay * (2 ** retry)
+                                logger.warning(f"Rate limit for UNP {u}, retry {retry+1}/{max_retries} after {delay}s")
+                                await asyncio.sleep(delay)
+                                continue
+                            elif ("Server disconnected" in error_msg or "timeout" in error_msg.lower()) and retry < max_retries - 1:
+                                # Connection issues - shorter retry
+                                delay = base_delay * (retry + 1)
+                                logger.warning(f"Connection issue for UNP {u}, retry {retry+1}/{max_retries} after {delay}s")
+                                await asyncio.sleep(delay)
+                                continue
+                            else:
+                                return int(u), None, None, error_msg
+
+                    return int(u), None, None, f"Failed after {max_retries} retries"
+
+            try:
+                results = await asyncio.gather(*(_one(u) for u in batch_unps))
+                return results
+            finally:
+                await client.close()
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        processed = 0
+        errors = 0
+
+        crud = GrpCRUD(db)
+
+        try:
+            for i in range(0, len(unps), batch_size):
+                batch = unps[i:i + batch_size]
+                results = loop.run_until_complete(_fetch_batch(batch))
+
+                for u, payload, status, err in results:
+                    if err:
+                        errors += 1
+                    crud.upsert_from_api(unp=u, payload=payload if isinstance(payload, dict) else None, http_status=status, error=err)
+                    processed += 1
+
+                db.commit()
+                logger.info(f"GRP sync: processed {processed}/{len(unps)}")
+
+        finally:
+            loop.close()
+
+        logger.info(f"GRP sync finished: processed={processed}, errors={errors}")
+        return {"processed": processed, "errors": errors, "limit": limit, "only_missing": only_missing}
+
+    except Exception as e:
+        logger.error(f"GRP sync failed: {e}")
+        raise self.retry(exc=e, countdown=300)
+    finally:
+        db.close()
+
+
+@celery_app.task
+def fetch_grp_to_json(limit: int = 10000, only_missing: bool = True, output_dir: str = "data/grp_json"):
+    """
+    Fetch GRP taxpayer data from API and save to JSON.
+
+    This task:
+    1. Gets list of UNPs from database (companies that need GRP data)
+    2. Fetches taxpayer data for each UNP from GRP API
+    3. Saves to JSON file
+    4. JSON can then be quickly loaded without API calls
+
+    Args:
+        limit: Maximum number of UNPs to process
+        only_missing: If True, only fetch UNPs that don't have GRP data yet
+        output_dir: Directory to save JSON files
+
+    Returns:
+        Number of taxpayers saved to JSON
+    """
+    async def _fetch():
+        client = GRPClient()
+        taxpayers_data = []
+
+        try:
+            # Step 1: Get list of UNPs to process
+            db = SessionLocal()
+            try:
+                query = db.query(RawCompanyData.unp)
+                if only_missing:
+                    # Only UNPs that don't have GRP data
+                    existing_grp_unps = db.query(GrpTaxpayerData.unp).subquery()
+                    query = query.filter(~RawCompanyData.unp.in_(existing_grp_unps))
+
+                unps = [row[0] for row in query.order_by(RawCompanyData.unp.asc()).limit(limit).all()]
+                logger.info(f"📋 Found {len(unps)} UNPs to fetch GRP data for")
+            finally:
+                db.close()
+
+            if not unps:
+                logger.info("No UNPs to process")
+                return 0
+
+            # Step 2: Fetch GRP data for each UNP (parallel with controlled concurrency)
+            logger.info(f"📥 Fetching GRP data for {len(unps)} taxpayers (parallel mode with rate limiting)...")
+
+            successful_fetches = 0
+            max_retries = 3
+            base_delay = 1.15  # Base delay between requests in seconds
+            concurrency_limit = 4  # Allow 4 concurrent requests
+
+            async def fetch_single_unp(unp: int):
+                nonlocal successful_fetches
+
+                retry_count = 0
+                while retry_count < max_retries:
+                    try:
+                        result = await client.get_taxpayer(unp)
+
+                        if result and isinstance(result, dict):
+                            # Transform to our internal format
+                            # GRP API returns keys in lowercase
+                            taxpayer_record = {
+                                "unp": unp,
+                                "full_name": result.get("vnaimp") or result.get("VNAIMP"),
+                                "short_name": result.get("vnaimk") or result.get("VNAIMK"),
+                                "registration_date": result.get("dreg") or result.get("DREG"),
+                                "inspectorate_code": result.get("nmns") or result.get("NMNS"),
+                                "inspectorate_name": result.get("vmns") or result.get("VMNS"),
+                                "status_code": result.get("ckodsost") or result.get("CKODSOST"),
+                                "status_date": result.get("dlikv") or result.get("DLIKV"),
+                                "address": result.get("vpadres") or result.get("VPADRES"),
+                                "raw": result  # Store full raw response
+                            }
+                            taxpayers_data.append(taxpayer_record)
+                            successful_fetches += 1
+                            return f"✅ UNP {unp}"
+                        else:
+                            logger.warning(f"Empty or invalid data returned for UNP {unp}: {result}")
+                            return f"⚠️ UNP {unp} - empty data"
+                        break  # Success or empty data, exit retry loop
+
+                    except Exception as e:
+                        retry_count += 1
+                        error_msg = str(e) or "Unknown error"
+
+                        if "429" in error_msg:
+                            # Rate limit hit - exponential backoff
+                            delay = base_delay * (2 ** retry_count)
+                            logger.warning(f"Rate limit hit for UNP {unp}, retry {retry_count}/{max_retries} after {delay}s: {error_msg}")
+                            if retry_count < max_retries:
+                                await asyncio.sleep(delay)
+                                continue
+                        elif "Server disconnected" in error_msg or "timeout" in error_msg.lower():
+                            # Connection issues - shorter retry
+                            delay = base_delay * retry_count
+                            logger.warning(f"Connection issue for UNP {unp}, retry {retry_count}/{max_retries} after {delay}s: {error_msg}")
+                            if retry_count < max_retries:
+                                await asyncio.sleep(delay)
+                                continue
+                        elif "404" in error_msg or "Not Found" in error_msg:
+                            # UNP not found - don't retry
+                            logger.warning(f"UNP {unp} not found in GRP (404): {error_msg}")
+                            return f"❌ UNP {unp} - not found"
+                        else:
+                            # Other errors - don't retry
+                            logger.warning(f"Failed to fetch GRP data for UNP {unp}: {error_msg}")
+                            return f"❌ UNP {unp} - error: {error_msg[:50]}"
+                            break
+
+                return f"❌ UNP {unp} - failed after retries"
+
+            # Process in batches with controlled concurrency
+            semaphore = asyncio.Semaphore(concurrency_limit)
+
+            async def fetch_with_semaphore(unp):
+                async with semaphore:
+                    result = await fetch_single_unp(unp)
+                    # Small delay between requests even with concurrency
+                    await asyncio.sleep(base_delay)
+                    return result
+
+            # Process all UNPs with progress reporting
+            tasks = [fetch_with_semaphore(unp) for unp in unps]
+            results = []
+
+            # Process in chunks to show progress
+            chunk_size = concurrency_limit * 10  # Show progress every 30 requests
+            for i in range(0, len(tasks), chunk_size):
+                chunk = tasks[i:i + chunk_size]
+                chunk_results = await asyncio.gather(*chunk, return_exceptions=True)
+                results.extend(chunk_results)
+
+                processed = min(i + chunk_size, len(unps))
+                logger.info(f"   Processed {processed}/{len(unps)} taxpayers...")
+
+            # Log final results summary
+            success_count = sum(1 for r in results if isinstance(r, str) and r.startswith("✅"))
+            error_count = sum(1 for r in results if isinstance(r, str) and r.startswith("❌"))
+            warning_count = sum(1 for r in results if isinstance(r, str) and r.startswith("⚠️"))
+
+            logger.info(f"   Results: ✅ {success_count} successful, ⚠️ {warning_count} warnings, ❌ {error_count} errors")
+
+            logger.info(f"✅ Fetched GRP data for {successful_fetches} taxpayers")
+
+            # Step 3: Save to JSON file
+            if taxpayers_data:
+                os.makedirs(output_dir, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"grp_taxpayers_{timestamp}.json"
+                filepath = os.path.join(output_dir, filename)
+
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(taxpayers_data, f, ensure_ascii=False, indent=2)
+
+                logger.info(f"✅ Saved to {filepath}")
+                logger.info(f"   File size: {os.path.getsize(filepath) / 1024 / 1024:.2f} MB")
+            else:
+                logger.info("No data to save")
+                return 0
+
+            return len(taxpayers_data)
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching GRP data: {e}")
+            raise
+        finally:
+            await client.close()
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_fetch())
+    finally:
+        loop.close()
+
+
+@celery_app.task
+def load_grp_from_json(auto_process: bool = True, input_dir: str = "data/grp_json"):
+    """
+    Load GRP taxpayer data from JSON files into database.
+
+    Args:
+        auto_process: If True, automatically process and save to GrpTaxpayerData table
+        input_dir: Directory containing JSON files
+
+    Returns:
+        Number of taxpayers loaded
+    """
+    if not os.path.isdir(input_dir):
+        logger.warning(f"GRP JSON data directory not found: {input_dir}")
+        return 0
+
+    db = SessionLocal()
+    crud = GrpCRUD(db)
+    loaded_count = 0
+    batch_size = 500
+
+    try:
+        json_files = [
+            os.path.join(input_dir, name)
+            for name in os.listdir(input_dir)
+            if name.lower().endswith(".json")
+        ]
+
+        logger.info(f"📁 Found {len(json_files)} GRP JSON files to process")
+
+        for file_idx, file_path in enumerate(json_files, 1):
+            try:
+                logger.info(f"📂 Processing file {file_idx}/{len(json_files)}: {os.path.basename(file_path)}")
+                with open(file_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except Exception as e:
+                logger.error(f"Failed to read {file_path}: {e}")
+                continue
+
+            if not isinstance(payload, list):
+                logger.warning(f"Unexpected JSON format in {file_path}")
+                continue
+
+            logger.info(f"   📊 Found {len(payload)} taxpayers in file")
+
+            # Process in batches
+            batch = []
+            for item in payload:
+                unp = item.get("unp")
+                if not unp:
+                    continue
+
+                batch.append(item)
+
+                # Process batch when full
+                if len(batch) >= batch_size:
+                    try:
+                        # Batch upsert to database
+                        for taxpayer_data in batch:
+                            unp = taxpayer_data["unp"]
+                            crud.upsert_from_api(
+                                unp=unp,
+                                payload=taxpayer_data.get("raw", {}),
+                                http_status=200,
+                                error=None
+                            )
+                            loaded_count += 1
+
+                        db.commit()
+                        logger.info(f"   ✅ Batch: {len(batch)} saved")
+
+                    except Exception as e:
+                        db.rollback()
+                        logger.error(f"Batch processing error: {e}")
+
+                    finally:
+                        batch = []
+
+            # Process remaining batch
+            if batch:
+                try:
+                    for taxpayer_data in batch:
+                        unp = taxpayer_data["unp"]
+                        crud.upsert_from_api(
+                            unp=unp,
+                            payload=taxpayer_data.get("raw", {}),
+                            http_status=200,
+                            error=None
+                        )
+                        loaded_count += 1
+
+                    db.commit()
+                    logger.info(f"   ✅ Final batch: {len(batch)} saved")
+
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Final batch processing error: {e}")
+
+        logger.info(f"")
+        logger.info(f"🎉 COMPLETE!")
+        logger.info(f"   Loaded: {loaded_count} taxpayers")
+
+        return loaded_count
+
+    finally:
+        db.close()
+
+
+@celery_app.task
+def auto_fetch_grp_and_load(limit: int = 10000, only_missing: bool = True):
+    """
+    Automatic: Fetch from GRP API to JSON, then load JSON to DB.
+
+    This is a high-level task that combines:
+    1. fetch_grp_to_json() - download taxpayer data to JSON
+    2. load_grp_from_json() - process JSON into DB
+
+    Use this for automatic periodic updates.
+    """
+    logger.info(f"🚀 AUTO FETCH GRP AND LOAD: limit={limit}, only_missing={only_missing}")
+
+    # Step 1: Fetch to JSON
+    logger.info(f"📥 Step 1/2: Fetching from GRP API to JSON...")
+    count = fetch_grp_to_json(limit=limit, only_missing=only_missing)
+    logger.info(f"✅ Fetched {count} taxpayers to JSON")
+
+    # Step 2: Load from JSON
+    logger.info(f"📂 Step 2/2: Loading from JSON to DB...")
+    processed = load_grp_from_json(auto_process=True)
+    logger.info(f"✅ Processed {processed} taxpayers")
+
+    logger.info(f"🎉 AUTO FETCH GRP AND LOAD COMPLETE!")
+    return processed
