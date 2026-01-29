@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.services.egr_client import EGRClient, MobileEGRClient
 from app.core.logger import get_logger
 from app.core.database import get_db
+from app.core.security import verify_api_key
 from app.database.models import RawCompanyData
 from app.tasks.sync_tasks import process_pending_raw
 
@@ -22,6 +23,7 @@ async def lookup_companies(
     q: str = Query(..., min_length=1, description="Поиск по УНП или названию"),
     limit: int = Query(10, ge=1, le=50, description="Максимум результатов"),
     db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """
     Автокомплит по УНП или названию компании.
@@ -123,6 +125,7 @@ async def get_company_profile(
     use_mobile_api: Optional[bool] = Query(None, description="Использовать мобильный API"),
     db_only: bool = Query(False, description="Вернуть данные только из БД"),
     db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """
     Получить профиль компании или ИП по УНП/PAN
@@ -174,7 +177,8 @@ async def get_company_profile(
 @router.get("/{identifier}/raw")
 async def get_raw_data(
     identifier: str = Path(..., regex=r'^\d{9}$'),
-    api_type: str = Query("auto", description="Тип API: mobile, legacy, auto")
+    api_type: str = Query("auto", description="Тип API: mobile, legacy, auto"),
+    api_key: str = Depends(verify_api_key),
 ):
     """Получить сырые данные из API ЕГР"""
     try:
@@ -214,6 +218,7 @@ async def get_raw_data(
 async def get_raw_status(
     identifier: str = Path(..., regex=r'^\d{9}$'),
     db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Статус обработки сырых данных из БД"""
     raw_entry = db.query(RawCompanyData).filter(RawCompanyData.unp == int(identifier)).first()
@@ -232,6 +237,7 @@ async def parse_raw_data(
     identifier: str = Path(..., regex=r'^\d{9}$'),
     force: bool = Query(False, description="Перепарсить даже если уже обработано"),
     db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Запустить парсинг сырых данных из БД в структурные таблицы"""
     raw_entry = db.query(RawCompanyData).filter(RawCompanyData.unp == int(identifier)).first()
@@ -260,6 +266,7 @@ async def parse_raw_data(
 async def parse_pending_raw(
     limit: int = Query(1000, ge=1, le=10000),
     async_run: bool = Query(False, description="Запустить в фоне через Celery"),
+    api_key: str = Depends(verify_api_key),
 ):
     """Запустить парсинг необработанных сырых данных."""
     if async_run:
@@ -271,7 +278,8 @@ async def parse_pending_raw(
 
 @router.get("/{identifier}/compare")
 async def compare_apis(
-    identifier: str = Path(..., regex=r'^\d{9}$')
+    identifier: str = Path(..., regex=r'^\d{9}$'),
+    api_key: str = Depends(verify_api_key),
 ):
     """Сравнить данные из разных API ЕГР"""
     try:

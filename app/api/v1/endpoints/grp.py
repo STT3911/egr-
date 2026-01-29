@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import verify_api_key
 from app.crud.grp import GrpCRUD
 from app.schemas.grp import GrpTaxpayerDataResponse
 from app.services.grp_client import GRPClient
@@ -38,6 +39,7 @@ async def get_grp_data(
     unp: int,
     force_refresh: bool = Query(False, description="Если true — сходить в GRP и обновить запись"),
     db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     """Get GRP taxpayer data for a UNP.
 
@@ -76,6 +78,7 @@ async def list_grp_data(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ):
     crud = GrpCRUD(db)
     records = crud.list_recent(limit=limit, offset=offset)
@@ -86,6 +89,7 @@ async def list_grp_data(
 async def sync_grp_data(
     only_missing: bool = Query(True, description="Синхронизировать только те УНП, по которым нет данных"),
     limit: int = Query(5000, ge=1, le=200000, description="Сколько УНП обработать за запуск"),
+    api_key: str = Depends(verify_api_key),
 ):
     """Queue background sync for GRP data.
 

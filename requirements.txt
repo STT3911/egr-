@@ -1,32 +1,32 @@
-# Основные зависимости
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+# Основные зависимости (обновлено для безопасности 2026)
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.10.0
+pydantic-settings==2.6.1
 
 # База данных и ORM
-sqlalchemy==2.0.23
-alembic==1.12.1
-psycopg2-binary==2.9.9
-asyncpg==0.29.0
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg2-binary==2.9.10
+asyncpg==0.30.0
 
 # Кэш
-redis==5.0.1
+redis==5.2.0
 
 # HTTP клиент
-httpx[http2]==0.25.1
+httpx[http2]==0.27.2
 
 # Очереди задач
-celery==5.3.4
+celery==5.4.0
 
 # Валидация и утилиты
-python-dateutil==2.8.2
-pytz==2023.3
-python-multipart==0.0.6
+python-dateutil==2.9.0
+pytz==2024.2
+python-multipart==0.0.16
 
 # Логирование
-structlog==23.2.0
+structlog==24.4.0
 
 # Утилиты
-click==8.1.7
-tenacity==8.2.3
+click==8.1.8
+tenacity==9.0.0

@@ -1,27 +1,57 @@
 """Main FastAPI application"""
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.endpoints import companies, references, grp
 from app.core.config import settings
 from app.core.logger import logger
+from app.core.error_handlers import (
+    validation_exception_handler,
+    http_exception_handler,
+    general_exception_handler
+)
 
-# Create FastAPI app
+# Create FastAPI app with conditional docs
 app = FastAPI(
     title="EGR Aggregator API",
     description="Микросервис для агрегации данных из API ЕГР Республики Беларусь",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.APP_ENV != "production" else None,
+    redoc_url="/redoc" if settings.APP_ENV != "production" else None,
+    openapi_url="/openapi.json" if settings.APP_ENV != "production" else None,
 )
 
-# CORS middleware
+# Register error handlers
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
+
+# CORS middleware with security improvements
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],  # Explicit headers
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
+
+# Rate limiting middleware
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Apply rate limiting to all requests."""
+    from app.core.security import rate_limit_check
+    
+    # Skip rate limiting for health checks
+    if request.url.path in ["/api/v1/health", "/api/v1/health/ready"]:
+        return await call_next(request)
+    
+    # Check rate limit
+    await rate_limit_check(request)
+    
+    response = await call_next(request)
+    return response
 
 # Include routers
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])

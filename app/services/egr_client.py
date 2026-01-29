@@ -26,7 +26,7 @@ class BaseClient:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
                 headers=headers,
-                verify=False,
+                verify=True,  # SECURITY: Enable SSL verification to prevent MITM attacks
                 limits=self._limits,
                 http2=True  # Enable HTTP/2 for better performance
             )

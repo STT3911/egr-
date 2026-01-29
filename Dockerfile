@@ -26,6 +26,9 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
 # Copy installed packages from builder
 COPY --from=builder /root/.local /root/.local
 
@@ -37,10 +40,16 @@ COPY docker-entrypoint.sh /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Change ownership to appuser
+RUN chown -R appuser:appuser /app
+
 # Environment variables
 ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONPATH=/app:$PYTHONPATH
 ENV PYTHONUNBUFFERED=1
+
+# Switch to non-root user
+USER appuser
 
 # Expose port
 EXPOSE 8000

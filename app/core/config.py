@@ -35,14 +35,22 @@ class Settings(BaseSettings):
     EGR_MOBILE_API_URL: str = "https://egr.gov.by/egrmobile/api/v1"
 
     # Application
-    APP_ENV: str = "development"
-    DEBUG: bool = True
+    APP_ENV: str = "production"
+    DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
 
     # Database connection pool settings
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     DATABASE_POOL_RECYCLE: int = 3600
+
+    # Security - API Authentication
+    API_KEY: Optional[str] = None
+    ALLOWED_API_KEYS: str = ""  # Comma-separated list of API keys
+    
+    # Security - Rate Limiting (requests per minute)
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PER_MINUTE: int = 60
 
     # CORS
     CORS_ORIGINS: List[str] = [
