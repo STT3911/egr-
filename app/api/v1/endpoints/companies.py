@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.core.security import verify_api_key
 from app.database.models import RawCompanyData
 from app.tasks.sync_tasks import process_pending_raw
+from app.utils.search_normalizer import normalize_company_name
 
 logger = get_logger("api.companies")
 router = APIRouter()
@@ -26,8 +27,18 @@ async def lookup_companies(
     api_key: str = Depends(verify_api_key),
 ):
     """
-    Автокомплит по УНП или названию компании.
-    Оптимизированная версия с разделением на два типа запросов.
+    🔍 Умный поиск по УНП или названию компании.
+    
+    **Для УНП:** Быстрый поиск по индексу
+    **Для названия:** Умный поиск с автоматической нормализацией:
+    - Убирает ОПФ (ООО, ЗАО, ИП и т.п.)
+    - Игнорирует спецсимволы и регистр
+    - Находит при неточном вводе
+    
+    **Примеры:**
+    - `123456` → поиск по УНП
+    - `ООО Минск` → найдет компании с "минск" (без учета ОПФ)
+    - `Рога и Копыта` → найдет независимо от ОПФ
     """
     query = q.strip()
     if not query:
@@ -69,33 +80,67 @@ async def lookup_companies(
         }).mappings().all()
         
     else:
-        # Поиск по названию - используем индексы на названиях
-        name_term = f"{query}%"
+        # УМНЫЙ ПОИСК ПО НАЗВАНИЮ - с нормализацией
+        search_normalized = normalize_company_name(query)
+        
+        if not search_normalized:
+            # Если после нормализации ничего не осталось, используем оригинальный запрос
+            search_normalized = query.lower()
+        
+        logger.info(f"Smart lookup: '{query}' -> '{search_normalized}'")
+        
         sql = text("""
             WITH ranked_names AS (
-                SELECT DISTINCT ON (n.company_id)
+                SELECT DISTINCT ON (c.unp)
                     c.unp,
                     n.full_name_ru,
                     n.short_name_ru,
-                    n.full_name_by
-                FROM egr_company_names_history n
-                INNER JOIN egr_companies c ON c.id = n.company_id
+                    n.full_name_by,
+                    n.search_name,
+                    -- Ранжирование для лучшей сортировки
+                    CASE 
+                        WHEN n.search_name = :exact_match THEN 1
+                        WHEN n.search_name LIKE :starts_with THEN 2
+                        WHEN n.search_name LIKE :contains THEN 3
+                        -- Fallback на оригинальные поля
+                        WHEN LOWER(n.full_name_ru) LIKE :original_pattern THEN 4
+                        WHEN LOWER(n.short_name_ru) LIKE :original_pattern THEN 5
+                        ELSE 6
+                    END as rank,
+                    LENGTH(COALESCE(n.search_name, n.full_name_ru)) as name_length
+                FROM egr_companies c
+                INNER JOIN egr_company_names_history n ON n.company_id = c.id
                 WHERE 
-                    n.full_name_ru ILIKE :name_term
-                    OR n.short_name_ru ILIKE :name_term
-                    OR n.full_name_by ILIKE :name_term
+                    -- Сначала ищем по нормализованному полю
+                    (n.search_name = :exact_match
+                     OR n.search_name LIKE :starts_with
+                     OR n.search_name LIKE :contains)
+                    -- Fallback на оригинальные поля (если search_name NULL)
+                    OR (n.search_name IS NULL AND (
+                        LOWER(n.full_name_ru) LIKE :original_pattern
+                        OR LOWER(n.short_name_ru) LIKE :original_pattern
+                        OR LOWER(n.full_name_by) LIKE :original_pattern
+                    ))
                 ORDER BY 
-                    n.company_id,
+                    c.unp,
                     (n.valid_to IS NULL) DESC,
                     n.valid_to DESC NULLS LAST
             )
-            SELECT * FROM ranked_names
-            ORDER BY unp
+            SELECT 
+                unp,
+                full_name_ru,
+                short_name_ru,
+                full_name_by
+            FROM ranked_names
+            ORDER BY rank ASC, name_length ASC, unp ASC
             LIMIT :limit
         """)
         
         rows = db.execute(sql, {
-            "name_term": name_term,
+            "exact_match": search_normalized,
+            "starts_with": f"{search_normalized}%",
+            "contains": f"%{search_normalized}%",
+            "original_pattern": f"%{query.lower()}%",
             "limit": limit,
         }).mappings().all()
 

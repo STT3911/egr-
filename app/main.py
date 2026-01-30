@@ -30,7 +30,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 # CORS middleware with security improvements
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods
     allow_headers=["Content-Type", "Authorization", "X-API-Key"],  # Explicit headers
@@ -57,6 +57,8 @@ async def rate_limit_middleware(request: Request, call_next):
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])
 app.include_router(references.router, prefix="/api/v1/references", tags=["References"])
 app.include_router(grp.router, prefix="/api/v1/grp", tags=["GRP"])
+
+# Умный поиск интегрирован в companies.router (/api/v1/companies/lookup)
 
 
 @app.on_event("startup")

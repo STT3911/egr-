@@ -13,6 +13,7 @@ from app.database.models import (
     RawCompanyData,
 )
 from datetime import datetime
+from app.utils.search_normalizer import normalize_company_name
 
 
 class CompanyCRUD:
@@ -65,7 +66,7 @@ class CompanyCRUD:
         return company
 
     def _save_names_history(self, company: Company, names: List[Dict]):
-        """Save names history"""
+        """Save names history with automatic search_name generation"""
         for name_data in names:
             # Check if exists
             existing = self.db.query(CompanyNameHistory).filter(
@@ -77,8 +78,13 @@ class CompanyCRUD:
             ).first()
             
             if not existing:
+                # Автоматически генерируем search_name для умного поиска
+                full_name = name_data.get("full_name_ru") or name_data.get("short_name_ru") or name_data.get("full_name_by")
+                search_name = normalize_company_name(full_name) if full_name else None
+                
                 name_entry = CompanyNameHistory(
                     company_id=company.id,
+                    search_name=search_name,  # Умный поиск
                     **name_data
                 )
                 self.db.add(name_entry)

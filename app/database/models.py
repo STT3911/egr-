@@ -33,6 +33,45 @@ class RawCompanyData(Base):
     last_error = Column(Text, nullable=True)
 
 
+class GrpRawData(Base):
+    """Raw JSON data from GRP API (сырые данные ГРП)"""
+    __tablename__ = "grp_raw_data"
+    
+    unp = Column(BigInteger, primary_key=True, index=True)
+    raw_json = Column(JSONB, nullable=False)
+    http_status = Column(Integer, nullable=True)
+    last_error = Column(Text, nullable=True)
+    fetched_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    parsed = Column(Boolean, default=False, index=True)  # Признак парсинга
+    parsed_at = Column(DateTime, nullable=True)
+
+
+class GrpTaxpayerData(Base):
+    """GRP (Государственный реестр плательщиков) taxpayer data - parsed structured data"""
+    __tablename__ = "grp_taxpayer_data"
+    
+    unp = Column(BigInteger, primary_key=True, index=True)
+    full_name = Column(String, nullable=True)
+    short_name = Column(String, nullable=True)
+    registration_date = Column(Date, nullable=True)
+    
+    # Inspectorate info
+    inspectorate_code = Column(String, nullable=True)
+    inspectorate_name = Column(String, nullable=True)
+    
+    # Status
+    status_code = Column(String, nullable=True)
+    status_date = Column(Date, nullable=True)
+    
+    # Address
+    address = Column(Text, nullable=True)
+    
+    # Metadata
+    fetched_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class Company(Base):
     """Main company table"""
     __tablename__ = "egr_companies"
@@ -88,6 +127,7 @@ class CompanyNameHistory(Base):
     full_name_ru = Column(String)
     short_name_ru = Column(String)
     full_name_by = Column(String)
+    search_name = Column(String, index=True)  # Нормализованное название для поиска
     valid_from = Column(Date)
     valid_to = Column(Date)
     
