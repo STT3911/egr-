@@ -1258,7 +1258,8 @@ def load_grp_from_json(auto_process: bool = True, input_dir: str = "data/grp_jso
     db = SessionLocal()
     crud = GrpCRUD(db)
     loaded_count = 0
-    batch_size = 500    try:
+    batch_size = 500    
+    try:
         json_files = [
             os.path.join(input_dir, name)
             for name in os.listdir(input_dir)
