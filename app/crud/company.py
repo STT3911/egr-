@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import and_
+from sqlalchemy import and_, text
 from app.database.models import (
     Company,
     CompanyNameHistory,
@@ -15,6 +15,14 @@ from app.database.models import (
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
 
+# Ref tables used by egr_companies FK — insert placeholder if missing to avoid ForeignKeyViolation
+_REF_TABLE_NAMES = (
+    "ref_creation_methods",
+    "ref_authorities",
+    "ref_entity_types",
+    "ref_liquidation_methods",
+)
+
 
 class CompanyCRUD:
     """CRUD operations for Company entity"""
@@ -26,10 +34,57 @@ class CompanyCRUD:
         """Get company by UNP"""
         return self.db.query(Company).filter(Company.unp == unp).first()
 
+    def _ensure_ref_id(self, table: str, ref_id: Optional[int], default_name_prefix: str) -> None:
+        """Insert placeholder row into ref table if id is missing (ON CONFLICT DO NOTHING)."""
+        if ref_id is None or table not in _REF_TABLE_NAMES:
+            return
+        default_name = f"{default_name_prefix} {ref_id}"
+        stmt = text(
+            f"INSERT INTO {table} (id, name, system_id) VALUES (:id, :name, NULL) ON CONFLICT (id) DO NOTHING"
+        )
+        self.db.execute(stmt, {"id": ref_id, "name": default_name})
+
+    def _ensure_ref_ids_for_company(self, company_data: Dict[str, Any]) -> None:
+        """Ensure all ref FK ids used by company exist in ref tables (insert placeholder if missing)."""
+        self._ensure_ref_id(
+            "ref_creation_methods",
+            company_data.get("creation_method_id"),
+            "Способ создания",
+        )
+        self._ensure_ref_id(
+            "ref_authorities",
+            company_data.get("creation_authority_id"),
+            "Орган",
+        )
+        self._ensure_ref_id(
+            "ref_authorities",
+            company_data.get("current_authority_id"),
+            "Орган",
+        )
+        self._ensure_ref_id(
+            "ref_authorities",
+            company_data.get("liquidation_authority_id"),
+            "Орган",
+        )
+        self._ensure_ref_id(
+            "ref_entity_types",
+            company_data.get("entity_type_id"),
+            "Тип объекта",
+        )
+        self._ensure_ref_id(
+            "ref_liquidation_methods",
+            company_data.get("liquidation_reason_id"),
+            "Способ ликвидации",
+        )
+
     def save_full_company_data(self, data: Dict[str, Any]) -> Company:
         """Save or update complete company data"""
         company_data = data["company"]
         unp = company_data["unp"]
+
+        # Ensure ref tables have rows for all FK ids (avoids ForeignKeyViolation when update_reference_tables missed some)
+        self._ensure_ref_ids_for_company(company_data)
+        self.db.flush()
         
         # Get or create company
         company = self.get_by_unp(unp)

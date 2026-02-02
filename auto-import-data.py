@@ -45,6 +45,21 @@ def check_if_data_exists():
         logger.error(f"Error checking data: {e}")
         return False
 
+
+def get_raw_count_needing_enrichment():
+    """Количество записей в raw_data с processed_at=None (ждут обогащения или парсинга)."""
+    try:
+        db = SessionLocal()
+        # RawCompanyData.data is JSONB; need enrichment if missing keys
+        count = db.query(RawCompanyData).filter(
+            RawCompanyData.processed_at.is_(None)
+        ).count()
+        db.close()
+        return count
+    except Exception as e:
+        logger.error(f"Error counting raw data: {e}")
+        return 0
+
 def auto_import():
     """Автоматический импорт данных"""
     logger.info("╔════════════════════════════════════════════════════════╗")
@@ -62,31 +77,36 @@ def auto_import():
         logger.info("   To force reimport, clear the database first")
         return True
     
-    # Импортировать через Celery задачу
+    # Импортировать: 3 шага (JSON -> raw_data -> обогащение API -> структурные таблицы)
     logger.info("🚀 Starting 3-step import process...")
     logger.info("")
     try:
         from app.tasks.sync_tasks import load_companies_from_json, enrich_missing_raw, process_pending_raw
         
-        # Step 1: Load base_info from JSON files
+        # Step 1: Load base_info from JSON files into raw_data
         logger.info("📥 STEP 1/3: Loading base data from JSON files...")
-        loaded = load_companies_from_json()
-        if not loaded or loaded == 0:
-            logger.warning("⚠️  No data was loaded from JSON files")
+        processed_step1 = load_companies_from_json()
+        raw_total = get_raw_count_needing_enrichment()
+        # Если в JSON только base_info, processed_step1 может быть 0 — это нормально
+        if raw_total == 0 and (not processed_step1 or processed_step1 == 0):
+            logger.warning("⚠️  No data in JSON or directory data/egr_json_full/ is empty")
             return False
-        logger.info(f"✅ Step 1 complete: {loaded} companies loaded to raw_data")
+        logger.info(f"✅ Step 1 complete: {processed_step1} processed from JSON, {raw_total} in raw_data (pending enrichment)")
         logger.info("")
         
-        # Step 2: Enrich with full data from API
+        # Лимит для шагов 2 и 3: все необработанные или разумный максимум за один запуск
+        limit = min(raw_total, 50_000) if raw_total else 10_000
+        
+        # Step 2: Enrich with full data from EGR API
         logger.info("📥 STEP 2/3: Enriching data from EGR API...")
         logger.info("   (This may take a while for large datasets)")
-        enriched = enrich_missing_raw(limit=loaded)
-        logger.info(f"✅ Step 2 complete: {enriched}/{loaded} companies enriched")
+        enriched = enrich_missing_raw(limit=limit)
+        logger.info(f"✅ Step 2 complete: {enriched} companies enriched")
         logger.info("")
         
         # Step 3: Process into structured tables
         logger.info("⚙️  STEP 3/3: Processing into structured tables...")
-        processed = process_pending_raw(limit=loaded)
+        processed = process_pending_raw(limit=limit)
         logger.info(f"✅ Step 3 complete: {processed} companies processed")
         logger.info("")
         
@@ -94,9 +114,11 @@ def auto_import():
             logger.info(f"🎉 Auto-import completed successfully!")
             logger.info(f"   Total: {processed} companies ready to use")
             return True
-        else:
-            logger.warning("⚠️  Import completed but no data was processed")
-            return False
+        if enriched > 0:
+            logger.info("   Enriched but not yet processed. Run again or: process_pending_raw(limit=...)")
+            return True
+        logger.warning("⚠️  Import run complete; no new companies processed (may need more enrich/process runs)")
+        return True
             
     except Exception as e:
         logger.error(f"❌ Auto-import failed: {e}")

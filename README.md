@@ -62,13 +62,18 @@ docker-compose ps
 ```
 
 Это запустит:
-- **API сервер** → http://localhost:8002
+- **egr-init** (один раз) — миграции, SQL-скрипты, заполнение справочников
+- **API сервер** → http://localhost:8002 (стартует быстро после init)
+- **Celery Worker** — парсинг и обогащение сырых данных по расписанию
+- **Celery Beat** — планировщик (process_pending_raw каждые 15 с, enrich — раз в минуту)
 - **Frontend** → http://localhost (http://localhost:5173 для dev)
-- **Celery Worker** - обработка данных
-- **Celery Beat** - планировщик задач
-- **PostgreSQL** - база данных
-- **Redis** - брокер сообщений
-- **Nginx** - обратный прокси
+- **PostgreSQL**, **Redis**, **Nginx** (80/443)
+
+**Порядок запуска и автоматизация:**
+1. **SSL**: сертификаты копируются из `LETSENCRYPT_LIVE` в `./ssl` (сервис ssl-copy). Если сертификатов нет — Nginx поднимается в режиме HTTP-only.
+2. **egr-init**: ждёт БД/Redis → `alembic upgrade head` → SQL из `scripts/sql/` → `update_reference_tables()` (справочники из raw). После этого контейнер завершается.
+3. **egr-api**: ждёт завершения egr-init, затем только поднимает uvicorn (миграции не повторяются).
+4. **Парсинг**: Celery worker/beat стартуют после healthy API; задача `process_pending_raw` каждые 15 с обрабатывает до 5000 записей; при пустых справочниках вызывается `update_reference_tables()`.
 
 ## API Endpoints
 
@@ -140,14 +145,8 @@ EGR API → JSON (полные данные) → PostgreSQL
 
 #### Вариант 1: Загрузить из API в JSON с полными данными (РЕКОМЕНДУЕТСЯ)
 
-**Windows:**
-```cmd
-fetch-to-json.bat
-```
-
-**Linux/Mac:**
 ```bash
-./fetch-to-json.sh
+python scripts/fetch-to-json.py
 ```
 
 Этот способ:
@@ -173,7 +172,7 @@ python load_json_data.py --sync
 Если у вас старые JSON с base_info:
 
 ```bash
-python enrich-data.py
+python scripts/enrich-data.py
 ```
 
 #### Программный доступ
@@ -196,14 +195,8 @@ result = auto_fetch_and_load("01.01.2024", "31.01.2024")
 
 #### Ручной запуск парсинга
 
-**Windows:**
-```cmd
-.\run-parsing.bat 5000
-```
-
-**Linux/Mac:**
 ```bash
-./run-parsing.sh 5000
+./scripts/run-parsing.sh 5000
 ```
 
 Параметры:

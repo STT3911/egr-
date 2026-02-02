@@ -19,6 +19,76 @@ logger = get_logger("api.companies")
 router = APIRouter()
 
 
+import re
+import time
+from typing import List
+from sqlalchemy.sql import text
+from fastapi import HTTPException, Query, Depends
+from sqlalchemy.orm import Session
+
+
+def normalize_company_name(name: str) -> str:
+    """
+    Нормализация названия компании для поиска.
+    Убирает ОПФ, пунктуацию, приводит к нижнему регистру.
+    """
+    if not name:
+        return ""
+    
+    # Приводим к нижнему регистру
+    normalized = name.lower().strip()
+    
+    # Удаляем ОПФ и юридические формы
+    opf_patterns = [
+        r'\bооо\b', r'\bзао\b', r'\bоао\b', r'\bпао\b',
+        r'\bчуп\b', r'\bип\b', r'\bуп\b', r'\bрнуп\b',
+        r'\bгпу\b', r'\bфлип\b', r'\bпк\b', r'\bкфх\b',
+        r'\bсзоо\b', r'\bсзоао\b', r'\bдоо\b',
+        r'\bобщество с ограниченной ответственностью\b',
+        r'\bзакрытое акционерное общество\b',
+        r'\bоткрытое акционерное общество\b',
+        r'\bчастное унитарное предприятие\b',
+        r'\bреспубликанское унитарное предприятие\b',
+        r'\bобособленное подразделение\b',
+        r'\bфилиал\b', r'\bпредставительство\b',
+    ]
+    
+    for pattern in opf_patterns:
+        normalized = re.sub(pattern, '', normalized)
+    
+    # Удаляем кавычки, скобки и другие спецсимволы
+    normalized = re.sub(r'["\'«»„"()\[\]{}]', ' ', normalized)
+    
+    # Заменяем знаки препинания на пробелы
+    normalized = re.sub(r'[^\w\s-]', ' ', normalized)
+    
+    # Удаляем множественные пробелы
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    
+    # Удаляем стоп-слова (только если осталось достаточно слов)
+    stop_words = {'для', 'по', 'и', 'или', 'на', 'с', 'из', 'в', 'о', 'у', 'к'}
+    words = normalized.split()
+    if len(words) > 2:
+        words = [w for w in words if w not in stop_words and len(w) > 1]
+    
+    normalized = ' '.join(words)
+    
+    return normalized if normalized and len(normalized) >= 2 else ""
+
+
+def is_unp_query(query: str) -> bool:
+    """Проверяет, является ли запрос поиском по УНП"""
+    # Убираем все пробелы и дефисы
+    cleaned = re.sub(r'[\s-]', '', query)
+    
+    # Проверяем, что это только цифры и длина подходит для УНП
+    if cleaned.isdigit():
+        # УНП Беларуси: 9 цифр, но можем искать по частичному УНП
+        return 1 <= len(cleaned) <= 12
+    
+    return False
+
+
 @router.get("/lookup", response_model=CompanyLookupResponse)
 async def lookup_companies(
     q: str = Query(..., min_length=1, description="Поиск по УНП или названию"),
@@ -44,85 +114,102 @@ async def lookup_companies(
     if not query:
         raise HTTPException(status_code=400, detail="Параметр 'q' не может быть пустым")
 
-    is_digit = query.isdigit()
+    start_time = time.time()
     results = []
+    
+    # Чистим УНП от пробелов и дефисов
+    cleaned_query = re.sub(r'[\s-]', '', query)
 
-    if is_digit:
-        # Поиск по УНП - быстрый запрос только по индексу
-        unp_prefix = f"{query}%"
+    if is_unp_query(cleaned_query):
+        # 🔍 ПОИСК ПО УНП - оптимизированный запрос
+        logger.info(f"UNP search: {cleaned_query}")
+        
         sql = text("""
-            WITH found_companies AS (
-                SELECT c.id, c.unp
-                FROM egr_companies c
-                WHERE c.unp::text LIKE :unp_prefix
-                ORDER BY c.unp
-                LIMIT :limit
-            )
-            SELECT 
-                fc.unp,
+            SELECT DISTINCT ON (c.unp)
+                c.unp,
                 n.full_name_ru,
                 n.short_name_ru,
                 n.full_name_by
-            FROM found_companies fc
-            LEFT JOIN LATERAL (
-                SELECT full_name_ru, short_name_ru, full_name_by
-                FROM egr_company_names_history
-                WHERE company_id = fc.id
-                ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST
-                LIMIT 1
-            ) n ON true
-            ORDER BY fc.unp
+            FROM egr_companies c
+            INNER JOIN egr_company_names_history n ON n.company_id = c.id
+            WHERE 
+                CAST(c.unp AS TEXT) LIKE :unp_pattern || '%'
+                AND (n.valid_to IS NULL OR n.valid_to > NOW())
+            ORDER BY 
+                c.unp,
+                -- Сначала точное совпадение
+                CASE WHEN CAST(c.unp AS TEXT) = :unp_exact THEN 0 ELSE 1 END,
+                -- Затем актуальные записи
+                (n.valid_to IS NULL) DESC,
+                n.valid_to DESC NULLS LAST
+            LIMIT :limit
         """)
         
-        rows = db.execute(sql, {
-            "unp_prefix": unp_prefix,
-            "limit": limit,
-        }).mappings().all()
+        try:
+            rows = db.execute(sql, {
+                "unp_pattern": cleaned_query,
+                "unp_exact": cleaned_query,
+                "limit": limit,
+            }).mappings().all()
+            
+        except Exception as e:
+            logger.error(f"Error in UNP search: {str(e)}")
+            raise HTTPException(status_code=500, detail="Ошибка поиска по УНП")
         
     else:
-        # УМНЫЙ ПОИСК ПО НАЗВАНИЮ - с нормализацией
+        # 🔍 УМНЫЙ ПОИСК ПО НАЗВАНИЮ
         search_normalized = normalize_company_name(query)
         
+        # Если после нормализации ничего не осталось, используем оригинальный запрос в нижнем регистре
         if not search_normalized:
-            # Если после нормализации ничего не осталось, используем оригинальный запрос
-            search_normalized = query.lower()
+            search_normalized = query.lower().strip()
+            if len(search_normalized) < 2:
+                raise HTTPException(status_code=400, detail="Слишком короткий поисковый запрос")
         
-        logger.info(f"Smart lookup: '{query}' -> '{search_normalized}'")
+        logger.info(f"Smart name search: '{query}' -> '{search_normalized}'")
+        
+        # Для коротких запросов ищем только по началу слова
+        search_mode = "starts_with" if len(search_normalized) <= 3 else "contains"
         
         sql = text("""
-            WITH ranked_names AS (
+            WITH ranked_companies AS (
                 SELECT DISTINCT ON (c.unp)
                     c.unp,
                     n.full_name_ru,
                     n.short_name_ru,
                     n.full_name_by,
                     n.search_name,
-                    -- Ранжирование для лучшей сортировки
+                    -- Приоритеты для релевантной сортировки
                     CASE 
-                        WHEN n.search_name = :exact_match THEN 1
-                        WHEN n.search_name LIKE :starts_with THEN 2
-                        WHEN n.search_name LIKE :contains THEN 3
-                        -- Fallback на оригинальные поля
-                        WHEN LOWER(n.full_name_ru) LIKE :original_pattern THEN 4
-                        WHEN LOWER(n.short_name_ru) LIKE :original_pattern THEN 5
+                        -- Точное совпадение в search_name
+                        WHEN n.search_name = :normalized_exact THEN 1
+                        -- Начинается с поискового запроса
+                        WHEN n.search_name LIKE :normalized_start THEN 2
+                        -- Содержит поисковый запрос
+                        WHEN n.search_name LIKE :normalized_contains THEN 3
+                        -- Fallback: поиск по оригинальным полям
+                        WHEN LOWER(COALESCE(n.full_name_ru, '')) LIKE :original_contains THEN 4
+                        WHEN LOWER(COALESCE(n.short_name_ru, '')) LIKE :original_contains THEN 5
                         ELSE 6
-                    END as rank,
-                    LENGTH(COALESCE(n.search_name, n.full_name_ru)) as name_length
+                    END as relevance_rank,
+                    -- Дополнительный вес для коротких названий (более точных)
+                    LENGTH(COALESCE(n.search_name, n.full_name_ru, '')) as name_length
                 FROM egr_companies c
                 INNER JOIN egr_company_names_history n ON n.company_id = c.id
                 WHERE 
-                    -- Сначала ищем по нормализованному полю
-                    (n.search_name = :exact_match
-                     OR n.search_name LIKE :starts_with
-                     OR n.search_name LIKE :contains)
-                    -- Fallback на оригинальные поля (если search_name NULL)
-                    OR (n.search_name IS NULL AND (
-                        LOWER(n.full_name_ru) LIKE :original_pattern
-                        OR LOWER(n.short_name_ru) LIKE :original_pattern
-                        OR LOWER(n.full_name_by) LIKE :original_pattern
-                    ))
+                    -- Актуальные записи
+                    (n.valid_to IS NULL OR n.valid_to > NOW())
+                    AND (
+                        -- Поиск по нормализованному полю
+                        n.search_name LIKE :normalized_contains
+                        -- ИЛИ fallback на оригинальные поля
+                        OR LOWER(COALESCE(n.full_name_ru, '')) LIKE :original_contains
+                        OR LOWER(COALESCE(n.short_name_ru, '')) LIKE :original_contains
+                        OR LOWER(COALESCE(n.full_name_by, '')) LIKE :original_contains
+                    )
                 ORDER BY 
                     c.unp,
+                    -- Сначала самые актуальные записи
                     (n.valid_to IS NULL) DESC,
                     n.valid_to DESC NULLS LAST
             )
@@ -131,36 +218,73 @@ async def lookup_companies(
                 full_name_ru,
                 short_name_ru,
                 full_name_by
-            FROM ranked_names
-            ORDER BY rank ASC, name_length ASC, unp ASC
+            FROM ranked_companies
+            WHERE relevance_rank < 6  -- Исключаем нерелевантные
+            ORDER BY 
+                relevance_rank ASC,
+                name_length ASC,      -- Короткие названия в первую очередь
+                unp ASC
             LIMIT :limit
         """)
         
-        rows = db.execute(sql, {
-            "exact_match": search_normalized,
-            "starts_with": f"{search_normalized}%",
-            "contains": f"%{search_normalized}%",
-            "original_pattern": f"%{query.lower()}%",
-            "limit": limit,
-        }).mappings().all()
-
+        try:
+            rows = db.execute(sql, {
+                "normalized_exact": search_normalized,
+                "normalized_start": f"{search_normalized}%",
+                "normalized_contains": f"%{search_normalized}%",
+                "original_contains": f"%{query.lower()}%",
+                "limit": limit,
+            }).mappings().all()
+            
+        except Exception as e:
+            logger.error(f"Error in name search: {str(e)}")
+            # Fallback на простой поиск
+            sql_fallback = text("""
+                SELECT DISTINCT ON (c.unp)
+                    c.unp,
+                    n.full_name_ru,
+                    n.short_name_ru,
+                    n.full_name_by
+                FROM egr_companies c
+                INNER JOIN egr_company_names_history n ON n.company_id = c.id
+                WHERE (n.valid_to IS NULL OR n.valid_to > NOW())
+                AND (
+                    n.full_name_ru ILIKE :pattern
+                    OR n.short_name_ru ILIKE :pattern
+                    OR n.full_name_by ILIKE :pattern
+                )
+                ORDER BY c.unp
+                LIMIT :limit
+            """)
+            
+            rows = db.execute(sql_fallback, {
+                "pattern": f"%{query}%",
+                "limit": limit,
+            }).mappings().all()
+    
+    # Формируем результаты
     for row in rows:
         name = row["full_name_ru"] or row["short_name_ru"] or row["full_name_by"]
-        results.append({
-            "unp": int(row["unp"]),
-            "name": name,
-            "full_name_ru": row["full_name_ru"],
-            "short_name_ru": row["short_name_ru"],
-            "full_name_by": row["full_name_by"],
-        })
+        if name:  # Только если есть название
+            results.append({
+                "unp": int(row["unp"]),
+                "name": name,
+                "full_name_ru": row["full_name_ru"],
+                "short_name_ru": row["short_name_ru"],
+                "full_name_by": row["full_name_by"],
+            })
 
+    # Логируем производительность
+    elapsed = time.time() - start_time
+    if elapsed > 1.0:
+        logger.warning(f"Slow search ({elapsed:.2f}s): '{query}' returned {len(results)} results")
+    
     return {
         "query": query,
         "count": len(results),
+        "execution_time": round(elapsed, 3),
         "results": results,
     }
-
-
 
 
 @router.get("/{identifier}", response_model=CompanyProfileResponse)

@@ -33,11 +33,17 @@ celery_app.conf.update(
             "schedule": crontab(hour="*/6"),  # Every 6 hours
             "args": (),
         },
-        # Process any pending raw data every 30 seconds
+        # Process pending raw: обогащение по API (names/addresses/ved) + парсинг в таблицы. Каждые 15 сек, 5000 записей.
         "process-pending-raw": {
             "task": "app.tasks.sync_tasks.process_pending_raw",
-            "schedule": timedelta(seconds=30),
-            "args": (2000,),  # 2000 records per batch
+            "schedule": timedelta(seconds=15),
+            "args": (5000,),
+        },
+        # Дополнительно: только обогащение по API (раз в минуту, 3000 записей) — ускоряет при большом объёме base_info
+        "enrich-missing-raw": {
+            "task": "app.tasks.sync_tasks.enrich_missing_raw",
+            "schedule": timedelta(seconds=60),
+            "args": (3000,),
         },
         # Load existing JSON files (if any) every night at 2 AM
         "load-from-json": {
