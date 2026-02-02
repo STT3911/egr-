@@ -73,6 +73,21 @@ class GrpCRUD:
             .all()
         )
 
+    def upsert_from_api(
+        self,
+        unp: int,
+        payload: Optional[Dict[str, Any]] = None,
+        http_status: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> Optional[GrpTaxpayerData]:
+        """Сохранить ответ API ГРП в raw и при наличии данных — распарсить в grp_taxpayer_data.
+        Вызывается из API и скриптов после запроса к ГРП.
+        """
+        self.save_raw_data(unp=unp, raw_json=payload, http_status=http_status, error=error)
+        if payload and not error:
+            return self.parse_from_raw(unp)
+        return self.get_by_unp(unp)
+
     # ==================== PARSED DATA (Этап 2: Парсинг в структурированную таблицу) ====================
     
     def parse_from_raw(self, unp: int) -> Optional[GrpTaxpayerData]:

@@ -16,7 +16,17 @@ from app.services.grp_client import GRPClient
 router = APIRouter()
 
 
-def _serialize(record) -> GrpTaxpayerDataResponse:
+def _serialize(record, raw_record=None) -> GrpTaxpayerDataResponse:
+    """record — GrpTaxpayerData; raw_record — опционально GrpRawData для http_status/last_error/raw.
+    У GrpTaxpayerData нет http_status/last_error/raw — только у GrpRawData; используем getattr чтобы не падать.
+    """
+    http_status = None
+    last_error = None
+    raw = None
+    if raw_record is not None:
+        http_status = getattr(raw_record, "http_status", None)
+        last_error = getattr(raw_record, "last_error", None)
+        raw = getattr(raw_record, "raw_json", None)
     return GrpTaxpayerDataResponse(
         unp=int(record.unp),
         full_name=record.full_name,
@@ -29,9 +39,9 @@ def _serialize(record) -> GrpTaxpayerDataResponse:
         address=record.address,
         fetched_at=record.fetched_at.isoformat() if record.fetched_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
-        http_status=record.http_status,
-        last_error=record.last_error,
-        raw=record.raw,
+        http_status=http_status,
+        last_error=last_error,
+        raw=raw,
     )
 
 
@@ -71,7 +81,8 @@ async def get_grp_data(
     if record is None:
         raise HTTPException(status_code=404, detail="Данные ГРП не найдены")
 
-    return _serialize(record)
+    raw_record = crud.get_raw_by_unp(record.unp) if record else None
+    return _serialize(record, raw_record=raw_record)
 
 
 @router.get("/", response_model=list[GrpTaxpayerDataResponse])
@@ -83,7 +94,7 @@ async def list_grp_data(
 ):
     crud = GrpCRUD(db)
     records = crud.list_recent(limit=limit, offset=offset)
-    return [_serialize(r) for r in records]
+    return [_serialize(r, raw_record=crud.get_raw_by_unp(r.unp)) for r in records]
 
 
 @router.post("/sync")
