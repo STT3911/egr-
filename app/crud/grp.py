@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.database.models import GrpTaxpayerData, GrpRawData
+from app.utils.address_formatter import format_grp_address
 
 
 def _parse_date(value: Any) -> Optional[date]:
@@ -123,7 +124,7 @@ class GrpCRUD:
         parsed_record.inspectorate_name = g("VMNS", "vmns")
         parsed_record.status_code = g("CKODSOST", "ckodsost")
         parsed_record.status_date = _parse_date(g("DLIKV", "dlikv"))
-        parsed_record.address = g("VPADRES", "vpadres")
+        parsed_record.address = format_grp_address(g("VPADRES", "vpadres"))
         parsed_record.updated_at = datetime.now()
         
         # Обновить флаг парсинга в raw таблице
@@ -166,6 +167,31 @@ class GrpCRUD:
             .all()
         )
     
+    def reformat_addresses(self, limit: int = 1000) -> int:
+        """Переформатировать адреса в существующих записях. Возвращает количество обновленных записей."""
+        from sqlalchemy import text
+
+        # Получить записи с адресами
+        records = (
+            self.db.query(GrpTaxpayerData)
+            .filter(GrpTaxpayerData.address.isnot(None))
+            .filter(GrpTaxpayerData.address != '')
+            .limit(limit)
+            .all()
+        )
+
+        updated_count = 0
+        for record in records:
+            formatted = format_grp_address(record.address)
+            if formatted != record.address:
+                record.address = formatted
+                updated_count += 1
+
+        if updated_count > 0:
+            self.db.commit()
+
+        return updated_count
+
     def count_stats(self) -> Dict[str, int]:
         """Статистика по таблицам ГРП."""
         return {

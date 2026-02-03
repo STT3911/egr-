@@ -11,6 +11,7 @@ from app.core.security import verify_api_key
 from app.crud.grp import GrpCRUD
 from app.schemas.grp import GrpTaxpayerDataResponse
 from app.services.grp_client import GRPClient
+from app.utils.address_formatter import format_grp_address
 
 
 router = APIRouter()
@@ -36,7 +37,7 @@ def _serialize(record, raw_record=None) -> GrpTaxpayerDataResponse:
         inspectorate_name=record.inspectorate_name,
         status_code=record.status_code,
         status_date=record.status_date.isoformat() if record.status_date else None,
-        address=record.address,
+        address=format_grp_address(record.address),
         fetched_at=record.fetched_at.isoformat() if record.fetched_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
         http_status=http_status,
@@ -114,3 +115,18 @@ async def sync_grp_data(
 
     res = sync_grp_for_all.delay(limit=limit, only_missing=only_missing)
     return {"queued": True, "task_id": res.id, "limit": limit, "only_missing": only_missing}
+
+
+@router.post("/reformat-addresses")
+async def reformat_grp_addresses(
+    limit: int = Query(10000, ge=1, le=50000, description="Сколько адресов переформатировать за раз"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Переформатировать адреса в существующих записях ГРП.
+
+    Добавляет пробелы после сокращений (г., ул., кв.) для лучшей читаемости.
+    """
+    crud = GrpCRUD(db)
+    updated_count = crud.reformat_addresses(limit=limit)
+    return {"updated": updated_count, "limit": limit}
