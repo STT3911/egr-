@@ -532,12 +532,10 @@ const Company = () => {
                         <td className="py-2 font-medium text-foreground">{grpData.registration_date || "—"}</td>
                       </tr>
                       <tr className="hover:bg-primary/5 transition-colors">
-                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Инспекция (код)</td>
-                        <td className="py-2 font-medium text-foreground">{grpData.inspectorate_code || "—"}</td>
-                      </tr>
-                      <tr className="hover:bg-primary/5 transition-colors">
-                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Инспекция (название)</td>
-                        <td className="py-2 font-medium text-foreground">{grpData.inspectorate_name || "—"}</td>
+                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Инспекция</td>
+                        <td className="py-2 font-medium text-foreground">
+                          {grpData.inspectorate_name || (grpData.inspectorate_code ? `Код ${grpData.inspectorate_code}` : "—")}
+                        </td>
                       </tr>
                       <tr className="hover:bg-primary/5 transition-colors">
                         <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">Код состояния</td>

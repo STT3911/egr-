@@ -109,29 +109,48 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 
+def _get_client_ip(request: Request) -> str:
+    """Real client IP when behind Nginx/reverse proxy (X-Real-IP, then X-Forwarded-For)."""
+    real = request.headers.get("X-Real-IP")
+    if real:
+        return real.strip().split(",")[0].strip()
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.strip().split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
 async def rate_limit_check(request: Request):
     """
-    Middleware to check rate limits.
-    Uses client IP or API key as identifier.
+    Rate limit by real client IP (or API key). Stricter limit for search/lookup to slow down parsers.
     """
     if not settings.RATE_LIMIT_ENABLED:
         return
-    
-    # Get client identifier (prefer API key, fallback to IP)
+
+    client_ip = _get_client_ip(request)
     api_key = request.headers.get("X-API-Key", "")
-    client_ip = request.client.host if request.client else "unknown"
-    client_id = api_key[:16] if api_key else client_ip
-    
-    # Check rate limit
+    client_id = f"key:{api_key[:20]}" if api_key else f"ip:{client_ip}"
+
+    # Stricter limit for search/lookup (часто бьют парсеры)
+    path = request.url.path or ""
+    is_lookup = "/lookup" in path or "/companies/" in path and "raw" not in path
+    max_requests = (
+        getattr(settings, "RATE_LIMIT_LOOKUP_PER_MINUTE", None) or settings.RATE_LIMIT_PER_MINUTE
+    )
+    if is_lookup and hasattr(settings, "RATE_LIMIT_LOOKUP_PER_MINUTE") and settings.RATE_LIMIT_LOOKUP_PER_MINUTE is not None:
+        max_requests = settings.RATE_LIMIT_LOOKUP_PER_MINUTE
+
     allowed = rate_limiter.is_allowed(
         client_id=client_id,
-        max_requests=settings.RATE_LIMIT_PER_MINUTE,
-        window_seconds=60
+        max_requests=max_requests,
+        window_seconds=60,
     )
-    
+
     if not allowed:
-        logger.warning(f"Rate limit exceeded for {client_id}")
+        logger.warning(f"Rate limit exceeded for {client_id} path={path}")
         raise HTTPException(
             status_code=HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded. Maximum {settings.RATE_LIMIT_PER_MINUTE} requests per minute."
+            detail=f"Rate limit exceeded. Maximum {max_requests} requests per minute.",
         )
