@@ -1,5 +1,5 @@
 """Database models"""
-from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime
+from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -457,13 +457,37 @@ class ReferencePosition(Base):
 class ReferenceOPF(Base):
     """Справочник организационно-правовых форм - TSI00203"""
     __tablename__ = "ref_opf"
-    
+
     id = Column(Integer, primary_key=True)
     code = Column(Integer)
     name = Column(String, nullable=False)
     system_id = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class NalogDebtRecord(Base):
+    """
+    Записи задолженности с портала portal.nalog.gov.by (скрипт Start.py).
+    Один срез по дате (slice_date) — множество записей по УНП/ИМНС/датам.
+    """
+    __tablename__ = "nalog_debt_records"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    debtor_unp = Column(BigInteger, nullable=False, index=True)
+    imns_code = Column(String(10), nullable=False)
+    imns_name = Column(String(500), nullable=True)
+    debt_date = Column(String(50), nullable=False)   # Дата задолженности (как в источнике)
+    repayment_date = Column(String(50), nullable=False)  # Дата погашения задолженности
+    slice_date = Column(Date, nullable=False, index=True)  # Дата среза (месяц)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "debtor_unp", "imns_code", "debt_date", "repayment_date", "slice_date",
+            name="uq_nalog_debt_unp_imns_dates_slice",
+        ),
+    )
 
 
 

@@ -12,6 +12,7 @@ from app.database.models import (
     CompanyContactHistory,
     SyncHistory,
     ApiLog,
+    NalogDebtRecord,
 )
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "CompanyContactHistory",
     "SyncHistory",
     "ApiLog",
+    "NalogDebtRecord",
 ]
 
 

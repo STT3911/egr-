@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_LOOKUP_PER_MINUTE: Optional[int] = 20  # Stricter for lookup/search (anti-parser)
 
+    # Nalog debt (portal.nalog.gov.by) — папка для выгрузки JSON
+    NALOG_DEBT_OUT_DIR: str = "dolg_data"
+
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"
     
