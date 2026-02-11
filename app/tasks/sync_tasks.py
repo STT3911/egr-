@@ -181,7 +181,7 @@ def process_pending_raw(limit: int = 1000):
             except Exception as e:
                 item.last_error = f"parse_failed:{str(e)[:500]}"
                 service.db.commit()
-                logger.error(f"Error processing UNP {item.unp}: {e}")
+                lo  gger.error(f"Error processing UNP {item.unp}: {e}")
         
         if processed == 0 and to_parse:
             first_err = (to_parse[0].last_error or "none")[:300]

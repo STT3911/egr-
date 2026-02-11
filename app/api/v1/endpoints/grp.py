@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 
 from app.core.database import get_db
 from app.core.security import verify_api_key
@@ -18,28 +17,9 @@ from app.utils.address_formatter import format_grp_address
 router = APIRouter()
 
 
-def _resolve_inspectorate_name(db: Session, code: Optional[str]) -> Optional[str]:
-    """Подстановка названия инспекции МНС по коду из ref_grp_inspectorates."""
-    if not code:
-        return None
-    try:
-        row = db.execute(
-            text("SELECT name FROM ref_grp_inspectorates WHERE code = :c"),
-            {"c": str(code).strip()},
-        ).fetchone()
-        return row[0] if row else None
-    except Exception:
-        return None
-
-
-def _serialize(
-    record,
-    db: Session,
-    raw_record=None,
-    inspectorate_display: Optional[str] = None,
-) -> GrpTaxpayerDataResponse:
-    """record — GrpTaxpayerData; raw_record — опционально GrpRawData.
-    inspectorate_display — подставленное название инспекции по справочнику (если в записи только код).
+def _serialize(record, raw_record=None) -> GrpTaxpayerDataResponse:
+    """record — GrpTaxpayerData; raw_record — опционально GrpRawData для http_status/last_error/raw.
+    У GrpTaxpayerData нет http_status/last_error/raw — только у GrpRawData; используем getattr чтобы не падать.
     """
     http_status = None
     last_error = None
@@ -48,23 +28,18 @@ def _serialize(
         http_status = getattr(raw_record, "http_status", None)
         last_error = getattr(raw_record, "last_error", None)
         raw = getattr(raw_record, "raw_json", None)
-
-    inspectorate_name = inspectorate_display or record.inspectorate_name
-    if not inspectorate_name and record.inspectorate_code:
-        inspectorate_name = _resolve_inspectorate_name(db, record.inspectorate_code)
-
     return GrpTaxpayerDataResponse(
         unp=int(record.unp),
         full_name=record.full_name,
         short_name=record.short_name,
-        registration_date=record.registration_date.strftime('%d.%m.%Y') if record.registration_date else None,
+        registration_date=record.registration_date.isoformat() if record.registration_date else None,
         inspectorate_code=record.inspectorate_code,
-        inspectorate_name=inspectorate_name,
+        inspectorate_name=record.inspectorate_name,
         status_code=record.status_code,
-        status_date=record.status_date.strftime('%d.%m.%Y') if record.status_date else None,
+        status_date=record.status_date.isoformat() if record.status_date else None,
         address=format_grp_address(record.address),
-        fetched_at=record.fetched_at.strftime('%d.%m.%Y') if record.fetched_at else None,
-        updated_at=record.updated_at.strftime('%d.%m.%Y') if record.updated_at else None,
+        fetched_at=record.fetched_at.isoformat() if record.fetched_at else None,
+        updated_at=record.updated_at.isoformat() if record.updated_at else None,
         http_status=http_status,
         last_error=last_error,
         raw=raw,
@@ -108,7 +83,7 @@ async def get_grp_data(
         raise HTTPException(status_code=404, detail="Данные ГРП не найдены")
 
     raw_record = crud.get_raw_by_unp(record.unp) if record else None
-    return _serialize(record, db, raw_record=raw_record)
+    return _serialize(record, raw_record=raw_record)
 
 
 @router.get("/", response_model=list[GrpTaxpayerDataResponse])
@@ -120,7 +95,7 @@ async def list_grp_data(
 ):
     crud = GrpCRUD(db)
     records = crud.list_recent(limit=limit, offset=offset)
-    return [_serialize(r, db, raw_record=crud.get_raw_by_unp(r.unp)) for r in records]
+    return [_serialize(r, raw_record=crud.get_raw_by_unp(r.unp)) for r in records]
 
 
 @router.post("/sync")
@@ -155,3 +130,4 @@ async def reformat_grp_addresses(
     crud = GrpCRUD(db)
     updated_count = crud.reformat_addresses(limit=limit)
     return {"updated": updated_count, "limit": limit}
+    

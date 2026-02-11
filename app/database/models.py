@@ -484,8 +484,9 @@ class NalogDebtRecord(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "debtor_unp", "imns_code", "debt_date", "repayment_date", "slice_date",
-            name="uq_nalog_debt_unp_imns_dates_slice",
+            "debtor_unp",
+            "debt_date",
+            name="uq_nalog_debt_unp_debt_date",
         ),
     )
 
