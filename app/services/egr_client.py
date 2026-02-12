@@ -13,8 +13,19 @@ class BaseClient:
         self.base_url = base_url.rstrip("/")
         # Connection pool for better performance
         self._client = None
-        self._limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
-        self._timeout = httpx.Timeout(30.0, connect=10.0)
+        # Увеличенный пул соединений и таймаут ожидания соединения,
+        # чтобы снизить вероятность PoolTimeout при массовых запросах.
+        self._limits = httpx.Limits(
+            max_keepalive_connections=50,
+            max_connections=200,
+        )
+        self._timeout = httpx.Timeout(
+            30.0,      # общий timeout
+            connect=10.0,
+            read=30.0,
+            write=30.0,
+            pool=60.0,  # сколько ждём свободное соединение из пула
+        )
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client with connection pool"""
@@ -39,10 +50,17 @@ class BaseClient:
             self._client = None
 
     async def _make_request(self, method: str, endpoint: str, **kwargs) -> Any:
-        """Make HTTP request"""
+        """
+        Make HTTP request with detailed error logging.
+        
+        В лог уходит:
+        - HTTP статус (если был ответ)
+        - первые ~300 символов тела ответа (если есть)
+        - тип и текст исключения
+        """
         url = f"{self.base_url}/{endpoint}"
         client = await self._get_client()
-        
+
         try:
             response = await client.request(method, url, **kwargs)
             if response.status_code == 404:
@@ -51,8 +69,39 @@ class BaseClient:
             if response.status_code == 204:
                 return None
             return response.json()
+        except httpx.HTTPStatusError as e:
+            resp = e.response
+            body_preview = ""
+            try:
+                body_preview = resp.text[:300]
+            except Exception:
+                body_preview = "<unreadable body>"
+            logger.error(
+                "API HTTP error (%s %s) status=%s url=%s body=%r",
+                method,
+                endpoint,
+                resp.status_code,
+                str(resp.url),
+                body_preview,
+            )
+            return None
+        except httpx.RequestError as e:
+            # Проблемы сети/таймауты/разрыв соединения
+            logger.error(
+                "API Request Error (%s %s): %s",
+                method,
+                url,
+                repr(e),
+            )
+            return None
         except Exception as e:
-            logger.error(f"API Request Error ({url}): {e}")
+            # Непредвиденные ошибки (JSONDecodeError и т.п.)
+            logger.exception(
+                "API Unexpected Error (%s %s): %s",
+                method,
+                url,
+                repr(e),
+            )
             return None
 
 
