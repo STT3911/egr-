@@ -611,10 +611,21 @@ def load_companies_from_json(self, auto_process: bool = True):
                     if unp_val in existing_raw:
                         existing_entry = existing_raw[unp_val]
                         if not _needs_enrichment(data_val) or _needs_enrichment(existing_entry.data or {}):
-                            existing_entry.data = data_val
-                            existing_entry.updated_at = datetime.now()
-                            existing_entry.processed_at = None
-                            existing_entry.last_error = None
+                            # Проверяем, изменились ли данные перед сбросом processed_at
+                            # Сравниваем JSON-представления данных (нормализованные через json.dumps)
+                            old_data_json = json.dumps(existing_entry.data, sort_keys=True) if existing_entry.data else None
+                            new_data_json = json.dumps(data_val, sort_keys=True) if data_val else None
+                            data_changed = old_data_json != new_data_json
+                            
+                            # Если данные не изменились и запись уже обработана, не сбрасываем processed_at
+                            if data_changed or existing_entry.processed_at is None:
+                                existing_entry.data = data_val
+                                existing_entry.updated_at = datetime.now()
+                                existing_entry.processed_at = None
+                                existing_entry.last_error = None
+                            else:
+                                # Данные не изменились, но обновим updated_at для отслеживания последнего обращения
+                                existing_entry.updated_at = datetime.now()
                     else:
                         raw_entry = RawCompanyData(unp=unp_val, data=data_val, processed_at=None)
                         db.add(raw_entry)

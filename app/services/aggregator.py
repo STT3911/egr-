@@ -1,4 +1,5 @@
 """Aggregator service - main orchestration service"""
+import json
 from typing import Optional, Dict, Any
 from datetime import datetime
 from app.services.egr_client import EGRClient, MobileEGRClient
@@ -53,9 +54,20 @@ class AggregatorService:
             # 3. Save to DB
             raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
             if raw_entry:
-                raw_entry.data = raw_data
-                raw_entry.updated_at = datetime.now()
-                raw_entry.processed_at = None
+                # Проверяем, изменились ли данные перед сбросом processed_at
+                # Сравниваем JSON-представления данных (нормализованные через json.dumps)
+                old_data_json = json.dumps(raw_entry.data, sort_keys=True) if raw_entry.data else None
+                new_data_json = json.dumps(raw_data, sort_keys=True) if raw_data else None
+                data_changed = old_data_json != new_data_json
+                
+                # Если данные не изменились и запись уже обработана, не сбрасываем processed_at
+                if data_changed or raw_entry.processed_at is None:
+                    raw_entry.data = raw_data
+                    raw_entry.updated_at = datetime.now()
+                    raw_entry.processed_at = None
+                else:
+                    # Данные не изменились, но обновим updated_at для отслеживания последнего обращения
+                    raw_entry.updated_at = datetime.now()
             else:
                 raw_entry = RawCompanyData(unp=unp, data=raw_data)
                 self.db.add(raw_entry)
