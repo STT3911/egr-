@@ -15,7 +15,7 @@ from app.services.mapper_service import CompanyMapper
 from app.crud.company import CompanyCRUD
 from app.services.egr_client import EGRClient
 from app.services.grp_client import GRPClient
-from app.database.models import SystemState, RawCompanyData, GrpTaxpayerData
+from app.database.models import SystemState, RawCompanyData, GrpRawData, GrpTaxpayerData, Company
 from app.crud.grp import GrpCRUD
 from app.core.database import SessionLocal
 
@@ -276,6 +276,471 @@ def enrich_missing_raw(limit: int = 200):
         service.close()
 
 
+# ==================== Независимые воркеры: fetch (API → raw) и process (raw → таблицы) ====================
+
+
+@celery_app.task(bind=True, max_retries=2)
+def egr_fetch_raw_one(self, unp: int):
+    """
+    Забрать один УНП с EGR API и сохранить в egr_raw_company_data. Не парсит.
+    Вызывается из process_period_range / sync_daily_changes вместо sync_specific_company.
+    """
+    service = AggregatorService()
+    if not settings.EGR_API_URL:
+        return
+    client = EGRClient(settings.EGR_API_URL)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        raw_data = loop.run_until_complete(client.get_full_company_history(unp))
+        loop.run_until_complete(client.close())
+        if not raw_data:
+            return
+        raw_entry = service.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
+        if raw_entry:
+            raw_entry.data = raw_data
+            raw_entry.updated_at = datetime.now()
+            raw_entry.processed_at = None
+            raw_entry.last_error = None
+        else:
+            service.db.add(RawCompanyData(unp=unp, data=raw_data))
+        service.db.commit()
+    except Exception as e:
+        service.db.rollback()
+        logger.error("egr_fetch_raw_one %s: %s", unp, e)
+        raise self.retry(exc=e, countdown=60)
+    finally:
+        loop.close()
+        service.close()
+
+
+@celery_app.task
+def egr_fetch_raw(limit: int = 500):
+    """
+    Воркер 1 (EGR): только ходит в EGR API и сохраняет/обновляет сырые данные в egr_raw_company_data.
+    Не парсит, не трогает структурные таблицы. Работает независимо от egr_process_raw.
+    """
+    if not settings.EGR_API_URL:
+        logger.warning("EGR_API_URL not set; egr_fetch_raw skipped")
+        return 0
+    service = AggregatorService()
+    client = EGRClient(settings.EGR_API_URL)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    batch_size = 30
+    try:
+        candidates = (
+            service.db.query(RawCompanyData)
+            .filter(
+                (RawCompanyData.processed_at == None)
+                | (RawCompanyData.updated_at > RawCompanyData.processed_at)
+                | (~RawCompanyData.data.has_key("names"))
+                | (~RawCompanyData.data.has_key("addresses"))
+                | (~RawCompanyData.data.has_key("ved"))
+            )
+            .order_by(RawCompanyData.updated_at.asc())
+            .limit(limit)
+            .all()
+        )
+        to_fetch = [c for c in candidates if _needs_enrichment(c.data or {})][:limit]
+        if not to_fetch:
+            logger.info("egr_fetch_raw: no rows need fetch/enrich")
+            return 0
+        fetched = 0
+        for batch_start in range(0, len(to_fetch), batch_size):
+            batch = to_fetch[batch_start : batch_start + batch_size]
+            async def _batch():
+                tasks = [client.get_full_company_history(item.unp) for item in batch]
+                return await asyncio.gather(*tasks, return_exceptions=True)
+            results = loop.run_until_complete(_batch())
+            for item, result in zip(batch, results):
+                if isinstance(result, Exception):
+                    item.last_error = f"fetch_failed:{str(result)[:200]}"
+                    continue
+                if not result:
+                    item.last_error = "fetch_failed:no_data"
+                    continue
+                item.data = result
+                item.updated_at = datetime.now()
+                item.processed_at = None
+                item.last_error = None
+                fetched += 1
+            try:
+                service.db.commit()
+            except Exception as e:
+                service.db.rollback()
+                logger.error("egr_fetch_raw commit error: %s", e)
+            if batch_start + batch_size < len(to_fetch):
+                loop.run_until_complete(asyncio.sleep(0.5))
+        logger.info("egr_fetch_raw: fetched %s rows", fetched)
+        return fetched
+    finally:
+        loop.run_until_complete(client.close())
+        loop.close()
+        service.close()
+
+
+@celery_app.task
+def egr_process_raw(limit: int = 1000):
+    """
+    Воркер 2 (EGR): только читает egr_raw_company_data и разносит данные по структурным таблицам.
+    Не ходит в API. Работает независимо от egr_fetch_raw.
+    """
+    service = AggregatorService()
+    try:
+        try:
+            ref_count = service.db.execute(text("SELECT COUNT(*) FROM ref_creation_methods")).scalar()
+            if ref_count == 0:
+                logger.info("egr_process_raw: filling ref tables once")
+                update_reference_tables.run()
+        except Exception as e:
+            logger.warning("egr_process_raw ref check: %s", e)
+        pending = (
+            service.db.query(RawCompanyData)
+            .filter(
+                (RawCompanyData.processed_at == None) | (RawCompanyData.updated_at > RawCompanyData.processed_at)
+            )
+            .filter(RawCompanyData.data != None)
+            .order_by(RawCompanyData.updated_at.asc())
+            .limit(limit)
+            .all()
+        )
+        ready = [p for p in pending if not _needs_enrichment(p.data or {})]
+        if not ready:
+            logger.info("egr_process_raw: no rows ready to parse (need enrich first)")
+            return 0
+        processed = 0
+        for item in ready:
+            try:
+                service.process_raw_data(item.unp)
+                processed += 1
+            except Exception as e:
+                item.last_error = f"parse_failed:{str(e)[:500]}"
+                service.db.commit()
+                logger.error("egr_process_raw UNP %s: %s", item.unp, e)
+        logger.info("egr_process_raw: parsed %s rows", processed)
+        return processed
+    finally:
+        service.close()
+
+
+@celery_app.task
+def grp_fetch_raw(limit: int = 300, batch_size: int = 30):
+    """
+    Воркер 1 (GRP): только ходит в GRP API и сохраняет сырые данные в grp_raw_data.
+    Не парсит в grp_taxpayer_data. Работает независимо от grp_process_raw.
+    """
+    from app.database.models import Company, GrpTaxpayerData, GrpRawData
+    from app.crud.grp import GrpCRUD
+    from app.services.grp_client import GRPClient
+    db = SessionLocal()
+    crud = GrpCRUD(db)
+    try:
+        base_query = (
+            db.query(Company.unp)
+            .outerjoin(GrpTaxpayerData, Company.unp == GrpTaxpayerData.unp)
+            .filter(GrpTaxpayerData.unp == None)
+        )
+        unps = [r[0] for r in base_query.order_by(Company.unp.asc()).limit(limit).all()]
+        if not unps:
+            logger.info("grp_fetch_raw: nothing to do")
+            return 0
+        async def _fetch_batch(batch_unps):
+            client = GRPClient()
+            sem = asyncio.Semaphore(3)
+            async def _one(u):
+                async with sem:
+                    for retry in range(3):
+                        try:
+                            payload = await client.get_taxpayer(int(u))
+                            await asyncio.sleep(1.0)
+                            return u, payload, 200, None
+                        except Exception as e:
+                            if retry < 2:
+                                await asyncio.sleep(1.5 * (retry + 1))
+                                continue
+                            return u, None, None, str(e)[:200]
+                    return u, None, None, "timeout"
+            try:
+                return await asyncio.gather(*(_one(u) for u in batch_unps))
+            finally:
+                await client.close()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        fetched = 0
+        try:
+            for i in range(0, len(unps), batch_size):
+                batch = unps[i : i + batch_size]
+                results = loop.run_until_complete(_fetch_batch(batch))
+                for u, payload, status, err in results:
+                    crud.save_raw_data(unp=u, raw_json=payload if isinstance(payload, dict) else None, http_status=status, error=err)
+                    fetched += 1
+                db.commit()
+        finally:
+            loop.close()
+        logger.info("grp_fetch_raw: saved %s raw rows", fetched)
+        return fetched
+    finally:
+        db.close()
+
+
+@celery_app.task
+def grp_process_raw(limit: int = 500):
+    """
+    Воркер 2 (GRP): только читает grp_raw_data (unparsed) и разносит по grp_taxpayer_data.
+    Не ходит в API. Работает независимо от grp_fetch_raw.
+    """
+    from app.crud.grp import GrpCRUD
+    db = SessionLocal()
+    crud = GrpCRUD(db)
+    try:
+        success, errors = crud.parse_batch(limit=limit)
+        logger.info("grp_process_raw: parsed %s, errors %s", success, errors)
+        return success
+    finally:
+        db.close()
+
+
+# ==================== Экспорт БД в JSON (в папку проекта на хосте) ====================
+
+
+@celery_app.task
+def export_raw_to_json(batch_size: int = 50000):
+    """
+    Выгружает egr_raw_company_data из контейнера в JSON-файлы в папку проекта на хосте.
+    Путь задаётся через settings.DB_EXPORT_DIR (по умолчанию data/db_export).
+    В контейнере монтируется .:/app, поэтому /app/data/db_export = ./data/db_export на хосте.
+    Файлы: egr_raw_YYYY-MM-DD_000.json, egr_raw_YYYY-MM-DD_001.json, ...
+    """
+    from pathlib import Path
+    from datetime import date
+    db = SessionLocal()
+    try:
+        # В контейнере WORKDIR=/app → data/db_export = /app/data/db_export (volume = папка проекта на хосте)
+        export_dir = Path(settings.DB_EXPORT_DIR)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        total = db.query(RawCompanyData).count()
+        written = 0
+        offset = 0
+        part = 0
+        while offset < total:
+            batch = (
+                db.query(RawCompanyData)
+                .order_by(RawCompanyData.unp)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+            if not batch:
+                break
+            items = [
+                {
+                    "unp": r.unp,
+                    "data": r.data,
+                    "processed_at": r.processed_at.isoformat() if r.processed_at else None,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in batch
+            ]
+            path = export_dir / f"egr_raw_{today}_{part:03d}.json"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False, indent=None)
+            written += len(items)
+            offset += batch_size
+            part += 1
+            logger.info("export_raw_to_json: wrote %s to %s", len(items), path.name)
+        logger.info("export_raw_to_json: done, %s records in %s files to %s", written, part, export_dir)
+        return {"records": written, "files": part, "dir": str(export_dir)}
+    except Exception as e:
+        logger.exception("export_raw_to_json failed: %s", e)
+        raise
+    finally:
+        db.close()
+
+
+def _company_row_to_dict(row):
+    """Сериализация строки egr_companies в dict для JSON (даты и UUID в строки)."""
+    return {
+        "id": str(row.id) if row.id else None,
+        "unp": row.unp,
+        "current_status_code": row.current_status_code,
+        "registration_date": row.registration_date.isoformat() if row.registration_date else None,
+        "creation_method_id": row.creation_method_id,
+        "creation_decision_no": row.creation_decision_no,
+        "creation_authority_id": row.creation_authority_id,
+        "current_authority_id": row.current_authority_id,
+        "entity_type_id": row.entity_type_id,
+        "liquidation_date": row.liquidation_date.isoformat() if row.liquidation_date else None,
+        "liquidation_reason_id": row.liquidation_reason_id,
+        "liquidation_decision_no": row.liquidation_decision_no,
+        "liquidation_authority_id": row.liquidation_authority_id,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@celery_app.task
+def export_companies_to_json(batch_size: int = 50000):
+    """
+    Выгружает egr_companies в JSON для бэкапа (в ту же папку data/db_export на хосте).
+    Файлы: egr_companies_YYYY-MM-DD_000.json, ...
+    """
+    from pathlib import Path
+    from datetime import date as date_type
+    db = SessionLocal()
+    try:
+        export_dir = Path(settings.DB_EXPORT_DIR)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        today = date_type.today().isoformat()
+        total = db.query(Company).count()
+        written = 0
+        offset = 0
+        part = 0
+        while offset < total:
+            batch = (
+                db.query(Company)
+                .order_by(Company.unp)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+            if not batch:
+                break
+            items = [_company_row_to_dict(r) for r in batch]
+            path = export_dir / f"egr_companies_{today}_{part:03d}.json"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False, indent=None)
+            written += len(items)
+            offset += batch_size
+            part += 1
+            logger.info("export_companies_to_json: wrote %s to %s", len(items), path.name)
+        logger.info("export_companies_to_json: done, %s records in %s files to %s", written, part, export_dir)
+        return {"records": written, "files": part, "dir": str(export_dir)}
+    except Exception as e:
+        logger.exception("export_companies_to_json failed: %s", e)
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task
+def export_grp_raw_to_json(batch_size: int = 50000):
+    """
+    Выгружает grp_raw_data в JSON в data/db_export (для бэкапа). Только ручной запуск.
+    Файлы: grp_raw_YYYY-MM-DD_000.json, ...
+    """
+    from pathlib import Path
+    from datetime import date as date_type
+    db = SessionLocal()
+    try:
+        export_dir = Path(settings.DB_EXPORT_DIR)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        today = date_type.today().isoformat()
+        total = db.query(GrpRawData).count()
+        written = 0
+        offset = 0
+        part = 0
+        while offset < total:
+            batch = (
+                db.query(GrpRawData)
+                .order_by(GrpRawData.unp)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+            if not batch:
+                break
+            items = [
+                {
+                    "unp": r.unp,
+                    "raw_json": r.raw_json,
+                    "http_status": r.http_status,
+                    "last_error": r.last_error,
+                    "fetched_at": r.fetched_at.isoformat() if r.fetched_at else None,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                    "parsed": r.parsed,
+                    "parsed_at": r.parsed_at.isoformat() if r.parsed_at else None,
+                }
+                for r in batch
+            ]
+            path = export_dir / f"grp_raw_{today}_{part:03d}.json"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False, indent=None)
+            written += len(items)
+            offset += batch_size
+            part += 1
+            logger.info("export_grp_raw_to_json: wrote %s to %s", len(items), path.name)
+        logger.info("export_grp_raw_to_json: done, %s records in %s files to %s", written, part, export_dir)
+        return {"records": written, "files": part, "dir": str(export_dir)}
+    except Exception as e:
+        logger.exception("export_grp_raw_to_json failed: %s", e)
+        raise
+    finally:
+        db.close()
+
+
+def _grp_taxpayer_row_to_dict(row):
+    """Сериализация строки grp_taxpayer_data для JSON."""
+    return {
+        "unp": row.unp,
+        "full_name": row.full_name,
+        "short_name": row.short_name,
+        "registration_date": row.registration_date.isoformat() if row.registration_date else None,
+        "inspectorate_code": row.inspectorate_code,
+        "inspectorate_name": row.inspectorate_name,
+        "status_code": row.status_code,
+        "status_date": row.status_date.isoformat() if row.status_date else None,
+        "address": row.address,
+        "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@celery_app.task
+def export_grp_taxpayers_to_json(batch_size: int = 50000):
+    """
+    Выгружает grp_taxpayer_data в JSON в data/db_export (для бэкапа). Только ручной запуск.
+    Файлы: grp_taxpayer_YYYY-MM-DD_000.json, ...
+    """
+    from pathlib import Path
+    from datetime import date as date_type
+    db = SessionLocal()
+    try:
+        export_dir = Path(settings.DB_EXPORT_DIR)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        today = date_type.today().isoformat()
+        total = db.query(GrpTaxpayerData).count()
+        written = 0
+        offset = 0
+        part = 0
+        while offset < total:
+            batch = (
+                db.query(GrpTaxpayerData)
+                .order_by(GrpTaxpayerData.unp)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
+            )
+            if not batch:
+                break
+            items = [_grp_taxpayer_row_to_dict(r) for r in batch]
+            path = export_dir / f"grp_taxpayer_{today}_{part:03d}.json"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False, indent=None)
+            written += len(items)
+            offset += batch_size
+            part += 1
+            logger.info("export_grp_taxpayers_to_json: wrote %s to %s", len(items), path.name)
+        logger.info("export_grp_taxpayers_to_json: done, %s records in %s files to %s", written, part, export_dir)
+        return {"records": written, "files": part, "dir": str(export_dir)}
+    except Exception as e:
+        logger.exception("export_grp_taxpayers_to_json failed: %s", e)
+        raise
+    finally:
+        db.close()
+
+
 @celery_app.task(bind=True)
 def initial_seed_by_history(self):
     """Initial seed from history"""
@@ -330,14 +795,10 @@ def process_period_range(start_str, end_str):
                 if unp:
                     unps.add(unp)
             
-            # Итого
-            logger.info(f"🎯 Total unique companies to sync: {len(unps)}")
-            
-            # Ставим задачи на загрузку каждой компании
+            # Итого: ставим только fetch в raw (парсинг сделает воркер egr_process_raw)
+            logger.info(f"🎯 Total unique companies to sync (fetch raw): {len(unps)}")
             for unp in unps:
-                sync_specific_company.delay(unp)
-
-            # Автоматически обновить справочники после загрузки данных
+                egr_fetch_raw_one.delay(unp)
             update_reference_tables.delay()
 
         except Exception as e:
@@ -401,10 +862,10 @@ def sync_daily_changes():
                 for e in events:
                     unps.add(e.get("ngrn"))
                 
-                logger.info(f"Found {len(unps)} companies for {d_str}")
+                logger.info(f"Found {len(unps)} companies for {d_str} (queue fetch raw)")
                 for unp in unps:
                     if unp:
-                        sync_specific_company.delay(unp)
+                        egr_fetch_raw_one.delay(unp)
                 
                 update_last_sync_date(db, process_date)
                 process_date += timedelta(days=1)

@@ -203,6 +203,70 @@ result = auto_fetch_and_load("01.01.2024", "31.01.2024")
 - Первый аргумент - количество записей (по умолчанию: 5000)
 - Второй аргумент - `true`/`false` для async режима
 
+### 📤 Экспорт БД в JSON (в папку проекта на хосте)
+
+Сырые данные из контейнера с БД автоматически выгружаются в папку проекта на хосте (не внутрь контейнера), т.к. у сервисов смонтирован volume `.:/app`.
+
+- **Папка на хосте:** `./data/db_export/` (настраивается через `DB_EXPORT_DIR`, по умолчанию `data/db_export`).
+- **Только вручную** — экспорт в расписание не входит, запускайте по необходимости (см. команды ниже).
+
+**Ручной запуск экспорта:**
+
+```bash
+# EGR: сырые данные (egr_raw_company_data)
+docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_raw_to_json; export_raw_to_json.delay(50000)"
+
+# EGR: таблица компаний (egr_companies)
+docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_companies_to_json; export_companies_to_json.delay(50000)"
+
+# GRP: сырые данные (grp_raw_data) и пропарсенные (grp_taxpayer_data)
+docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_grp_raw_to_json, export_grp_taxpayers_to_json; export_grp_raw_to_json.delay(50000); export_grp_taxpayers_to_json.delay(50000)"
+```
+
+**Что дальше делать с JSON:** бэкапы, импорт на другой инстанс, аналитика на хосте, обмен с партнёрами.
+
+### GRP: запуск когда нужно
+
+Задачи ГРП (загрузка с API и парсинг) **по умолчанию не в расписании** — только ручной запуск.
+
+**Вариант 1 — запустить вручную когда надо:**
+
+```bash
+# Забрать сырые данные с API ГРП (300 записей за раз)
+docker compose exec egr_api python -c "from app.tasks.sync_tasks import grp_fetch_raw; grp_fetch_raw.delay(300)"
+
+# Разобрать сырые в grp_taxpayer_data (500 записей)
+docker compose exec egr_api python -c "from app.tasks.sync_tasks import grp_process_raw; grp_process_raw.delay(500)"
+
+# Экспорт GRP в JSON (сырые + пропарсенные)
+docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_grp_raw_to_json, export_grp_taxpayers_to_json; export_grp_raw_to_json.delay(); export_grp_taxpayers_to_json.delay()"
+```
+
+**Вариант 2 — включить GRP в расписание:**
+
+В `.env` задайте:
+
+```env
+GRP_SCHEDULE_ENABLED=true
+```
+
+Перезапустите worker и beat:
+
+```bash
+docker compose restart egr_celery_worker egr_celery_beat
+```
+
+После этого `grp_fetch_raw` и `grp_process_raw` будут выполняться по расписанию (каждые 2 мин и 30 с). Чтобы снова отключить — поставьте `GRP_SCHEDULE_ENABLED=false` и перезапустите.
+
+### Celery: новые задачи и ручной запуск
+
+- **Добавить новую задачу:** в `app/tasks/sync_tasks.py` — функция с декоратором `@celery_app.task`; в `app/tasks/celery_app.py` в `beat_schedule` — расписание (crontab или timedelta).
+- **Запустить задачу вручную:**  
+  `docker compose exec egr_api python -c "from app.tasks.sync_tasks import <имя_задачи>; <имя_задачи>.delay()"`  
+  или через API/скрипт, который вызывает `.delay()`.
+- После изменения расписания перезапустить **worker** и **beat**:  
+  `docker compose restart egr_celery_worker egr_celery_beat`.
+
 ### 📊 Мониторинг прогресса
 
 ```bash

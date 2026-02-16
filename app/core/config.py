@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     # Nalog debt (portal.nalog.gov.by) — папка для выгрузки JSON
     NALOG_DEBT_OUT_DIR: str = "dolg_data"
 
+    # Экспорт БД в JSON (путь относительно корня проекта; в контейнере = /app/...)
+    DB_EXPORT_DIR: str = "data/db_export"
+
+    # GRP: включать ли задачи grp_fetch_raw / grp_process_raw в расписание Beat (по умолчанию выключено — запуск вручную)
+    GRP_SCHEDULE_ENABLED: bool = False
+
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"
     

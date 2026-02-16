@@ -14,69 +14,72 @@ celery_app = Celery(
 # Импортируем модуль с задачами для регистрации
 from app.tasks import sync_tasks
 
+# Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
+_beat_schedule = {
+    # ----- EGR: fetch (API → raw) и process (raw → таблицы) -----
+    "egr-fetch-raw": {
+        "task": "app.tasks.sync_tasks.egr_fetch_raw",
+        "schedule": timedelta(seconds=60),
+        "args": (500,),
+    },
+    "egr-process-raw": {
+        "task": "app.tasks.sync_tasks.egr_process_raw",
+        "schedule": timedelta(seconds=20),
+        "args": (1000,),
+    },
+    # ----- Остальные задачи (периодические) -----
+    "auto-fetch-historical": {
+        "task": "app.tasks.sync_tasks.auto_fetch_historical_data",
+        "schedule": crontab(day_of_week=0, hour=1, minute=0),
+        "args": (1900, 60),
+    },
+    "auto-fetch-and-load-recent": {
+        "task": "app.tasks.sync_tasks.auto_fetch_recent_to_json_and_db",
+        "schedule": crontab(hour="*/6"),
+        "args": (),
+    },
+    "load-from-json": {
+        "task": "app.tasks.sync_tasks.load_companies_from_json",
+        "schedule": crontab(hour=2, minute=0),
+        "args": (True,),
+    },
+    "sync-daily-changes": {
+        "task": "app.tasks.sync_tasks.sync_daily_changes",
+        "schedule": crontab(hour=3, minute=0),
+        "args": (),
+    },
+    "update-reference-tables": {
+        "task": "app.tasks.sync_tasks.update_reference_tables",
+        "schedule": crontab(hour=4, minute=0),
+        "args": (),
+    },
+    "reprocess-failed-rows": {
+        "task": "app.tasks.sync_tasks.reprocess_failed_rows",
+        "schedule": crontab(day_of_week=6, hour=5, minute=0),
+        "args": (),
+    },
+}
+
+# GRP в расписании только если включено (по умолчанию — ручной запуск)
+if settings.GRP_SCHEDULE_ENABLED:
+    _beat_schedule["grp-fetch-raw"] = {
+        "task": "app.tasks.sync_tasks.grp_fetch_raw",
+        "schedule": timedelta(seconds=120),
+        "args": (300,),
+    }
+    _beat_schedule["grp-process-raw"] = {
+        "task": "app.tasks.sync_tasks.grp_process_raw",
+        "schedule": timedelta(seconds=30),
+        "args": (500,),
+    }
+
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
     timezone="Europe/Minsk",
     enable_utc=True,
-    beat_schedule={
-        # Historical data load (1900 to today) - runs once per week on Sunday at 1 AM
-        "auto-fetch-historical": {
-            "task": "app.tasks.sync_tasks.auto_fetch_historical_data",
-            "schedule": crontab(day_of_week=0, hour=1, minute=0),  # Sunday 1 AM
-            "args": (1900, 60),  # From 1900, 60 months (5 years) per period
-        },
-        # Auto-fetch from API to JSON, then load to DB (every 6 hours)
-        "auto-fetch-and-load-recent": {
-            "task": "app.tasks.sync_tasks.auto_fetch_recent_to_json_and_db",
-            "schedule": crontab(hour="*/6"),  # Every 6 hours
-            "args": (),
-        },
-        # Process pending raw: обогащение по API (names/addresses/ved) + парсинг в таблицы. Каждые 15 сек, 5000 записей.
-        "process-pending-raw": {
-            "task": "app.tasks.sync_tasks.process_pending_raw",
-            "schedule": timedelta(seconds=15),
-            "args": (5000,),
-        },
-        # Дополнительно: только обогащение по API (раз в минуту, 3000 записей) — ускоряет при большом объёме base_info
-        "enrich-missing-raw": {
-            "task": "app.tasks.sync_tasks.enrich_missing_raw",
-            "schedule": timedelta(seconds=60),
-            "args": (3000,),
-        },
-        # Load existing JSON files (if any) every night at 2 AM
-        "load-from-json": {
-            "task": "app.tasks.sync_tasks.load_companies_from_json",
-            "schedule": crontab(hour=2, minute=0),
-            "args": (True,),  # auto_process=True
-        },
-        # Sync daily changes (backup method) at 3 AM
-        "sync-daily-changes": {
-            "task": "app.tasks.sync_tasks.sync_daily_changes",
-            "schedule": crontab(hour=3, minute=0),
-            "args": (),
-        },
-        # Update reference tables at 4 AM
-        "update-reference-tables": {
-            "task": "app.tasks.sync_tasks.update_reference_tables",
-            "schedule": crontab(hour=4, minute=0),
-            "args": (),
-        },
-        # Fetch GRP (налоговая) data for companies (daily, only missing)
-        "sync-grp-missing": {
-            "task": "app.tasks.sync_tasks.sync_grp_for_all",
-            "schedule": crontab(hour=5, minute=0),
-            "args": (),
-            "kwargs": {"limit": 5000, "only_missing": True},
-        },
-        # Reprocess failed rows on Saturday at 5 AM
-        "reprocess-failed-rows": {
-            "task": "app.tasks.sync_tasks.reprocess_failed_rows",
-            "schedule": crontab(day_of_week=6, hour=5, minute=0),
-            "args": (),
-        },
-    }
+    beat_schedule=_beat_schedule,
 )
 
 
