@@ -37,6 +37,12 @@ class ReferenceService:
             "name_field": "vnslkvp",
             "system_id": 228
         },
+        "ref_authorities": {
+            "json_path": "nsi00212",
+            "id_field": "nkuz",
+            "name_field": "vnuzp",
+            "system_id": 212
+        },
         "ref_ved": {
             "json_path": "nsi00114",
             "id_field": "nsi00114",
@@ -142,55 +148,85 @@ class ReferenceService:
     
     def extract_references_from_raw_data(self) -> Dict[str, List[Dict]]:
         """
-        Extract all reference data from egr_raw_company_data table
-        
-        Returns:
-            Dictionary with table_name -> list of reference items
+        Извлекает справочники из egr_raw_company_data (из data или из колонок base_info/addresses/ved/names).
+        Сканирует base_info, а также элементы массивов addresses и ved.
         """
         logger.info("Extracting reference data from egr_raw_company_data")
-        
         references = {}
-        
-        # Query all raw data
-        query = text("SELECT data FROM egr_raw_company_data WHERE data IS NOT NULL")
+
+        # Выбираем строки, где есть что парсить (data или все 4 колонки)
+        query = text("""
+            SELECT data, base_info, addresses, ved, names
+            FROM egr_raw_company_data
+            WHERE data IS NOT NULL OR base_info IS NOT NULL
+        """)
         result = self.db.execute(query)
-        
+
         for row in result:
-            data = row[0]
-            if not isinstance(data, dict):
+            data, base_info_col, addresses_col, ved_col, names_col = row[0], row[1], row[2], row[3], row[4]
+            if data is None and base_info_col is None:
                 continue
-            
-            base_info = data.get("base_info", {})
-            
-            # Extract data for each reference type
+            base_info = (data or {}).get("base_info") if isinstance(data, dict) else base_info_col
+            if not isinstance(base_info, dict):
+                base_info = base_info_col if isinstance(base_info_col, dict) else {}
+            addresses = (data or {}).get("addresses") if isinstance(data, dict) else addresses_col
+            if not isinstance(addresses, list):
+                addresses = addresses_col if isinstance(addresses_col, list) else []
+            ved_list = (data or {}).get("ved") if isinstance(data, dict) else ved_col
+            if not isinstance(ved_list, list):
+                ved_list = ved_col if isinstance(ved_col, list) else []
+
             for table_name, mapping in self.REFERENCE_MAPPINGS.items():
                 if table_name not in references:
                     references[table_name] = {}
-                
+
                 json_path = mapping["json_path"]
-                
-                # Handle authorities which can be in multiple places
+
                 if table_name == "ref_authorities":
                     for suffix in ["", "CRT", "LKV"]:
                         path = json_path + suffix
                         ref_data = base_info.get(path)
                         if ref_data and isinstance(ref_data, dict):
-                            self._extract_reference_item(
-                                ref_data, mapping, references[table_name]
-                            )
+                            self._extract_reference_item(ref_data, mapping, references[table_name])
                 else:
                     ref_data = base_info.get(json_path)
                     if ref_data and isinstance(ref_data, dict):
-                        self._extract_reference_item(
-                            ref_data, mapping, references[table_name]
-                        )
-        
-        # Convert dict to list
+                        self._extract_reference_item(ref_data, mapping, references[table_name])
+
+            # Справочники из адресов (страны, СОАТО, типы улиц, помещений, населённых пунктов)
+            for addr in addresses:
+                if not isinstance(addr, dict):
+                    continue
+                for path in ("nsi00201", "nsi00202", "nsi00226", "nsi00239", "nsi00234"):
+                    ref_data = addr.get(path)
+                    if ref_data and isinstance(ref_data, dict):
+                        table = {"nsi00201": "ref_countries", "nsi00202": "ref_soato", "nsi00226": "ref_street_types",
+                                 "nsi00239": "ref_settlement_types", "nsi00234": "ref_room_categories"}.get(path)
+                        if table and table in self.REFERENCE_MAPPINGS:
+                            if table not in references:
+                                references[table] = {}
+                            self._extract_reference_item(ref_data, self.REFERENCE_MAPPINGS[table], references[table])
+
+            # Справочник ВЭД из массива ved (nsi00114 или nsi00118)
+            for ved_item in ved_list:
+                if not isinstance(ved_item, dict):
+                    continue
+                for key in ("nsi00114", "nsi00118"):
+                    ref_data = ved_item.get(key)
+                    if ref_data and isinstance(ref_data, dict):
+                        if "ref_ved" not in references:
+                            references["ref_ved"] = {}
+                        m = self.REFERENCE_MAPPINGS["ref_ved"]
+                        rid = ref_data.get(m["id_field"]) or ref_data.get("nkved")
+                        if rid is not None:
+                            ref_name = ref_data.get(m["name_field"]) or ref_data.get("vnved")
+                            code = ref_data.get(m.get("code_field") or "vkvdn") or ref_data.get("nkved")
+                            references["ref_ved"][rid] = {"id": rid, "name": ref_name or "", "code": code, "system_id": m["system_id"]}
+                        break
+
         for table_name in references:
             references[table_name] = list(references[table_name].values())
-        
         logger.info(f"Extracted references: {[(k, len(v)) for k, v in references.items()]}")
-        
         return references
     
     def _extract_reference_item(

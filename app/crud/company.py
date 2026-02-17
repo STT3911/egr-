@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.models import (
     Company,
     CompanyNameHistory,
@@ -86,18 +87,16 @@ class CompanyCRUD:
         self._ensure_ref_ids_for_company(company_data)
         self.db.flush()
         
-        # Get or create company
+        # Upsert по UNP: если компании нет — создаём, если есть — обновляем
         company = self.get_by_unp(unp)
         if not company:
-            company = Company(**company_data)
-            self.db.add(company)
-            try:
-                self.db.flush()
-            except IntegrityError:
-                self.db.rollback()
-                company = self.get_by_unp(unp)
-                if not company:
-                    raise
+            stmt = pg_insert(Company).values(**company_data).on_conflict_do_update(
+                index_elements=[Company.unp],
+                set_={k: v for k, v in company_data.items() if k != "unp"},
+            )
+            self.db.execute(stmt)
+            self.db.flush()
+            company = self.get_by_unp(unp)
         else:
             for key, value in company_data.items():
                 if key != "unp":

@@ -296,14 +296,34 @@ def egr_fetch_raw_one(self, unp: int):
         loop.run_until_complete(client.close())
         if not raw_data:
             return
+        now = datetime.now()
         raw_entry = service.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
         if raw_entry:
             raw_entry.data = raw_data
-            raw_entry.updated_at = datetime.now()
+            raw_entry.base_info = raw_data.get("base_info")
+            raw_entry.base_info_fetched_at = now
+            raw_entry.addresses = raw_data.get("addresses")
+            raw_entry.addresses_fetched_at = now
+            raw_entry.ved = raw_data.get("ved")
+            raw_entry.ved_fetched_at = now
+            raw_entry.names = raw_data.get("names")
+            raw_entry.names_fetched_at = now
+            raw_entry.updated_at = now
             raw_entry.processed_at = None
             raw_entry.last_error = None
         else:
-            service.db.add(RawCompanyData(unp=unp, data=raw_data))
+            service.db.add(RawCompanyData(
+                unp=unp,
+                data=raw_data,
+                base_info=raw_data.get("base_info"),
+                base_info_fetched_at=now,
+                addresses=raw_data.get("addresses"),
+                addresses_fetched_at=now,
+                ved=raw_data.get("ved"),
+                ved_fetched_at=now,
+                names=raw_data.get("names"),
+                names_fetched_at=now,
+            ))
         service.db.commit()
     except Exception as e:
         service.db.rollback()
@@ -329,20 +349,22 @@ def egr_fetch_raw(limit: int = 500):
     asyncio.set_event_loop(loop)
     batch_size = 30
     try:
+        # Кандидаты: не обработаны или нет данных по какому-то эндпоинту
         candidates = (
             service.db.query(RawCompanyData)
             .filter(
                 (RawCompanyData.processed_at == None)
                 | (RawCompanyData.updated_at > RawCompanyData.processed_at)
-                | (~RawCompanyData.data.has_key("names"))
-                | (~RawCompanyData.data.has_key("addresses"))
-                | (~RawCompanyData.data.has_key("ved"))
+                | (RawCompanyData.base_info == None)
+                | (RawCompanyData.names == None)
+                | (RawCompanyData.addresses == None)
+                | (RawCompanyData.ved == None)
             )
             .order_by(RawCompanyData.updated_at.asc())
             .limit(limit)
             .all()
         )
-        to_fetch = [c for c in candidates if _needs_enrichment(c.data or {})][:limit]
+        to_fetch = [c for c in candidates if _needs_enrichment(c.get_data() or {})][:limit]
         if not to_fetch:
             logger.info("egr_fetch_raw: no rows need fetch/enrich")
             return 0
@@ -353,6 +375,7 @@ def egr_fetch_raw(limit: int = 500):
                 tasks = [client.get_full_company_history(item.unp) for item in batch]
                 return await asyncio.gather(*tasks, return_exceptions=True)
             results = loop.run_until_complete(_batch())
+            now = datetime.now()
             for item, result in zip(batch, results):
                 if isinstance(result, Exception):
                     item.last_error = f"fetch_failed:{str(result)[:200]}"
@@ -361,7 +384,15 @@ def egr_fetch_raw(limit: int = 500):
                     item.last_error = "fetch_failed:no_data"
                     continue
                 item.data = result
-                item.updated_at = datetime.now()
+                item.base_info = result.get("base_info")
+                item.base_info_fetched_at = now
+                item.addresses = result.get("addresses")
+                item.addresses_fetched_at = now
+                item.ved = result.get("ved")
+                item.ved_fetched_at = now
+                item.names = result.get("names")
+                item.names_fetched_at = now
+                item.updated_at = now
                 item.processed_at = None
                 item.last_error = None
                 fetched += 1
@@ -400,12 +431,15 @@ def egr_process_raw(limit: int = 1000):
             .filter(
                 (RawCompanyData.processed_at == None) | (RawCompanyData.updated_at > RawCompanyData.processed_at)
             )
-            .filter(RawCompanyData.data != None)
+            .filter(
+                (RawCompanyData.data != None)
+                | ((RawCompanyData.base_info != None) & (RawCompanyData.names != None) & (RawCompanyData.addresses != None) & (RawCompanyData.ved != None))
+            )
             .order_by(RawCompanyData.updated_at.asc())
             .limit(limit)
             .all()
         )
-        ready = [p for p in pending if not _needs_enrichment(p.data or {})]
+        ready = [p for p in pending if p.get_data() and not _needs_enrichment(p.get_data())]
         if not ready:
             logger.info("egr_process_raw: no rows ready to parse (need enrich first)")
             return 0
@@ -537,7 +571,11 @@ def export_raw_to_json(batch_size: int = 50000):
             items = [
                 {
                     "unp": r.unp,
-                    "data": r.data,
+                    "data": r.get_data(),
+                    "base_info_fetched_at": r.base_info_fetched_at.isoformat() if r.base_info_fetched_at else None,
+                    "addresses_fetched_at": r.addresses_fetched_at.isoformat() if r.addresses_fetched_at else None,
+                    "ved_fetched_at": r.ved_fetched_at.isoformat() if r.ved_fetched_at else None,
+                    "names_fetched_at": r.names_fetched_at.isoformat() if r.names_fetched_at else None,
                     "processed_at": r.processed_at.isoformat() if r.processed_at else None,
                     "updated_at": r.updated_at.isoformat() if r.updated_at else None,
                 }
@@ -884,122 +922,42 @@ def sync_daily_changes():
 @celery_app.task
 def update_reference_tables():
     """
-    Обновить справочники после загрузки новых данных
-    Запускать после каждого обновления egr_raw_company_data
+    Обновить справочники из egr_raw_company_data (data и колонки base_info/addresses/ved/names).
+    Извлекает ref_statuses, ref_creation_methods, ref_entity_types, ref_authorities,
+    ref_liquidation_methods, ref_ved и др. из base_info и из массивов addresses/ved.
     """
-    from sqlalchemy import create_engine, text
-    import os
+    from app.services.reference_service import ReferenceService
+    from sqlalchemy import text
 
     logger.info("🔄 Начинаю обновление справочников...")
-
     try:
-        # Получить параметры подключения к БД
-        db_url = settings.DATABASE_URL or os.getenv('DATABASE_URL')
-        if not db_url:
-            logger.error("❌ DATABASE_URL не настроена")
-            return False
+        ref_svc = ReferenceService()
+        try:
+            ref_svc.update_all_references()
+        finally:
+            ref_svc.close()
 
-        # Создать подключение
-        engine = create_engine(db_url)
-
-        # SQL скрипт для обновления справочников
-        sql_script = """
-        -- Наполнение статусов (COALESCE name — в данных может быть пусто)
-        INSERT INTO ref_statuses (id, name, system_id)
-        SELECT DISTINCT
-            ((data::jsonb->'base_info'->'nsi00219'->>'nksost')::int) as id,
-            COALESCE(NULLIF(TRIM(data::jsonb->'base_info'->'nsi00219'->>'vnsostk'), ''), 'Статус ' || (data::jsonb->'base_info'->'nsi00219'->>'nksost')) as name,
-            ((data::jsonb->'base_info'->'nsi00219'->>'nsi00219')::int) as system_id
-        FROM egr_raw_company_data
-        WHERE data::jsonb->'base_info'->'nsi00219' IS NOT NULL
-            AND data::jsonb->'base_info'->'nsi00219'->>'nksost' IS NOT NULL
-        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW();
-
-        -- Наполнение способов создания
-        INSERT INTO ref_creation_methods (id, name, system_id)
-        SELECT DISTINCT
-            ((data::jsonb->'base_info'->'nsi00208'->>'nkscrt')::int) as id,
-            COALESCE(NULLIF(TRIM(data::jsonb->'base_info'->'nsi00208'->>'vnscrtp'), ''), 'Способ создания ' || (data::jsonb->'base_info'->'nsi00208'->>'nkscrt')) as name,
-            ((data::jsonb->'base_info'->'nsi00208'->>'nsi00208')::int) as system_id
-        FROM egr_raw_company_data
-        WHERE data::jsonb->'base_info'->'nsi00208' IS NOT NULL
-            AND data::jsonb->'base_info'->'nsi00208'->>'nkscrt' IS NOT NULL
-        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW();
-
-        -- Наполнение типов объектов
-        INSERT INTO ref_entity_types (id, name, system_id)
-        SELECT DISTINCT
-            ((data::jsonb->'base_info'->'nsi00211'->>'nkvob')::int) as id,
-            COALESCE(NULLIF(TRIM(data::jsonb->'base_info'->'nsi00211'->>'vnvobp'), ''), 'Тип объекта ' || (data::jsonb->'base_info'->'nsi00211'->>'nkvob')) as name,
-            ((data::jsonb->'base_info'->'nsi00211'->>'nsi00211')::int) as system_id
-        FROM egr_raw_company_data
-        WHERE data::jsonb->'base_info'->'nsi00211' IS NOT NULL
-            AND data::jsonb->'base_info'->'nsi00211'->>'nkvob' IS NOT NULL
-        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW();
-
-        -- Наполнение органов: COALESCE во внутреннем и внешнем SELECT — name NOT NULL в таблице
-        INSERT INTO ref_authorities (id, name, system_id)
-        SELECT DISTINCT id, COALESCE(NULLIF(TRIM(name), ''), 'Орган ' || id), system_id FROM (
-            SELECT
-                ((data::jsonb->'base_info'->'nsi00212'->>'nkuz')::int) as id,
-                COALESCE(NULLIF(TRIM(data::jsonb->'base_info'->'nsi00212'->>'vnuzp'), ''), 'Орган ' || ((data::jsonb->'base_info'->'nsi00212'->>'nkuz')::int)) as name,
-                ((data::jsonb->'base_info'->'nsi00212'->>'nsi00212')::int) as system_id
-            FROM egr_raw_company_data WHERE data::jsonb->'base_info'->'nsi00212' IS NOT NULL AND data::jsonb->'base_info'->'nsi00212'->>'nkuz' IS NOT NULL
-            UNION ALL
-            SELECT
-                ((data::jsonb->'base_info'->'nsi00212CRT'->>'nkuz')::int) as id,
-                COALESCE(NULLIF(TRIM(data::jsonb->'base_info'->'nsi00212CRT'->>'vnuzp'), ''), 'Орган ' || ((data::jsonb->'base_info'->'nsi00212CRT'->>'nkuz')::int)) as name,
-                ((data::jsonb->'base_info'->'nsi00212CRT'->>'nsi00212')::int) as system_id
-            FROM egr_raw_company_data WHERE data::jsonb->'base_info'->'nsi00212CRT' IS NOT NULL AND data::jsonb->'base_info'->'nsi00212CRT'->>'nkuz' IS NOT NULL
-            UNION ALL
-            SELECT
-                ((data::jsonb->'base_info'->'nsi00212LKV'->>'nkuz')::int) as id,
-                COALESCE(NULLIF(TRIM(data::jsonb->'base_info'->'nsi00212LKV'->>'vnuzp'), ''), 'Орган ' || ((data::jsonb->'base_info'->'nsi00212LKV'->>'nkuz')::int)) as name,
-                ((data::jsonb->'base_info'->'nsi00212LKV'->>'nsi00212')::int) as system_id
-            FROM egr_raw_company_data WHERE data::jsonb->'base_info'->'nsi00212LKV' IS NOT NULL AND data::jsonb->'base_info'->'nsi00212LKV'->>'nkuz' IS NOT NULL
-        ) as all_auths WHERE id IS NOT NULL
-        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW();
-
-        -- Наполнение способов ликвидации
-        INSERT INTO ref_liquidation_methods (id, name, system_id)
-        SELECT DISTINCT
-            ((data::jsonb->'base_info'->'nsi00228'->>'nkslkv')::int) as id,
-            COALESCE(NULLIF(TRIM(data::jsonb->'base_info'->'nsi00228'->>'vnslkvp'), ''), 'Способ ликвидации ' || (data::jsonb->'base_info'->'nsi00228'->>'nkslkv')) as name,
-            ((data::jsonb->'base_info'->'nsi00228'->>'nsi00228')::int) as system_id
-        FROM egr_raw_company_data
-        WHERE data::jsonb->'base_info'->'nsi00228' IS NOT NULL
-            AND data::jsonb->'base_info'->'nsi00228'->>'nkslkv' IS NOT NULL
-        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW();
-        """
-
-        # Выполнить скрипт
-        with engine.connect() as conn:
-            conn.execute(text(sql_script))
-            conn.commit()
+        db = SessionLocal()
+        try:
+            stats_query = text("""
+                SELECT
+                    (SELECT COUNT(*) FROM ref_statuses) as statuses,
+                    (SELECT COUNT(*) FROM ref_creation_methods) as creation_methods,
+                    (SELECT COUNT(*) FROM ref_entity_types) as entity_types,
+                    (SELECT COUNT(*) FROM ref_authorities) as authorities,
+                    (SELECT COUNT(*) FROM ref_liquidation_methods) as liquidation_methods
+            """)
+            row = db.execute(stats_query).fetchone()
+            stats = dict(row._mapping) if hasattr(row, "_mapping") else {}
+            logger.info("📊 Статистика справочников: %s", stats)
+        finally:
+            db.close()
 
         logger.info("✅ Справочники успешно обновлены")
-
-        # Получить статистику
-        stats_query = """
-        SELECT
-            (SELECT COUNT(*) FROM ref_statuses) as statuses,
-            (SELECT COUNT(*) FROM ref_creation_methods) as creation_methods,
-            (SELECT COUNT(*) FROM ref_entity_types) as entity_types,
-            (SELECT COUNT(*) FROM ref_authorities) as authorities,
-            (SELECT COUNT(*) FROM ref_liquidation_methods) as liquidation_methods
-        """
-
-        result = conn.execute(text(stats_query)).fetchone()
-        logger.info(f"📊 Статистика справочников: {dict(result)}")
-
         return True
-
     except Exception as e:
-        logger.error(f"❌ Ошибка при обновлении справочников: {e}")
+        logger.exception("❌ Ошибка при обновлении справочников: %s", e)
         return False
-    finally:
-        if 'engine' in locals():
-            engine.dispose()
 
 
 # Максимальный размер файла (байт), для которого при ошибке стриминга пробуем загрузить целиком
@@ -1068,27 +1026,43 @@ def load_companies_from_json(self, auto_process: bool = True):
                     r.unp: r for r in
                     db.query(RawCompanyData).filter(RawCompanyData.unp.in_(batch_unps)).all()
                 }
+                now = datetime.now()
                 for unp_val, data_val in batch:
                     if unp_val in existing_raw:
                         existing_entry = existing_raw[unp_val]
-                        if not _needs_enrichment(data_val) or _needs_enrichment(existing_entry.data or {}):
-                            # Проверяем, изменились ли данные перед сбросом processed_at
-                            # Сравниваем JSON-представления данных (нормализованные через json.dumps)
+                        if not _needs_enrichment(data_val) or _needs_enrichment(existing_entry.get_data() or {}):
                             old_data_json = json.dumps(existing_entry.data, sort_keys=True) if existing_entry.data else None
                             new_data_json = json.dumps(data_val, sort_keys=True) if data_val else None
                             data_changed = old_data_json != new_data_json
-                            
-                            # Если данные не изменились и запись уже обработана, не сбрасываем processed_at
                             if data_changed or existing_entry.processed_at is None:
                                 existing_entry.data = data_val
-                                existing_entry.updated_at = datetime.now()
+                                existing_entry.base_info = data_val.get("base_info")
+                                existing_entry.base_info_fetched_at = now
+                                existing_entry.addresses = data_val.get("addresses")
+                                existing_entry.addresses_fetched_at = now
+                                existing_entry.ved = data_val.get("ved")
+                                existing_entry.ved_fetched_at = now
+                                existing_entry.names = data_val.get("names")
+                                existing_entry.names_fetched_at = now
+                                existing_entry.updated_at = now
                                 existing_entry.processed_at = None
                                 existing_entry.last_error = None
                             else:
-                                # Данные не изменились, но обновим updated_at для отслеживания последнего обращения
-                                existing_entry.updated_at = datetime.now()
+                                existing_entry.updated_at = now
                     else:
-                        raw_entry = RawCompanyData(unp=unp_val, data=data_val, processed_at=None)
+                        raw_entry = RawCompanyData(
+                            unp=unp_val,
+                            data=data_val,
+                            base_info=data_val.get("base_info"),
+                            base_info_fetched_at=now,
+                            addresses=data_val.get("addresses"),
+                            addresses_fetched_at=now,
+                            ved=data_val.get("ved"),
+                            ved_fetched_at=now,
+                            names=data_val.get("names"),
+                            names_fetched_at=now,
+                            processed_at=None,
+                        )
                         db.add(raw_entry)
                         existing_raw[unp_val] = raw_entry
                         nonlocal loaded_count

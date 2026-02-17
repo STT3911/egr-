@@ -17,11 +17,22 @@ class SystemState(Base):
 
 
 class RawCompanyData(Base):
-    """Buffer for storing raw API responses (ELT pattern)"""
+    """Buffer for storing raw API responses (ELT pattern). По каждому эндпоинту — своя колонка для отслеживания."""
     __tablename__ = "egr_raw_company_data"
     
     unp = Column(BigInteger, primary_key=True, index=True)
-    data = Column(JSONB, nullable=False)  # Full JSON response
+    # Сводная колонка (для обратной совместимости и парсинга): base_info + addresses + ved + names
+    data = Column(JSONB, nullable=True)
+    
+    # Данные по эндпоинтам (getBaseInfoByRegNum, getAllAddressByRegNum, getAllVEDByRegNum, names)
+    base_info = Column(JSONB, nullable=True)
+    base_info_fetched_at = Column(DateTime, nullable=True)
+    addresses = Column(JSONB, nullable=True)
+    addresses_fetched_at = Column(DateTime, nullable=True)
+    ved = Column(JSONB, nullable=True)
+    ved_fetched_at = Column(DateTime, nullable=True)
+    names = Column(JSONB, nullable=True)
+    names_fetched_at = Column(DateTime, nullable=True)
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -31,6 +42,19 @@ class RawCompanyData(Base):
     
     # Error text if parsing failed
     last_error = Column(Text, nullable=True)
+
+    def get_data(self):
+        """Сводные данные для парсинга: либо data, либо сборка из base_info/addresses/ved/names."""
+        if self.data is not None:
+            return self.data
+        if self.base_info is None and self.addresses is None and self.ved is None and self.names is None:
+            return None
+        return {
+            "base_info": self.base_info or {},
+            "addresses": self.addresses if self.addresses is not None else [],
+            "ved": self.ved if self.ved is not None else [],
+            "names": self.names if self.names is not None else [],
+        }
 
 
 class GrpRawData(Base):

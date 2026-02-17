@@ -51,25 +51,40 @@ class AggregatorService:
                 logger.warning(f"No data for {unp} in both APIs")
                 return False
             
-            # 3. Save to DB
+            # 3. Save to DB (data + по эндпоинтам колонки)
+            now = datetime.now()
             raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
             if raw_entry:
-                # Проверяем, изменились ли данные перед сбросом processed_at
-                # Сравниваем JSON-представления данных (нормализованные через json.dumps)
                 old_data_json = json.dumps(raw_entry.data, sort_keys=True) if raw_entry.data else None
                 new_data_json = json.dumps(raw_data, sort_keys=True) if raw_data else None
                 data_changed = old_data_json != new_data_json
-                
-                # Если данные не изменились и запись уже обработана, не сбрасываем processed_at
                 if data_changed or raw_entry.processed_at is None:
                     raw_entry.data = raw_data
-                    raw_entry.updated_at = datetime.now()
+                    raw_entry.base_info = raw_data.get("base_info")
+                    raw_entry.base_info_fetched_at = now
+                    raw_entry.addresses = raw_data.get("addresses")
+                    raw_entry.addresses_fetched_at = now
+                    raw_entry.ved = raw_data.get("ved")
+                    raw_entry.ved_fetched_at = now
+                    raw_entry.names = raw_data.get("names")
+                    raw_entry.names_fetched_at = now
+                    raw_entry.updated_at = now
                     raw_entry.processed_at = None
                 else:
-                    # Данные не изменились, но обновим updated_at для отслеживания последнего обращения
-                    raw_entry.updated_at = datetime.now()
+                    raw_entry.updated_at = now
             else:
-                raw_entry = RawCompanyData(unp=unp, data=raw_data)
+                raw_entry = RawCompanyData(
+                    unp=unp,
+                    data=raw_data,
+                    base_info=raw_data.get("base_info"),
+                    base_info_fetched_at=now,
+                    addresses=raw_data.get("addresses"),
+                    addresses_fetched_at=now,
+                    ved=raw_data.get("ved"),
+                    ved_fetched_at=now,
+                    names=raw_data.get("names"),
+                    names_fetched_at=now,
+                )
                 self.db.add(raw_entry)
             
             self.db.commit()
@@ -88,7 +103,11 @@ class AggregatorService:
                 logger.warning(f"No raw data found for {unp}")
                 return
 
-            db_structure = self.mapper.map_to_db_structure(unp, raw_entry.data)
+            raw_data = raw_entry.get_data()
+            if not raw_data:
+                logger.warning(f"No raw data to parse for {unp}")
+                return
+            db_structure = self.mapper.map_to_db_structure(unp, raw_data)
             
             company_crud = CompanyCRUD(self.db)
             company_crud.save_full_company_data(db_structure)
