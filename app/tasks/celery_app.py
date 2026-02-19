@@ -33,11 +33,6 @@ _beat_schedule = {
         "schedule": crontab(day_of_week=0, hour=1, minute=0),
         "args": (1900, 60),
     },
-    "auto-fetch-and-load-recent": {
-        "task": "app.tasks.sync_tasks.auto_fetch_recent_to_json_and_db",
-        "schedule": crontab(hour="*/6"),
-        "args": (),
-    },
     "load-from-json": {
         "task": "app.tasks.sync_tasks.load_companies_from_json",
         "schedule": crontab(hour=2, minute=0),

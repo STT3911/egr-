@@ -87,22 +87,16 @@ class CompanyCRUD:
         self._ensure_ref_ids_for_company(company_data)
         self.db.flush()
         
-        # Upsert по UNP: если компании нет — создаём, если есть — обновляем
+        # Надёжный upsert по UNP без гонок:
+        # всегда выполняем INSERT ... ON CONFLICT (unp) DO UPDATE.
+        # При обновлении не трогаем поле id, чтобы не ломать внешние ключи.
+        stmt = pg_insert(Company).values(**company_data).on_conflict_do_update(
+            index_elements=[Company.unp],
+            set_={k: v for k, v in company_data.items() if k not in ("unp", "id")},
+        )
+        self.db.execute(stmt)
+        self.db.flush()
         company = self.get_by_unp(unp)
-        if not company:
-            stmt = pg_insert(Company).values(**company_data).on_conflict_do_update(
-                index_elements=[Company.unp],
-                set_={k: v for k, v in company_data.items() if k != "unp"},
-            )
-            self.db.execute(stmt)
-            self.db.flush()
-            company = self.get_by_unp(unp)
-        else:
-            for key, value in company_data.items():
-                if key != "unp":
-                    setattr(company, key, value)
-            self.db.add(company)  # FIXED: Explicitly mark as modified
-            self.db.flush()
         
         # Save names history
         self._save_names_history(company, data.get("names", []))

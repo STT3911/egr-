@@ -17,14 +17,21 @@ class SystemState(Base):
 
 
 class RawCompanyData(Base):
-    """Buffer for storing raw API responses (ELT pattern). По каждому эндпоинту — своя колонка для отслеживания."""
+    """
+    Buffer for storing raw API responses (ELT pattern).
+    Для обратной совместимости:
+    - основное поле `data` содержит полный JSON (base_info + addresses + ved + names)
+    - при наличии отдельных колонок по эндпоинтам (base_info/addresses/ved/names)
+      метод `get_data()` собирает сводную структуру.
+    """
     __tablename__ = "egr_raw_company_data"
     
     unp = Column(BigInteger, primary_key=True, index=True)
-    # Сводная колонка (для обратной совместимости и парсинга): base_info + addresses + ved + names
+    # Сводная колонка (для парсинга и кэша)
     data = Column(JSONB, nullable=True)
     
-    # Данные по эндпоинтам (getBaseInfoByRegNum, getAllAddressByRegNum, getAllVEDByRegNum, names)
+    # Отдельные колонки по эндпоинтам (могут отсутствовать в старой БД, но
+    # для них есть alembic‑миграция e5f6g7h8i9_raw_per_endpoint_columns.py)
     base_info = Column(JSONB, nullable=True)
     base_info_fetched_at = Column(DateTime, nullable=True)
     addresses = Column(JSONB, nullable=True)
@@ -44,10 +51,18 @@ class RawCompanyData(Base):
     last_error = Column(Text, nullable=True)
 
     def get_data(self):
-        """Сводные данные для парсинга: либо data, либо сборка из base_info/addresses/ved/names."""
+        """
+        Сводные данные для парсинга:
+        - если заполнено поле data — используем его;
+        - иначе собираем из base_info / addresses / ved / names (если колонки есть).
+        """
         if self.data is not None:
             return self.data
-        if self.base_info is None and self.addresses is None and self.ved is None and self.names is None:
+        # Если отдельных колонок нет или все пустые — вернуть None
+        if (
+            not hasattr(self, "base_info")
+            or (self.base_info is None and self.addresses is None and self.ved is None and self.names is None)
+        ):
             return None
         return {
             "base_info": self.base_info or {},
