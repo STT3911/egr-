@@ -476,6 +476,13 @@ const Company = () => {
             </Card>
           )}
 
+          {/* Примечание о реорганизованных органах */}
+          <div className="glass p-3 sm:p-4 rounded-lg border-l-4 border-amber-500/50 text-xs sm:text-sm text-muted-foreground">
+            <span className="font-medium text-amber-600 dark:text-amber-400">ℹ️ Примечание:</span>{" "}
+            Органы, отмеченные как «Реорганизованный орган», — это устаревшие регистрирующие органы (исполкомы, министерства), 
+            которые были реорганизованы или ликвидированы. Актуальные названия этих органов недоступны в данных ЕГР.
+          </div>
+
           {/* Данные налоговой (GRP) */}
           <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/15">
             <CardHeader className="rounded-t-lg" style={{
