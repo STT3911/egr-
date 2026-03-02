@@ -1,4 +1,5 @@
 """Service for managing reference tables (справочники)"""
+import re
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -41,7 +42,8 @@ class ReferenceService:
             "json_path": "nsi00212",
             "id_field": "nkuz",
             "name_field": "vnuzp",
-            "system_id": 212
+            "system_id": 212,
+            "_normalize_authority": True,  # убирать "(id N)" и "Орган N" → "Реорганизованный орган" / "Неизвестный орган"
         },
         "ref_ved": {
             "json_path": "nsi00114",
@@ -229,6 +231,32 @@ class ReferenceService:
         logger.info(f"Extracted references: {[(k, len(v)) for k, v in references.items()]}")
         return references
     
+    def _is_authority_name_placeholder(self, name: Optional[str]) -> bool:
+        """Проверка: название органа — заглушка (нет реального имени из ЕГР)."""
+        if not name or not isinstance(name, str):
+            return True
+        n = name.strip()
+        if not n:
+            return True
+        if n.startswith("Реорганизованный орган"):
+            return True
+        if re.match(r"^Орган \d+$", n):
+            return True
+        if re.match(r"^Неизвестный орган$", n):
+            return True
+        return False
+
+    def _normalize_authority_name(self, name: Optional[str], ref_id: Any) -> str:
+        """Убираем хвосты '(id N)' и заглушки 'Орган N' для ref_authorities."""
+        if not name or not isinstance(name, str):
+            return "Реорганизованный орган"
+        name = name.strip()
+        if name.startswith("Реорганизованный орган (id "):
+            return "Реорганизованный орган"
+        if re.match(r"^Орган \d+$", name):
+            return "Неизвестный орган"
+        return name
+
     def _extract_reference_item(
         self, 
         ref_data: Dict, 
@@ -241,9 +269,22 @@ class ReferenceService:
         if not ref_id:
             return
         
+        name = ref_data.get(mapping["name_field"], "") or ""
+        if mapping.get("_normalize_authority") and isinstance(name, str):
+            name = self._normalize_authority_name(name, ref_id)
+        
+        # Для ref_authorities: если уже есть запись с «настоящим» названием — не перезатирать заглушкой
+        if mapping.get("_normalize_authority") and ref_id in target_dict:
+            existing = target_dict[ref_id]
+            if not self._is_authority_name_placeholder(existing.get("name")) and self._is_authority_name_placeholder(name):
+                return  # оставляем уже сохранённое реальное название
+            if self._is_authority_name_placeholder(existing.get("name")) and not self._is_authority_name_placeholder(name):
+                pass  # перезапишем заглушку на реальное название
+            # иначе перезаписываем как обычно (оба заглушки или оба реальные)
+        
         item = {
             "id": ref_id,
-            "name": ref_data.get(mapping["name_field"], ""),
+            "name": name,
             "system_id": mapping["system_id"]
         }
         
@@ -254,7 +295,6 @@ class ReferenceService:
         if "object_number_field" in mapping:
             item["object_number"] = ref_data.get(mapping["object_number_field"])
         
-        # Store by ID to avoid duplicates
         target_dict[ref_id] = item
     
     def upsert_references(self, table_name: str, items: List[Dict]):

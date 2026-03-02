@@ -320,6 +320,20 @@ docker cp reference_tables/populate_ved_opf_soato.sql egr_db:/tmp/
 docker exec egr_db psql -U postgres -d egr_db -f /tmp/populate_ved_opf_soato.sql
 ```
 
+### Проверка справочников на корректное заполнение
+
+Скрипт выводит количество записей по всем `ref_*` и ищет **заглушки** (типа «Статус 1», «Орган 123») и пустые `name`:
+
+```bash
+# с хоста (из каталога проекта)
+docker exec -i egr_db psql -U postgres -d egr_db -f - < scripts/check_reference_tables.sql
+
+# или если скрипт уже в контейнере
+docker exec -i egr_db psql -U postgres -d egr_db -f /tmp/check_reference_tables.sql
+```
+
+Если в выводе есть строки в блоках 2–8 — в этих таблицах есть подозрительные записи. Сводка в блоке 8 показывает, в каких таблицах найдены заглушки.
+
 ## База данных
 
 ### Основные таблицы
