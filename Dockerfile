@@ -38,7 +38,8 @@ COPY . .
 # Copy and set executable permissions for entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
-    && chmod +x /usr/local/bin/docker-entrypoint.sh
+    && chmod +x /usr/local/bin/docker-entrypoint.sh \
+    && if [ -f /app/scripts/init/run_sql_and_monitoring.sh ]; then sed -i 's/\r$//' /app/scripts/init/run_sql_and_monitoring.sh && chmod +x /app/scripts/init/run_sql_and_monitoring.sh; fi
 
 # Change ownership to appuser
 RUN chown -R appuser:appuser /app /home/appuser/.local

@@ -1,4 +1,4 @@
-#!/bin/bash
+    #!/bin/bash
 # Run SQL migrations (scripts/sql) and monitoring scripts (scripts/monitoring) automatically.
 # Called from docker-entrypoint.sh after alembic upgrade head.
 set -e

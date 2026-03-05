@@ -15,6 +15,7 @@ redis==5.2.0
 
 # HTTP клиент
 httpx[http2]==0.27.2
+requests==2.31.0
 
 # Очереди задач
 celery==5.4.0
@@ -30,6 +31,10 @@ structlog==24.4.0
 # Утилиты
 click==8.1.8
 tenacity==9.0.0
+
+# GIAS workers
+python-dotenv==1.0.0
+schedule==1.2.0
 
 # Потоковый парсинг больших JSON (без загрузки всего файла в память)
 ijson==3.2.3

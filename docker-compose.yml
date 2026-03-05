@@ -291,6 +291,80 @@ services:
         - egr_default
       restart: unless-stopped
 
+    gias-sync:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: gias_sync
+      env_file:
+        - .env
+      environment:
+        DB_HOST: ${DB_HOST:-db}
+        DB_PORT: ${DB_PORT:-5432}
+        DB_NAME: ${DB_NAME:-egr_db}
+        DB_USER: ${DB_USER:-postgres}
+        DB_PASSWORD: ${DB_PASSWORD:-postgres}
+        SKIP_SQL_INIT: "1"
+      volumes:
+        - .:/app
+      depends_on:
+        db:
+          condition: service_healthy
+      networks:
+        - egr_default
+      restart: unless-stopped
+      command: python -m gias.gias_plans
+
+    gias-full-sync:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: gias_full_sync
+      env_file:
+        - .env
+      environment:
+        DB_HOST: ${DB_HOST:-db}
+        DB_PORT: ${DB_PORT:-5432}
+        DB_NAME: ${DB_NAME:-egr_db}
+        DB_USER: ${DB_USER:-postgres}
+        DB_PASSWORD: ${DB_PASSWORD:-postgres}
+        GIAS_SYNC_YEARS: ${GIAS_SYNC_YEARS:-2026}
+        GIAS_FULL_SYNC_LOOP: ${GIAS_FULL_SYNC_LOOP:-true}
+        GIAS_FULL_SYNC_INTERVAL: ${GIAS_FULL_SYNC_INTERVAL:-3600}
+      volumes:
+        - .:/app
+      depends_on:
+        db:
+          condition: service_healthy
+      networks:
+        - egr_default
+      restart: unless-stopped
+      command: python -m gias.gias_plans_all
+
+    gias-fix-companies:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: gias_fix_companies
+      env_file:
+        - .env
+      environment:
+        DB_HOST: ${DB_HOST:-db}
+        DB_PORT: ${DB_PORT:-5432}
+        DB_NAME: ${DB_NAME:-egr_db}
+        DB_USER: ${DB_USER:-postgres}
+        DB_PASSWORD: ${DB_PASSWORD:-postgres}
+        SKIP_SQL_INIT: "1"
+      volumes:
+        - .:/app
+      depends_on:
+        db:
+          condition: service_healthy
+      networks:
+        - egr_default
+      restart: "no"
+      command: python -m gias.fix_plans
+
 volumes:
   egr_postgres_data:
     driver: local
