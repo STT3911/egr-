@@ -47,6 +47,11 @@ ON egr_company_names_history(LOWER(short_name_ru));
 CREATE INDEX IF NOT EXISTS idx_names_full_name_by_lower 
 ON egr_company_names_history(LOWER(full_name_by));
 
+-- Очередь парсинга: быстрый выбор необработанных по updated_at (ускоряет process_pending_raw / egr_process_raw)
+CREATE INDEX IF NOT EXISTS idx_egr_raw_company_data_pending
+ON egr_raw_company_data (updated_at ASC)
+WHERE processed_at IS NULL;
+
 -- Проверяем созданные индексы
 DO $$
 DECLARE

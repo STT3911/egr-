@@ -63,10 +63,11 @@ def reprocess_failed_rows():
     """Reprocess failed data"""
     service = AggregatorService()
     try:
+        # Только необработанные или с ошибкой парсинга (без updated_at > processed_at)
         query = service.db.query(RawCompanyData).filter(
             or_(
                 RawCompanyData.processed_at == None,
-                RawCompanyData.updated_at > RawCompanyData.processed_at
+                RawCompanyData.last_error != None
             )
         ).limit(1000)
         
@@ -86,6 +87,8 @@ def reprocess_failed_rows():
 @celery_app.task
 def process_pending_raw(limit: int = 1000):
     """Обогащение по API (если нет names/addresses/ved) + парсинг в структурные таблицы."""
+    import time
+    t0 = time.perf_counter()
     service = AggregatorService()
     client = EGRClient(settings.EGR_API_URL) if settings.EGR_API_URL else None
     loop = asyncio.new_event_loop()
@@ -102,11 +105,12 @@ def process_pending_raw(limit: int = 1000):
         except Exception as e:
             logger.warning(f"Проверка/заполнение справочников: {e}")
 
+        # Только реально необработанные или с неполными данными (без updated_at > processed_at,
+        # иначе уже обработанные строки снова попадают в очередь и тормозят парсинг)
         pending = (
             service.db.query(RawCompanyData)
             .filter(
                 (RawCompanyData.processed_at == None)
-                | (RawCompanyData.updated_at > RawCompanyData.processed_at)
                 | (~RawCompanyData.data.has_key("names"))
                 | (~RawCompanyData.data.has_key("addresses"))
                 | (~RawCompanyData.data.has_key("ved"))
@@ -122,9 +126,11 @@ def process_pending_raw(limit: int = 1000):
         
         logger.info(f"📋 Found {len(pending)} pending records to process")
         
-        # Separate: need enrichment vs ready to parse
-        needs_enrich = [item for item in pending if _needs_enrichment(item.data or {})]
-        ready_to_parse = [item for item in pending if not _needs_enrichment(item.data or {})]
+        # Separate: need enrichment vs ready to parse (get_data() учитывает и data, и base_info/addresses/ved/names)
+        def _row_data(row):
+            return row.get_data() if hasattr(row, "get_data") and callable(row.get_data) else getattr(row, "data", None)
+        needs_enrich = [item for item in pending if _needs_enrichment(_row_data(item) or {})]
+        ready_to_parse = [item for item in pending if not _needs_enrichment(_row_data(item) or {})]
         
         logger.info(f"   Need enrichment: {len(needs_enrich)}, Ready to parse: {len(ready_to_parse)}")
         
@@ -189,7 +195,9 @@ def process_pending_raw(limit: int = 1000):
                 f"⚠️ No rows parsed in this batch. First last_error sample: {first_err!r}. "
                 "Check ref_creation_methods/ref_* tables and run update_reference_tables if needed."
             )
-        logger.info(f"✅ Processed {processed}/{len(pending)} pending raw rows")
+        elapsed = time.perf_counter() - t0
+        rate = processed / elapsed if elapsed > 0 else 0
+        logger.info(f"✅ Processed {processed}/{len(pending)} pending raw rows in {elapsed:.1f}s ({rate:.1f} rows/s)")
         return processed
         
     finally:
@@ -340,6 +348,8 @@ def egr_fetch_raw(limit: int = 500):
     Воркер 1 (EGR): только ходит в EGR API и сохраняет/обновляет сырые данные в egr_raw_company_data.
     Не парсит, не трогает структурные таблицы. Работает независимо от egr_process_raw.
     """
+    import time
+    t0 = time.perf_counter()
     if not settings.EGR_API_URL:
         logger.warning("EGR_API_URL not set; egr_fetch_raw skipped")
         return 0
@@ -349,12 +359,11 @@ def egr_fetch_raw(limit: int = 500):
     asyncio.set_event_loop(loop)
     batch_size = 30
     try:
-        # Кандидаты: не обработаны или нет данных по какому-то эндпоинту
+        # Кандидаты: не обработаны или нет данных по какому-то эндпоинту (без updated_at > processed_at)
         candidates = (
             service.db.query(RawCompanyData)
             .filter(
                 (RawCompanyData.processed_at == None)
-                | (RawCompanyData.updated_at > RawCompanyData.processed_at)
                 | (RawCompanyData.base_info == None)
                 | (RawCompanyData.names == None)
                 | (RawCompanyData.addresses == None)
@@ -364,7 +373,9 @@ def egr_fetch_raw(limit: int = 500):
             .limit(limit)
             .all()
         )
-        to_fetch = [c for c in candidates if _needs_enrichment(c.get_data() or {})][:limit]
+        def _row_data(r):
+            return r.get_data() if hasattr(r, "get_data") and callable(r.get_data) else getattr(r, "data", None)
+        to_fetch = [c for c in candidates if _needs_enrichment(_row_data(c) or {})][:limit]
         if not to_fetch:
             logger.info("egr_fetch_raw: no rows need fetch/enrich")
             return 0
@@ -403,7 +414,9 @@ def egr_fetch_raw(limit: int = 500):
                 logger.error("egr_fetch_raw commit error: %s", e)
             if batch_start + batch_size < len(to_fetch):
                 loop.run_until_complete(asyncio.sleep(0.5))
-        logger.info("egr_fetch_raw: fetched %s rows", fetched)
+        elapsed = time.perf_counter() - t0
+        rate = fetched / elapsed if elapsed > 0 else 0
+        logger.info("egr_fetch_raw: fetched %s rows in %.1fs (%.1f rows/s)", fetched, elapsed, rate)
         return fetched
     finally:
         loop.run_until_complete(client.close())
@@ -417,6 +430,8 @@ def egr_process_raw(limit: int = 1000):
     Воркер 2 (EGR): только читает egr_raw_company_data и разносит данные по структурным таблицам.
     Не ходит в API. Работает независимо от egr_fetch_raw.
     """
+    import time
+    t0 = time.perf_counter()
     service = AggregatorService()
     try:
         try:
@@ -426,10 +441,15 @@ def egr_process_raw(limit: int = 1000):
                 update_reference_tables.run()
         except Exception as e:
             logger.warning("egr_process_raw ref check: %s", e)
+        # Только необработанные или с неполными данными (без updated_at > processed_at)
         pending = (
             service.db.query(RawCompanyData)
             .filter(
-                (RawCompanyData.processed_at == None) | (RawCompanyData.updated_at > RawCompanyData.processed_at)
+                (RawCompanyData.processed_at == None)
+                | (RawCompanyData.data == None)
+                | (~RawCompanyData.data.has_key("names"))
+                | (~RawCompanyData.data.has_key("addresses"))
+                | (~RawCompanyData.data.has_key("ved"))
             )
             .filter(
                 (RawCompanyData.data != None)
@@ -439,7 +459,9 @@ def egr_process_raw(limit: int = 1000):
             .limit(limit)
             .all()
         )
-        ready = [p for p in pending if p.get_data() and not _needs_enrichment(p.get_data())]
+        def _row_data(r):
+            return r.get_data() if hasattr(r, "get_data") and callable(r.get_data) else getattr(r, "data", None)
+        ready = [p for p in pending if _row_data(p) and not _needs_enrichment(_row_data(p) or {})]
         if not ready:
             logger.info("egr_process_raw: no rows ready to parse (need enrich first)")
             return 0
@@ -452,7 +474,9 @@ def egr_process_raw(limit: int = 1000):
                 item.last_error = f"parse_failed:{str(e)[:500]}"
                 service.db.commit()
                 logger.error("egr_process_raw UNP %s: %s", item.unp, e)
-        logger.info("egr_process_raw: parsed %s rows", processed)
+        elapsed = time.perf_counter() - t0
+        rate = processed / elapsed if elapsed > 0 else 0
+        logger.info("egr_process_raw: parsed %s rows in %.1fs (%.1f rows/s)", processed, elapsed, rate)
         return processed
     finally:
         service.close()
