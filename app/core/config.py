@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
     # Security - API Authentication
     API_KEY: Optional[str] = None
+    PUBLIC_API_TOKEN: str = "changeme-public-token"
     ALLOWED_API_KEYS: str = ""  # Comma-separated list of API keys
     
     # Security - Rate Limiting (requests per minute)

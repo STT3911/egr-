@@ -14,6 +14,7 @@ from app.core.security import verify_api_key
 from app.database.models import RawCompanyData
 from app.tasks.sync_tasks import process_pending_raw
 from app.utils.search_normalizer import normalize_company_name
+from app.core.public_token import verify_public_token
 
 logger = get_logger("api.companies")
 router = APIRouter()
@@ -495,9 +496,106 @@ async def compare_apis(
     except Exception as e:
         logger.error(f"Error comparing APIs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/public/{identifier}", response_model=CompanyProfileResponse)
+async def get_company_public(
+    identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_public_token),
+):
+    """
+    Публичный эндпоинт — текущие данные по компании без истории.
+    Требует Bearer токен в заголовке Authorization.
+    """
+    try:
+        company_crud = CompanyCRUD(db)
+        from sqlalchemy.orm import joinedload
+        from app.database.models import Company, ReferenceStatus
 
+        company = (
+            db.query(Company)
+            .options(
+                joinedload(Company.names_history),
+                joinedload(Company.addresses_history),
+                joinedload(Company.ved_history),
+                joinedload(Company.contacts_history),
+            )
+            .filter(Company.unp == int(identifier))
+            .first()
+        )
 
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Компания {identifier} не найдена")
 
+        # Текущее название (valid_to IS NULL)
+        current_name = next(
+            (n for n in sorted(company.names_history, key=lambda n: n.valid_to is None, reverse=True)),
+            None
+        )
 
+        # Текущий адрес
+        current_address = next(
+            (a for a in sorted(company.addresses_history, key=lambda a: a.valid_to is None, reverse=True)),
+            None
+        )
 
+        # Текущие ВЭД (только активные)
+        current_ved = [v for v in company.ved_history if v.valid_to is None]
 
+        # Текущие контакты (только активные)
+        current_contacts = [c for c in company.contacts_history if c.valid_to is None]
+
+        # Статус
+        status_name = None
+        if company.current_status_code:
+            status = db.query(ReferenceStatus).filter(
+                ReferenceStatus.id == company.current_status_code
+            ).first()
+            if status:
+                status_name = status.name
+
+        return {
+            "unp": company.unp,
+            "current_status_code": company.current_status_code,
+            "current_status_name": status_name,
+            "registration_date": company.registration_date.isoformat() if company.registration_date else None,
+            "liquidation_date": company.liquidation_date.isoformat() if company.liquidation_date else None,
+            "current_name_ru": current_name.full_name_ru if current_name else None,
+            "current_short_name_ru": current_name.short_name_ru if current_name else None,
+            "current_name_by": current_name.full_name_by if current_name else None,
+            "names": [],  # история скрыта
+            "addresses": [
+                {
+                    "full_address": current_address.full_address,
+                    "postal_code": current_address.postal_code,
+                    "region": current_address.region,
+                    "district": current_address.district,
+                    "valid_from": current_address.valid_from.isoformat() if current_address.valid_from else None,
+                    "valid_to": None,
+                }
+            ] if current_address else [],
+            "ved": [
+                {
+                    "ved_code": v.ved_code,
+                    "ved_name": v.ved_name,
+                    "valid_from": v.valid_from.isoformat() if v.valid_from else None,
+                    "valid_to": None,
+                }
+                for v in current_ved
+            ],
+            "contacts": [
+                {
+                    "email": c.email,
+                    "website": c.website,
+                    "phone": c.phone,
+                    "fax": c.fax,
+                }
+                for c in current_contacts
+            ],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Public API error for {identifier}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
