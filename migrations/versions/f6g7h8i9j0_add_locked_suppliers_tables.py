@@ -56,8 +56,8 @@ def upgrade() -> None:
         sa.Column("del_date", sa.DateTime(), nullable=True),
         sa.Column("base_incl_id", sa.BigInteger(), sa.ForeignKey("locked_supplier_reasons.id"), nullable=True),
         sa.Column("base_excl_id", sa.BigInteger(), sa.ForeignKey("locked_supplier_reasons.id"), nullable=True),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+            sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+            sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
     )
 
     op.create_index(
