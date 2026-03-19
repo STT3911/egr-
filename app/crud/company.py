@@ -191,61 +191,76 @@ class CompanyCRUD:
                 )
                 self.db.add(contact_entry)
 
+    def _pick_current_name(self, name_items) -> Dict[str, Optional[str]]:
+        if not name_items:
+            return {"current_name_ru": None, "current_short_name_ru": None, "current_name_by": None}
+        sorted_items = sorted(
+            name_items,
+            key=lambda n: (
+                n.valid_to is None,
+                n.valid_to or datetime.min.date(),
+                n.valid_from or datetime.min.date(),
+            ),
+            reverse=True,
+        )
+        current = sorted_items[0]
+        return {
+            "current_name_ru": current.full_name_ru,
+            "current_short_name_ru": current.short_name_ru,
+            "current_name_by": current.full_name_by,
+        }
+
     def get_full_dossier(self, unp: int) -> Optional[Dict[str, Any]]:
-        """Get full company dossier with all history"""
-        company = self.get_by_unp(unp)
+        """Get full company dossier — optimized, single query"""
+        from sqlalchemy.orm import joinedload
+
+        company = (
+            self.db.query(Company)
+            .options(
+                joinedload(Company.names_history),
+                joinedload(Company.addresses_history),
+                joinedload(Company.ved_history),
+                joinedload(Company.contacts_history),
+            )
+            .filter(Company.unp == unp)
+            .first()
+        )
+
         if not company:
             return None
 
-        def _pick_current_name(name_items: List[CompanyNameHistory]) -> Dict[str, Optional[str]]:
-            if not name_items:
-                return {"current_name_ru": None, "current_short_name_ru": None, "current_name_by": None}
-            # Prefer active (valid_to is NULL), then most recent by valid_to/valid_from
-            sorted_items = sorted(
-                name_items,
-                key=lambda n: (
-                    n.valid_to is None,
-                    n.valid_to or datetime.min.date(),
-                    n.valid_from or datetime.min.date(),
-                ),
-                reverse=True,
-            )
-            current = sorted_items[0]
-            return {
-                "current_name_ru": current.full_name_ru,
-                "current_short_name_ru": current.short_name_ru,
-                "current_name_by": current.full_name_by,
-            }
-
-        current_name_fields = _pick_current_name(company.names_history)
-        
-        # Get status name from ref_statuses
+        # Статус
         status_name = None
         if company.current_status_code:
             from app.database.models import ReferenceStatus
-            status = self.db.query(ReferenceStatus).filter(ReferenceStatus.id == company.current_status_code).first()
+            status = self.db.query(ReferenceStatus).filter(
+                ReferenceStatus.id == company.current_status_code
+            ).first()
             if status:
                 status_name = status.name
 
+        current_name_fields = self._pick_current_name(company.names_history)
+
+        # Fallback на RawCompanyData только если нет имени
         if not current_name_fields["current_name_ru"]:
-            raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
+            raw_entry = (
+                self.db.query(RawCompanyData.data)
+                .filter(RawCompanyData.unp == unp)
+                .first()
+            )
             if raw_entry:
                 data = raw_entry.data or {}
                 base_info = data.get("base_info") or {}
                 common_info = data.get("common_info") or {}
                 current_name_fields["current_name_ru"] = (
-                    base_info.get("VNAIM")
-                    or base_info.get("VFIO")
-                    or common_info.get("fullNameRus")
-                    or common_info.get("shortNameRus")
+                    base_info.get("VNAIM") or base_info.get("VFIO")
+                    or common_info.get("fullNameRus") or common_info.get("shortNameRus")
                 )
                 current_name_fields["current_short_name_ru"] = (
-                    common_info.get("shortNameRus")
-                    or base_info.get("VNAIM")
+                    common_info.get("shortNameRus") or base_info.get("VNAIM")
                 )
                 current_name_fields["current_name_by"] = (
-                    base_info.get("VNAIMBY")
-                    or common_info.get("fullNameBel")
+                    base_info.get("VNAIMBY") or common_info.get("fullNameBel")
                 )
 
         return {
