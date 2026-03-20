@@ -68,6 +68,13 @@ if settings.GRP_SCHEDULE_ENABLED:
         "args": (500,),
     }
 
+# Ежемесячный экспорт GRP в JSON — всегда в расписании
+_beat_schedule["grp-monthly-export"] = {
+    "task": "app.tasks.sync_tasks.grp_monthly_export",
+    "schedule": crontab(day_of_month=1, hour=6, minute=0),  # 1-го числа каждого месяца в 06:00
+    "args": (),
+}
+
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
