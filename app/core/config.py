@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"
     
+    # Bitrix24 Integration
+    BITRIX_CLIENT_ID: Optional[str] = None
+    BITRIX_CLIENT_SECRET: Optional[str] = None
+    
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS_ORIGINS string into list."""

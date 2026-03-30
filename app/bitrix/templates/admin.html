@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки - Реквизиты Битрикс24{% endblock %}
+
+{% block content %}
+<div id="admin-app">
+    <!-- Header -->
+    <div class="b24-header">
+        <h1 class="b24-header__title">⚙️ Настройки: Автозаполнение реквизитов</h1>
+        <p class="b24-header__subtitle">Конфигурация интеграции с Битрикс24</p>
+    </div>
+
+    <!-- Alerts -->
+    {% if error_message %}
+    <div class="b24-alert b24-alert--error">
+        <span>{{ error_message }}</span>
+    </div>
+    {% endif %}
+    
+    {% if success_message %}
+    <div class="b24-alert b24-alert--success">
+        <span>{{ success_message }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Status Card -->
+    <div class="b24-card">
+        <h2 class="b24-card__title">Статус подключения</h2>
+        <p class="b24-meta">
+            Битрикс24-портал: 
+            <span class="b24-meta__value">{{ bitrix_domain }}</span>
+        </p>
+    </div>
+
+    <!-- Settings Form -->
+    <form method="POST" action="/bitrix/admin/save" id="settings-form">
+        <!-- Hidden fields for Bitrix24 auth tokens -->
+        <input type="hidden" id="auth_id" name="AUTH_ID" value="">
+        <input type="hidden" id="refresh_id" name="REFRESH_ID" value="">
+        <input type="hidden" id="auth_expires" name="AUTH_EXPIRES" value="">
+        
+        <!-- Requisite Preset Card -->
+        <div class="b24-card">
+            <h2 class="b24-card__title">Пресет реквизитов</h2>
+            <div class="mb-4">
+                <label class="b24-label" for="preset_id">
+                    Выберите пресет реквизитов для новых записей:
+                </label>
+                <select 
+                    id="preset_id" 
+                    name="preset_id" 
+                    class="b24-select" 
+                    required
+                >
+                    <option value="" disabled {% if not current_preset_id %}selected{% endif %}>-- Выберите пресет --</option>
+                    {% for preset in presets %}
+                    <option 
+                        value="{{ preset.ID }}" 
+                        data-name="{{ preset.NAME }}"
+                        {% if preset.ID|string == current_preset_id %}selected{% endif %}
+                    >
+                        {{ preset.NAME }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <p class="b24-info">
+                    Пресет определяет набор полей реквизитов для новых компаний
+                </p>
+            </div>
+            <input type="hidden" id="preset_name" name="preset_name" value="{{ current_preset_name }}">
+        </div>
+
+        <!-- UNP Field Card -->
+        <div class="b24-card">
+            <h2 class="b24-card__title">Поле для УНП</h2>
+            <div class="mb-4">
+                <label class="b24-label" for="unp_field_code">
+                    Выберите пользовательское поле для хранения УНП:
+                </label>
+                <select 
+                    id="unp_field_code" 
+                    name="unp_field_code" 
+                    class="b24-select" 
+                    required
+                >
+                    <option value="" disabled {% if not current_unp_field %}selected{% endif %}>-- Выберите поле --</option>
+                    {% for field in userfields %}
+                    <option 
+                        value="{{ field.FIELD_NAME }}" 
+                        data-label="{{ field.EDIT_FORM_LABEL }}"
+                        {% if field.FIELD_NAME == current_unp_field %}selected{% endif %}
+                    >
+                        {{ field.EDIT_FORM_LABEL }} ({{ field.FIELD_NAME }})
+                    </option>
+                    {% endfor %}
+                </select>
+                <p class="b24-info">
+                    В это поле будет автоматически записываться УНП при создании компании
+                </p>
+            </div>
+            <input type="hidden" id="unp_field_label" name="unp_field_label" value="{{ current_unp_label }}">
+        </div>
+
+        <!-- Submit Button -->
+        <div class="flex justify-start">
+            <button type="submit" class="b24-btn b24-btn--primary" id="submit-btn">
+                <span class="b24-loading" id="loading-spinner" style="display: none; margin-right: 8px;"></span>
+                <span id="btn-text">💾 Сохранить настройки</span>
+            </button>
+        </div>
+    </form>
+
+    <!-- Info Card -->
+    <div class="b24-card" style="margin-top: 24px;">
+        <h2 class="b24-card__title">Информация</h2>
+        <div class="text-sm text-gray-600 space-y-2">
+            <p>• При сохранении настроек они будут применены ко всем новым компаниям</p>
+            <p>• Существующие компании не будут изменены</p>
+            <p>• Для изменения пресета или поля выберите новые значения и нажмите "Сохранить"</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const presetSelect = document.getElementById('preset_id');
+    const presetNameInput = document.getElementById('preset_name');
+    const fieldSelect = document.getElementById('unp_field_code');
+    const fieldLabelInput = document.getElementById('unp_field_label');
+    const form = document.getElementById('settings-form');
+    const submitBtn = document.getElementById('submit-btn');
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const btnText = document.getElementById('btn-text');
+    
+    // Hidden fields for Bitrix24 auth
+    const authIdInput = document.getElementById('auth_id');
+    const refreshIdInput = document.getElementById('refresh_id');
+    const authExpiresInput = document.getElementById('auth_expires');
+    
+    // Copy Bitrix24 auth params from URL to hidden fields
+    function copyAuthParamsFromUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const authId = urlParams.get('AUTH_ID') || urlParams.get('PLACEMENT_AUTH_ID') || '';
+        const refreshId = urlParams.get('REFRESH_ID') || '';
+        const authExpires = urlParams.get('AUTH_EXPIRES') || '3600';
+        
+        if (authIdInput) authIdInput.value = authId;
+        if (refreshIdInput) refreshIdInput.value = refreshId;
+        if (authExpiresInput) authExpiresInput.value = authExpires;
+    }
+    
+    // Update hidden fields when selections change
+    if (presetSelect) {
+        presetSelect.addEventListener('change', function() {
+            const selectedOption = this.options[this.selectedIndex];
+            if (selectedOption) {
+                presetNameInput.value = selectedOption.dataset.name || selectedOption.text;
+            }
+        });
+    }
+    
+    if (fieldSelect) {
+        fieldSelect.addEventListener('change', function() {
+            const selectedOption = this.options[this.selectedIndex];
+            if (selectedOption) {
+                fieldLabelInput.value = selectedOption.dataset.label || selectedOption.text;
+            }
+        });
+    }
+    
+    // Show loading state on form submit
+    if (form) {
+        form.addEventListener('submit', function() {
+            copyAuthParamsFromUrl();
+            submitBtn.disabled = true;
+            loadingSpinner.style.display = 'inline-block';
+            btnText.textContent = 'Сохранение...';
+        });
+    }
+    
+    // Initialize hidden fields on page load
+    function initHiddenFields() {
+        copyAuthParamsFromUrl();
+        
+        if (presetSelect && presetSelect.selectedIndex >= 0) {
+            const option = presetSelect.options[presetSelect.selectedIndex];
+            if (option && !presetNameInput.value) {
+                presetNameInput.value = option.dataset.name || option.text;
+            }
+        }
+        if (fieldSelect && fieldSelect.selectedIndex >= 0) {
+            const option = fieldSelect.options[fieldSelect.selectedIndex];
+            if (option && !fieldLabelInput.value) {
+                fieldLabelInput.value = option.dataset.label || option.text;
+            }
+        }
+    }
+    
+    initHiddenFields();
+});
+</script>
+{% endblock %}

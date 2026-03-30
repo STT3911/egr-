@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Установка приложения{% endblock %}
+
+{% block content %}
+<div class="flex flex-col items-center justify-center min-h-[60vh]">
+    <div class="text-center">
+        {% if error %}
+        <div class="text-6xl mb-4">❌</div>
+        <h1 class="text-2xl font-semibold text-gray-800 mb-4">Ошибка установки</h1>
+        <div class="b24-alert b24-alert--error max-w-md">
+            {{ error }}
+        </div>
+        {% else %}
+        <div class="text-6xl mb-4">✅</div>
+        <h1 class="text-2xl font-semibold text-gray-800 mb-4">Приложение установлено!</h1>
+        <div class="b24-alert b24-alert--success max-w-md">
+            Приложение успешно подключено к порталу {{ domain }}
+        </div>
+        <p class="text-gray-600 mt-4">
+            Теперь вы можете настроить параметры автозаполнения реквизитов в разделе настроек.
+        </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

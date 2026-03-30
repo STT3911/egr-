@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{% endblock %}</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <!-- b24ui-inspired styles -->
+    <style>
+        :root {
+            --b24-primary: #4a6cf7;
+            --b24-primary-hover: #3a5cd7;
+            --b24-success: #2e7d32;
+            --b24-error: #c62828;
+            --b24-warning: #f57c00;
+            --b24-bg: #f5f6fa;
+            --b24-card: #ffffff;
+            --b24-text: #333333;
+            --b24-text-secondary: #666666;
+            --b24-border: #e0e0e0;
+            --b24-radius: 8px;
+            --b24-shadow: 0 1px 4px rgba(0,0,0,0.12);
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--b24-bg);
+            color: var(--b24-text);
+            line-height: 1.5;
+        }
+        
+        .b24-card {
+            background: var(--b24-card);
+            border-radius: var(--b24-radius);
+            box-shadow: var(--b24-shadow);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        
+        .b24-card__title {
+            font-size: 15px;
+            color: var(--b24-text-secondary);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+        
+        .b24-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 11px 28px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+        
+        .b24-btn--primary {
+            background: var(--b24-primary);
+            color: white;
+        }
+        
+        .b24-btn--primary:hover {
+            background: var(--b24-primary-hover);
+        }
+        
+        .b24-btn--secondary {
+            background: #f0f0f0;
+            color: var(--b24-text);
+        }
+        
+        .b24-btn--secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .b24-select {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 14px;
+            border: 1px solid var(--b24-border);
+            border-radius: 6px;
+            background: #fafafa;
+            outline: none;
+            transition: all 0.2s;
+            margin-bottom: 16px;
+        }
+        
+        .b24-select:focus {
+            border-color: var(--b24-primary);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.1);
+        }
+        
+        .b24-label {
+            display: block;
+            font-size: 14px;
+            color: var(--b24-text-secondary);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        
+        .b24-alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .b24-alert--error {
+            background: #fde8e8;
+            color: var(--b24-error);
+            border-left: 4px solid var(--b24-error);
+        }
+        
+        .b24-alert--success {
+            background: #e8f5e9;
+            color: var(--b24-success);
+            border-left: 4px solid var(--b24-success);
+        }
+        
+        .b24-alert--warning {
+            background: #fff3e0;
+            color: var(--b24-warning);
+            border-left: 4px solid var(--b24-warning);
+        }
+        
+        .b24-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 24px;
+            margin: -24px -24px 24px -24px;
+            border-radius: var(--b24-radius) var(--b24-radius) 0 0;
+        }
+        
+        .b24-header__title {
+            font-size: 22px;
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .b24-header__subtitle {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-top: 4px;
+        }
+        
+        .b24-info {
+            font-size: 12px;
+            color: #888;
+            margin-top: -10px;
+            margin-bottom: 16px;
+        }
+        
+        .b24-meta {
+            font-size: 13px;
+            color: #999;
+        }
+        
+        .b24-meta__value {
+            color: var(--b24-text);
+            font-weight: 500;
+        }
+        
+        .b24-container {
+            max-width: 680px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        
+        .b24-loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid var(--b24-primary);
+            border-radius: 50%;
+            animation: b24-spin 1s linear infinite;
+        }
+        
+        @keyframes b24-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div id="app" class="b24-container">
+        {% block content %}{% endblock %}
+    </div>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
