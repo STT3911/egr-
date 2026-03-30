@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'bitrix001'
-down_revision = None  # Set to latest existing revision
+down_revision = 'f6g7h8i9j0'  # Points to the latest migration in the chain
 branch_labels = None
 depends_on = None
 

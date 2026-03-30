@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     BITRIX_CLIENT_ID: Optional[str] = None
     BITRIX_CLIENT_SECRET: Optional[str] = None
     
+    # External service integration
+    APP_URL: Optional[str] = None
+    SECRET_KEY: Optional[str] = None
+    TENDEX_API_URL: Optional[str] = None
+    TENDEX_API_KEY: Optional[str] = None
+    
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS_ORIGINS string into list."""
@@ -122,7 +128,8 @@ class Settings(BaseSettings):
 
     model_config = {
         "env_file": ".env",
-        "case_sensitive": False
+        "case_sensitive": False,
+        "extra": "ignore"  # Allow additional env vars without causing errors
     }
 
 

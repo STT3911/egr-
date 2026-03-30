@@ -16,9 +16,10 @@ from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 
 # Create async engine for Bitrix24
+# Remove client_encoding param as asyncpg doesn't support it
 BITRIX_DATABASE_URL = settings.DATABASE_URL.replace(
     "postgresql://", "postgresql+asyncpg://"
-)
+).split("?")[0]  # Strip query params like client_encoding
 
 async_engine = create_async_engine(
     BITRIX_DATABASE_URL,
