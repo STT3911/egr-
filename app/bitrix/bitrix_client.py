@@ -133,6 +133,14 @@ class BitrixClient:
         except BitrixAPIError:
             return False
     
+    async def get_current_user(self) -> Optional[dict]:
+        """Get current user info."""
+        try:
+            result = await self.call("user.current")
+            return result
+        except BitrixAPIError:
+            return None
+    
     async def get_requisite_presets(self) -> list[dict]:
         """Get list of requisite presets."""
         try:

@@ -56,13 +56,18 @@ def _extract_company_id(payload: dict) -> str:
     return str(payload.get("ID", "") or "")
 
 
-async def _validate_webhook_source(db: AsyncSession, payload: dict) -> bool:
-    """Validate webhook source against stored settings."""
+async def _validate_webhook_source(db: AsyncSession, payload: dict) -> tuple[bool, bool]:
+    """
+    Validate webhook source against stored settings.
+    
+    Returns:
+        Tuple of (source_valid, is_admin)
+    """
     result = await db.execute(select(AppSettings).where(AppSettings.id == 1))
     app_cfg = result.scalar_one_or_none()
     if app_cfg is None:
         logger.warning("Webhook validation skipped: app settings are missing.")
-        return True
+        return True, False
     
     auth = payload.get("auth", {})
     if not isinstance(auth, dict):
@@ -80,13 +85,30 @@ async def _validate_webhook_source(db: AsyncSession, payload: dict) -> bool:
     
     if app_cfg.bitrix_domain and incoming_domain and str(incoming_domain) != app_cfg.bitrix_domain:
         logger.warning(f"Webhook rejected: domain mismatch ({incoming_domain} != {app_cfg.bitrix_domain}).")
-        return False
+        return False, False
     
     if app_cfg.bitrix_member_id and incoming_member_id and str(incoming_member_id) != app_cfg.bitrix_member_id:
         logger.warning(f"Webhook rejected: member_id mismatch ({incoming_member_id} != {app_cfg.bitrix_member_id}).")
-        return False
+        return False, False
     
-    return True
+    # Check admin status if require_admin is enabled
+    is_admin = False
+    if app_cfg.require_admin:
+        # Extract auth token for admin check
+        auth_token = auth.get("access_token") or payload.get("access_token")
+        if auth_token:
+            bitrix = BitrixClient(db)
+            bitrix.app_settings = app_cfg
+            # Temporarily set token for admin check
+            original_token = app_cfg.access_token
+            app_cfg.access_token = auth_token
+            is_admin = await bitrix.is_admin()
+            app_cfg.access_token = original_token
+        else:
+            logger.warning("Webhook rejected: require_admin is enabled but no auth token provided.")
+            return False, False
+    
+    return True, is_admin
 
 
 async def _process_company_update_task(company_id: int) -> None:
@@ -107,6 +129,8 @@ async def company_update_webhook(
     
     Bitrix24 sends POST request with event parameters.
     We extract company ID and run processing in background.
+    
+    If require_admin is enabled in settings, only admin users can trigger this webhook.
     """
     try:
         content_type = request.headers.get("content-type", "")
@@ -120,9 +144,20 @@ async def company_update_webhook(
         body = _normalize_payload(raw_body if isinstance(raw_body, dict) else {})
         logger.info(f"Webhook received: {body}")
         
-        if not await _validate_webhook_source(db, body):
+        source_valid, is_admin = await _validate_webhook_source(db, body)
+        if not source_valid:
             return JSONResponse(
                 {"status": "error", "message": "Webhook source validation failed"},
+                status_code=403,
+            )
+        
+        # If admin is required but user is not admin, reject
+        # Get app_cfg to check require_admin setting
+        result = await db.execute(select(AppSettings).where(AppSettings.id == 1))
+        app_cfg = result.scalar_one_or_none()
+        if app_cfg and app_cfg.require_admin and not is_admin:
+            return JSONResponse(
+                {"status": "error", "message": "Admin access required"},
                 status_code=403,
             )
         

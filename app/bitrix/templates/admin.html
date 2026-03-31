@@ -101,6 +101,27 @@
             <input type="hidden" id="unp_field_label" name="unp_field_label" value="{{ current_unp_label }}">
         </div>
 
+        <!-- Admin Access Card -->
+        <div class="b24-card">
+            <h2 class="b24-card__title">Доступ администратора</h2>
+            <div class="mb-4">
+                <label class="b24-label">
+                    <input 
+                        type="checkbox" 
+                        id="require_admin" 
+                        name="require_admin" 
+                        value="true"
+                        {% if require_admin %}checked{% endif %}
+                    >
+                    Требовать права администратора для webhook-запросов
+                </label>
+                <p class="b24-info">
+                    Когда включено, только пользователи с правами администратора в Битрикс24 смогут вызывать webhook-эндпоинты.
+                    Когда выключено (по умолчанию), все webhook-запросы обрабатываются без проверки прав.
+                </p>
+            </div>
+        </div>
+
         <!-- Submit Button -->
         <div class="flex justify-start">
             <button type="submit" class="b24-btn b24-btn--primary" id="submit-btn">

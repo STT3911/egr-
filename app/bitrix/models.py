@@ -4,7 +4,7 @@ Models for Bitrix24 integration.
 
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from sqlalchemy.sql import func
 
 from app.bitrix.database import Base
@@ -31,6 +31,11 @@ class AppSettings(Base):
     requisite_preset_name = Column(String(255), nullable=True)
     unp_field_code = Column(String(100), nullable=True)
     unp_field_label = Column(String(255), nullable=True)
+    
+    # Admin mode settings
+    # When True, all endpoints require Bitrix admin rights
+    # When False, only admin panel requires admin rights
+    require_admin = Column(Boolean, default=False, nullable=False)
     
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())

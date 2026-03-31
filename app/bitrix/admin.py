@@ -106,6 +106,7 @@ async def admin_panel(
             "current_unp_field": app_cfg.unp_field_code if app_cfg else "",
             "current_preset_name": app_cfg.requisite_preset_name if app_cfg else "",
             "current_unp_label": app_cfg.unp_field_label if app_cfg else "",
+            "require_admin": app_cfg.require_admin if app_cfg else False,
         },
     )
 
@@ -121,6 +122,7 @@ async def save_settings(
     preset_name = form.get("preset_name", "")
     unp_field_code = form.get("unp_field_code", "")
     unp_field_label = form.get("unp_field_label", "")
+    require_admin = form.get("require_admin") == "true"
     
     # Get auth tokens from query params
     params = dict(request.query_params)
@@ -165,8 +167,11 @@ async def save_settings(
         app_cfg.unp_field_code = str(unp_field_code)
         app_cfg.unp_field_label = str(unp_field_label)
     
+    # Save admin requirement setting
+    app_cfg.require_admin = require_admin
+    
     await db.commit()
-    logger.info(f"Settings saved: preset_id={preset_id}, unp_field={unp_field_code}")
+    logger.info(f"Settings saved: preset_id={preset_id}, unp_field={unp_field_code}, require_admin={require_admin}")
     
     presets = await BitrixClient(db).get_requisite_presets()
     userfields = await BitrixClient(db).get_company_userfields()
@@ -185,5 +190,6 @@ async def save_settings(
             "current_unp_field": app_cfg.unp_field_code if app_cfg else "",
             "current_preset_name": app_cfg.requisite_preset_name if app_cfg else "",
             "current_unp_label": app_cfg.unp_field_label if app_cfg else "",
+            "require_admin": app_cfg.require_admin if app_cfg else False,
         },
     )
