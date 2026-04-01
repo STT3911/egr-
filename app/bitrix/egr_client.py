@@ -5,8 +5,12 @@ Client for EGR (Egrul) API - uses the same service API.
 import logging
 from dataclasses import dataclass
 from typing import Optional
+import asyncio
 
 import httpx
+
+# ИСПРАВЛЕНИЕ 1: Импорт настроек перенесен в начало файла
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +52,9 @@ class EGRClient:
     """
     
     def __init__(self):
-        self.base_url = settings.EGR_API_URL.rstrip("/")
+        # Используем getattr на случай, если переменной нет в .env
+        api_url = getattr(settings, "EGR_API_URL", "https://test.tendex.by")
+        self.base_url = api_url.rstrip("/")
     
     async def _get(self, path: str) -> dict | None:
         """Make GET request to EGR API."""
@@ -56,8 +62,11 @@ class EGRClient:
         try:
             async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                 headers = {"Accept": "application/json"}
-                if settings.API_KEY:
-                    headers["X-API-Key"] = settings.API_KEY
+                
+                api_key = getattr(settings, "API_KEY", None)
+                if api_key:
+                    headers["X-API-Key"] = api_key
+                    
                 resp = await client.get(url, headers=headers)
                 
                 if resp.status_code == 404:
@@ -68,13 +77,20 @@ class EGRClient:
                     logger.warning(f"EGR: status {resp.status_code} for {url}")
                     return None
                 
-                return resp.json()
+                # ИСПРАВЛЕНИЕ 2: Безопасный парсинг JSON
+                try:
+                    return resp.json()
+                except ValueError:
+                    logger.error(f"EGR: invalid JSON response from {url}")
+                    return None
+                    
         except httpx.TimeoutException:
             logger.error(f"EGR: timeout - {url}")
         except httpx.RequestError as e:
             logger.error(f"EGR: network error - {url}: {e}")
         except Exception as e:
             logger.error(f"EGR: unexpected error - {url}: {e}")
+            
         return None
     
     async def get_company_profile(self, unp: str) -> Optional[dict]:
@@ -97,7 +113,6 @@ class EGRClient:
         """
         logger.info(f"EGR: requesting data for UNP={unp}")
         
-        import asyncio
         profile, grp = await asyncio.gather(
             self.get_company_profile(unp),
             self.get_grp_data(unp),
@@ -110,39 +125,45 @@ class EGRClient:
         if isinstance(grp, Exception):
             logger.error(f"EGR GRP error: {grp}")
             grp = None
+            
+        # Защита от возврата пустого словаря вместо None
+        profile = profile if isinstance(profile, dict) else {}
+        grp = grp if isinstance(grp, dict) else {}
         
         info = EGRCompanyInfo()
         
         # Full name
-        if grp and grp.get("full_name"):
+        if grp.get("full_name"):
             info.full_name = grp["full_name"]
-        elif profile and profile.get("current_name_ru"):
+        elif profile.get("current_name_ru"):
             info.full_name = profile["current_name_ru"]
         
         # Short name
-        if grp and grp.get("short_name"):
+        if grp.get("short_name"):
             info.short_name = grp["short_name"]
-        elif profile and profile.get("current_short_name_ru"):
+        elif profile.get("current_short_name_ru"):
             info.short_name = profile["current_short_name_ru"]
         
         # Authority (inspectorate)
-        if grp and grp.get("inspectorate_name"):
+        if grp.get("inspectorate_name"):
             info.authority = grp["inspectorate_name"]
         
-        # Address
-        if profile and profile.get("addresses"):
-            addr = profile["addresses"][0]
-            info.full_address = addr.get("full_address", "")
-            info.postal_code = addr.get("postal_code")
-            info.region = addr.get("region", "")
+        # Address - ИСПРАВЛЕНИЕ 3: Безопасное чтение списка адресов
+        addresses = profile.get("addresses", [])
+        if isinstance(addresses, list) and len(addresses) > 0:
+            addr = addresses[0]
+            if isinstance(addr, dict):
+                info.full_address = addr.get("full_address", "")
+                info.postal_code = addr.get("postal_code")
+                info.region = addr.get("region", "")
         
-        if not info.full_address and grp and grp.get("address"):
+        if not info.full_address and grp.get("address"):
             info.full_address = grp["address"]
         
         # Registration date
-        if grp and grp.get("registration_date"):
+        if grp.get("registration_date"):
             info.registration_date = grp["registration_date"]
-        elif profile and profile.get("registration_date"):
+        elif profile.get("registration_date"):
             info.registration_date = profile["registration_date"]
         
         # Flag
@@ -159,7 +180,3 @@ class EGRClient:
         )
         
         return info
-
-
-# Import settings
-from app.core.config import settings

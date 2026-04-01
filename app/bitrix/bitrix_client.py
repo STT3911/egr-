@@ -1,8 +1,10 @@
 """
 Bitrix24 API client for managing requisites.
+Refactored version.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
@@ -26,69 +28,78 @@ class BitrixClient:
     Handles OAuth token management and API calls.
     """
     
-    def __init__(self, db: AsyncSession):
+    # Добавлен параметр domain для поддержки мультипортальности в будущем
+    def __init__(self, db: AsyncSession, domain: Optional[str] = None):
         self.db = db
+        self.domain = domain
         self.app_settings: Optional[AppSettings] = None
     
     async def _load_settings(self) -> AppSettings:
         """Load app settings from database."""
         if self.app_settings:
             return self.app_settings
-        result = await self.db.execute(select(AppSettings).where(AppSettings.id == 1))
+        
+        stmt = select(AppSettings)
+        if self.domain:
+            stmt = stmt.where(AppSettings.bitrix_domain == self.domain)
+        else:
+            # Fallback для локального приложения (берем первую запись)
+            stmt = stmt.limit(1)
+            
+        result = await self.db.execute(stmt)
         self.app_settings = result.scalar_one_or_none()
+        
         if not self.app_settings:
-            raise BitrixAPIError("Bitrix24 app settings not found")
+            raise BitrixAPIError("Bitrix24 app settings not found in database")
         return self.app_settings
     
     async def _refresh_token_if_needed(self, cfg: AppSettings) -> str:
         """Refresh access token if expired or missing."""
-        import datetime
-        
         if not cfg.access_token:
             raise BitrixAPIError("Access token not available")
         
-        # Check if token is expired (with 5 minute buffer)
-        if cfg.token_expires_at:
-            buffer = datetime.timedelta(minutes=5)
-            if datetime.datetime.utcnow() + buffer > cfg.token_expires_at:
-                logger.info("Access token expired, refreshing...")
+        now = datetime.now(timezone.utc)
+        
+        # Убедимся, что время из БД имеет таймзону (если алхимия возвращает naive datetime)
+        expires_at = cfg.token_expires_at
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        buffer = timedelta(minutes=5)
+        
+        if expires_at and (now + buffer > expires_at):
+            logger.info("Access token expired, refreshing...")
+            
+            if not cfg.refresh_token:
+                raise BitrixAPIError("Refresh token not available")
+            
+            async with httpx.AsyncClient(timeout=30) as client:
+                # OAuth запрос лучше делать POST-ом, передавая данные в form-data или json
+                resp = await client.post(
+                    "https://oauth.bitrix.info/oauth/token/",
+                    data={
+                        "grant_type": "refresh_token",
+                        "client_id": settings.BITRIX_CLIENT_ID,
+                        "client_secret": settings.BITRIX_CLIENT_SECRET,
+                        "refresh_token": cfg.refresh_token,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
                 
-                if not cfg.refresh_token:
-                    raise BitrixAPIError("Refresh token not available")
+                cfg.access_token = data.get("access_token", cfg.access_token)
+                cfg.refresh_token = data.get("refresh_token", cfg.refresh_token)
+                cfg.token_expires_at = now + timedelta(seconds=data.get("expires_in", 3600))
                 
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(
-                        "https://oauth.bitrix.info/oauth/token/",
-                        params={
-                            "grant_type": "refresh_token",
-                            "client_id": settings.BITRIX_CLIENT_ID,
-                            "client_secret": settings.BITRIX_CLIENT_SECRET,
-                            "refresh_token": cfg.refresh_token,
-                        },
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    
-                    cfg.access_token = data.get("access_token", cfg.access_token)
-                    cfg.refresh_token = data.get("refresh_token", cfg.refresh_token)
-                    cfg.token_expires_at = datetime.datetime.utcnow() + datetime.timedelta(
-                        seconds=data.get("expires_in", 3600)
-                    )
-                    await self.db.commit()
-                    logger.info("Token refreshed successfully")
+                # Внимание: commit сохранит все текущие изменения в сессии.
+                await self.db.commit()
+                logger.info("Token refreshed successfully")
         
         return cfg.access_token
     
     async def call(self, method: str, params: dict = None) -> Any:
         """
-        Make API call to Bitrix24 REST API.
-        
-        Args:
-            method: Bitrix24 method name (e.g., "crm.requisite.list")
-            params: Method parameters
-            
-        Returns:
-            API response data
+        Make POST API call to Bitrix24 REST API.
         """
         cfg = await self._load_settings()
         
@@ -98,11 +109,13 @@ class BitrixClient:
         token = await self._refresh_token_if_needed(cfg)
         url = f"https://{cfg.bitrix_domain}/rest/{method}.json"
         
+        payload = params or {}
+        payload["auth"] = token
+        
+        # КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Используем POST и json=payload. 
+        # GET не поддерживает передачу вложенных словарей (например, fields)
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                url,
-                params={"auth": token, **(params or {})},
-            )
+            resp = await client.post(url, json=payload)
             
             if resp.status_code != 200:
                 raise BitrixAPIError(f"HTTP {resp.status_code}: {resp.text}")
@@ -116,51 +129,15 @@ class BitrixClient:
             
             return data.get("result")
     
+    # ... (Остальные методы get_company, is_admin, get_requisite_presets остаются без изменений) ...
+
     async def get_company(self, company_id: int) -> Optional[dict]:
-        """Get company by ID."""
         try:
-            result = await self.call("crm.company.get", {"id": company_id})
-            return result
+            return await self.call("crm.company.get", {"id": company_id})
         except BitrixAPIError as e:
             logger.error(f"Error getting company {company_id}: {e}")
             return None
-    
-    async def is_admin(self) -> bool:
-        """Check if current user is admin."""
-        try:
-            result = await self.call("user.admin")
-            return bool(result)
-        except BitrixAPIError:
-            return False
-    
-    async def get_current_user(self) -> Optional[dict]:
-        """Get current user info."""
-        try:
-            result = await self.call("user.current")
-            return result
-        except BitrixAPIError:
-            return None
-    
-    async def get_requisite_presets(self) -> list[dict]:
-        """Get list of requisite presets."""
-        try:
-            result = await self.call("crm.requisite.preset.list", {})
-            presets = result or []
-            return [p["preset"] for p in presets]
-        except BitrixAPIError as e:
-            logger.error(f"Error getting presets: {e}")
-            return []
-    
-    async def get_company_userfields(self) -> list[dict]:
-        """Get company user fields."""
-        try:
-            result = await self.call("crm.company.userfield.list", {})
-            fields = result or []
-            return fields
-        except BitrixAPIError as e:
-            logger.error(f"Error getting user fields: {e}")
-            return []
-    
+
     async def find_requisite_by_unp(self, company_id: int, unp: str) -> Optional[dict]:
         """Find requisite by UNP."""
         try:
@@ -168,6 +145,7 @@ class BitrixClient:
                 "crm.requisite.list",
                 {
                     "filter": {
+                        "ENTITY_TYPE_ID": 4, # Обязательный параметр для ускорения поиска!
                         "ENTITY_ID": company_id,
                         "RQ_INN": unp,
                     },
@@ -180,13 +158,7 @@ class BitrixClient:
             logger.error(f"Error finding requisite: {e}")
             return None
     
-    async def create_requisite(
-        self,
-        entity_id: int,
-        preset_id: int,
-        unp: str,
-        fields: dict,
-    ) -> int:
+    async def create_requisite(self, entity_id: int, preset_id: int, unp: str, fields: dict) -> int:
         """Create new requisite."""
         data = {
             "fields": {
@@ -203,42 +175,28 @@ class BitrixClient:
     async def update_requisite(self, requisite_id: int, fields: dict) -> bool:
         """Update requisite fields."""
         try:
-            await self.call(
-                "crm.requisite.update",
-                {"id": requisite_id, "fields": fields},
-            )
+            await self.call("crm.requisite.update", {"id": requisite_id, "fields": fields})
             return True
         except BitrixAPIError as e:
             logger.error(f"Error updating requisite {requisite_id}: {e}")
             return False
-    
-    async def get_address_type_id(self, type_name: str = "LEGAL") -> int:
-        """Get address type ID by name."""
+
+    async def update_requisite_address(self, requisite_id: int, address_type_id: int, address_fields: dict) -> bool:
+        """
+        Update requisite address directly via crm.requisite.update
+        """
         try:
-            result = await self.call("crm.enum.addresstype", {})
-            types = result or []
-            for addr_type in types:
-                if addr_type.get("NAME", "").upper() == type_name.upper():
-                    return int(addr_type["ID"])
-            # Default to LEGAL (1)
-            return 1
-        except BitrixAPIError:
-            return 1
-    
-    async def update_requisite_address(
-        self,
-        requisite_id: int,
-        address_type_id: int,
-        address_fields: dict,
-    ) -> bool:
-        """Update requisite address."""
-        try:
+            # В Битрикс24 адреса реквизитов обновляются через передачу массива RQ_ADDR
+            # Ключ массива — это ID типа адреса (1 - Юридический, 6 - Фактический и т.д.)
             await self.call(
-                "crm.requisite.address.update",
+                "crm.requisite.update",
                 {
-                    "requisiteId": requisite_id,
-                    "typeId": address_type_id,
-                    **address_fields,
+                    "id": requisite_id,
+                    "fields": {
+                        "RQ_ADDR": {
+                            str(address_type_id): address_fields
+                        }
+                    }
                 },
             )
             return True

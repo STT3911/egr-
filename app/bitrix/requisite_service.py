@@ -13,25 +13,21 @@ from app.bitrix.egr_client import EGRClient
 logger = logging.getLogger(__name__)
 
 
-def _fallback_full_name(company_title: str) -> str:
-    """Mask for full name of IP (Individual Entrepreneur)."""
-    return f"Индивидуальный предприниматель {company_title}"
-
-
-def _fallback_short_name(company_title: str) -> str:
-    """Mask for short name of IP."""
-    return f"ИП {company_title}"
-
-
-def _fallback_authority(unp: str) -> str:
-    """Mask for authority document of IP."""
-    return f"свидетельства о регистрации № {unp}"
+def _apply_ip_mask(mask: str, company_name: str, unp: str, fallback: str) -> str:
+    """Безопасное применение маски из БД."""
+    if not mask:
+        mask = fallback
+    try:
+        return mask.format(company_name=company_name, company_unp=unp)
+    except KeyError:
+        # Если админ ошибся в переменных в админке
+        return fallback.format(company_name=company_name, company_unp=unp)
 
 
 class RequisiteService:
     """
     Service for auto-filling company requisites.
-    Uses EGR API data.
+    Uses EGR API data and applies IP masks from DB.
     """
     
     def __init__(self, db: AsyncSession):
@@ -40,158 +36,117 @@ class RequisiteService:
         self.egr = EGRClient()
     
     async def process_company_update(self, company_id: int) -> None:
-        """
-        Main handler for OnCrmCompanyUpdate event.
+        logger.info(f"[Company {company_id}] Starting processing")
         
-        Steps:
-        1. Load app settings from DB
-        2. Get company data from CRM
-        3. Read UNP from user field
-        4. Find or create requisite
-        5. Check which fields are empty
-        6. Request data from EGR
-        7. Fill only empty fields
-        8. Update legal address
-        """
-        logger.info(f"[Company {company_id}] Starting OnCrmCompanyUpdate processing")
-        
-        # Step 1: Load settings
-        result = await self.db.execute(
-            select(AppSettings).where(AppSettings.id == 1)
-        )
+        # Шаг 1: Загружаем настройки из БД (ВКЛЮЧАЯ МАСКИ)
+        result = await self.db.execute(select(AppSettings).limit(1))
         app_cfg = result.scalar_one_or_none()
         
-        if not app_cfg:
-            logger.error(f"[Company {company_id}] Settings not found - skipping")
+        if not app_cfg or not app_cfg.requisite_preset_id or not app_cfg.unp_field_code:
+            logger.warning(f"[Company {company_id}] App settings are incomplete - skipping")
             return
-        
-        if not app_cfg.requisite_preset_id or not app_cfg.unp_field_code:
-            logger.warning(
-                f"[Company {company_id}] Preset ({app_cfg.requisite_preset_id}) "
-                f"or UNP field ({app_cfg.unp_field_code}) not configured - skipping"
-            )
-            return
-        
-        # Step 2: Get company from CRM
+            
+        # Шаг 2: Получаем компанию из CRM
         try:
             company = await self.bitrix.get_company(company_id)
         except BitrixAPIError as e:
-            logger.error(f"[Company {company_id}] crm.company.get error: {e}")
+            logger.error(f"[Company {company_id}] get_company error: {e}")
             return
-        
+            
         if not company:
-            logger.warning(f"[Company {company_id}] Company not found in CRM")
             return
-        
+            
         company_title = company.get("TITLE", "")
         
-        # Step 3: Read UNP from user field
+        # Шаг 3: Читаем УНП
         unp_raw = company.get(app_cfg.unp_field_code, "")
         if not unp_raw:
-            logger.info(
-                f"[Company {company_id}] UNP field '{app_cfg.unp_field_code}' is empty - skipping"
-            )
+            logger.info(f"[Company {company_id}] UNP is empty - skipping")
             return
-        
+            
         unp = str(unp_raw).strip()
-        logger.info(f"[Company {company_id}] UNP='{unp}', title='{company_title}'")
         
-        # Step 4: Find or create requisite
+        # Шаг 4: Ищем существующий реквизит
         try:
             requisite = await self.bitrix.find_requisite_by_unp(company_id, unp)
         except BitrixAPIError as e:
             logger.error(f"[Company {company_id}] Error finding requisite: {e}")
             return
+            
+        # Защита от бесконечного цикла: проверяем, нужно ли вообще что-то обновлять
+        is_new = requisite is None
+        if not is_new:
+            rq_name = (requisite.get("RQ_NAME") or "").strip()
+            rq_short_name = (requisite.get("RQ_SHORT_NAME") or "").strip()
+            rq_basis = (requisite.get("RQ_LEGAL_FORM") or "").strip() # В зависимости от вашего пресета
+            
+            # Если основные поля уже заполнены — прерываем работу.
+            if rq_name and rq_short_name and rq_basis:
+                logger.info(f"[Requisite {requisite.get('ID')}] Fields already filled - skipping to prevent loop")
+                return
+
+        # Шаг 5: Идем в ЕГР (Только если реквизит новый или пустой!)
+        egr_info = await self.egr.get_company_info(unp)
         
-        if requisite:
-            requisite_id = int(requisite["ID"])
-            logger.info(f"[Company {company_id}] Found requisite ID={requisite_id}")
+        # Шаг 6: Формируем данные для заполнения (Используем маски из БД!)
+        # Простейшая эвристика: если ЕГР вернул пустоту, или в названии есть "ИП", считаем это ИП.
+        # В идеале egr_info должен возвращать флаг is_ip
+        is_ip = egr_info.is_empty or "ИП" in company_title.upper() or "ИНДИВИДУАЛЬНЫЙ" in company_title.upper()
+        
+        fields_to_write = {}
+        
+        if is_ip:
+            # ПРИМЕНЯЕМ НАСТРОЙКИ АДМИНА
+            fields_to_write["RQ_NAME"] = _apply_ip_mask(
+                app_cfg.ip_mask_full, company_title, unp, "Индивидуальный предприниматель {company_name}"
+            )
+            fields_to_write["RQ_SHORT_NAME"] = _apply_ip_mask(
+                app_cfg.ip_mask_short, company_title, unp, "ИП {company_name}"
+            )
+            # Часто основание пишется в RQ_DIRECTOR, но оставляю вашу логику
+            fields_to_write["RQ_LEGAL_FORM"] = _apply_ip_mask(
+                app_cfg.ip_mask_basis, company_title, unp, "Свидетельство о регистрации № {company_unp}"
+            )
         else:
-            logger.info(f"[Company {company_id}] Requisite not found - creating new")
-            try:
+            # Это юридическое лицо (ООО, ЗАО и т.д.)
+            if egr_info.full_name:
+                fields_to_write["RQ_NAME"] = egr_info.full_name
+            if egr_info.short_name:
+                fields_to_write["RQ_SHORT_NAME"] = egr_info.short_name
+            if egr_info.authority:
+                fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority
+                
+        # Шаг 7: Добавляем юридический адрес В ТОТ ЖЕ ЗАПРОС
+        if egr_info.full_address:
+            address_fields = {"ADDRESS_1": egr_info.full_address}
+            if egr_info.postal_code:
+                address_fields["ZIP_CODE"] = str(egr_info.postal_code)
+            if egr_info.region:
+                address_fields["REGION"] = egr_info.region
+                
+            # Тип адреса 1 - это Юридический по умолчанию в Битрикс24
+            fields_to_write["RQ_ADDR"] = {"1": address_fields}
+            
+        if not fields_to_write:
+            logger.info(f"[Company {company_id}] No data to write")
+            return
+
+        # Шаг 8: Делаем ОДИН запрос к API Битрикс24 (Создание или Обновление)
+        try:
+            if is_new:
                 requisite_id = await self.bitrix.create_requisite(
                     entity_id=company_id,
                     preset_id=app_cfg.requisite_preset_id,
                     unp=unp,
-                    fields={},
+                    fields=fields_to_write,
                 )
-                requisite = {"ID": requisite_id}
-                logger.info(f"[Company {company_id}] Created requisite ID={requisite_id}")
-            except BitrixAPIError as e:
-                logger.error(f"[Company {company_id}] Error creating requisite: {e}")
-                return
-        
-        # Step 5: Check empty fields
-        rq_name = (requisite.get("RQ_NAME") or "").strip()
-        rq_short_name = (requisite.get("RQ_SHORT_NAME") or "").strip()
-        rq_legal_form = (requisite.get("RQ_LEGAL_FORM") or "").strip()
-        rq_reason = (requisite.get("RQ_REASON") or "").strip()
-        
-        need_name = not rq_name
-        need_short_name = not rq_short_name
-        need_authority = not rq_legal_form and not rq_reason
-        
-        if not any([need_name, need_short_name, need_authority]):
-            logger.info(f"[Requisite {requisite_id}] All fields already filled - skipping")
-            return
-        
-        # Step 6: Get data from EGR
-        egr_info = await self.egr.get_company_info(unp)
-        
-        if egr_info.is_empty:
-            logger.warning(
-                f"[Requisite {requisite_id}] EGR returned no data for UNP={unp} - "
-                f"using IP masks"
-            )
-        
-        # Step 7: Fill empty fields
-        fields_to_update = {}
-        
-        if need_name:
-            full_name = egr_info.full_name or _fallback_full_name(company_title)
-            fields_to_update["RQ_NAME"] = full_name
-            logger.debug(f"[Requisite {requisite_id}] RQ_NAME ← '{full_name}'")
-        
-        if need_short_name:
-            short_name = egr_info.short_name or _fallback_short_name(company_title)
-            fields_to_update["RQ_SHORT_NAME"] = short_name
-            logger.debug(f"[Requisite {requisite_id}] RQ_SHORT_NAME ← '{short_name}'")
-        
-        if need_authority:
-            authority = egr_info.authority or _fallback_authority(unp)
-            fields_to_update["RQ_LEGAL_FORM"] = authority
-            logger.debug(f"[Requisite {requisite_id}] RQ_LEGAL_FORM ← '{authority}'")
-        
-        if fields_to_update:
-            logger.info(
-                f"[Requisite {requisite_id}] Updating fields: {list(fields_to_update.keys())}"
-            )
-            try:
-                await self.bitrix.update_requisite(requisite_id, fields_to_update)
-                logger.info(f"[Requisite {requisite_id}] Fields updated successfully")
-            except BitrixAPIError as e:
-                logger.error(f"[Requisite {requisite_id}] crm.requisite.update error: {e}")
-        
-        # Step 8: Update legal address
-        if egr_info.full_address:
-            logger.info(
-                f"[Requisite {requisite_id}] Updating address: '{egr_info.full_address}'"
-            )
-            try:
-                address_type_id = await self.bitrix.get_address_type_id("LEGAL")
-                address_fields = {"ADDRESS_1": egr_info.full_address}
-                if egr_info.postal_code:
-                    address_fields["ZIP_CODE"] = str(egr_info.postal_code)
-                if egr_info.region:
-                    address_fields["REGION"] = egr_info.region
+                logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} with data")
+            else:
+                requisite_id = int(requisite["ID"])
+                await self.bitrix.update_requisite(requisite_id, fields_to_write)
+                logger.info(f"[Company {company_id}] Updated existing requisite ID={requisite_id} with data")
                 
-                await self.bitrix.update_requisite_address(
-                    requisite_id=requisite_id,
-                    address_type_id=address_type_id,
-                    address_fields=address_fields,
-                )
-                logger.info(f"[Requisite {requisite_id}] Address updated")
-            except BitrixAPIError as e:
-                logger.error(f"[Requisite {requisite_id}] Address update error: {e}")
-        
-        logger.info(f"[Company {company_id}] Processing completed")
+        except BitrixAPIError as e:
+            logger.error(f"[Company {company_id}] Error saving requisite: {e}")
+
+        logger.info(f"[Company {company_id}] Processing completed successfully")
