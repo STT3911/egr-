@@ -38,26 +38,33 @@ async def _check_is_admin_on_the_fly(domain: str, auth_id: str) -> bool:
         return False
 
 
-@router.get("/", response_class=HTMLResponse)
 @router.post("/", response_class=HTMLResponse)
-async def admin_panel(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """Main admin panel page. Triggered when app is opened in Bitrix24."""
-    if request.method == "POST":
-        form_data = await request.form()
-        params = dict(form_data)
-    else:
-        params = dict(request.query_params)
+@router.get("/", response_class=HTMLResponse)
+async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
+    # 1. Сначала берем всё из URL (Query Params)
+    params = dict(request.query_params)
     
-    domain = params.get("DOMAIN")
-    auth_id = params.get("AUTH_ID") or params.get("auth")
-    refresh_id = params.get("REFRESH_ID")
-    expires_in = int(params.get("AUTH_EXPIRES", 3600))
-    member_id = params.get("member_id")
+    # 2. Если это POST, добавляем данные из формы (тела запроса)
+    if request.method == "POST":
+        try:
+            form_data = await request.form()
+            # .update() объединит данные. Если ключи совпадут, форма приоритетнее
+            params.update(dict(form_data))
+        except Exception as e:
+            logger.error(f"Error reading form data: {e}")
 
+    # 3. Ищем данные (учитываем, что Битрикс может прислать AUTH_ID или auth)
+    domain = params.get("DOMAIN") or params.get("domain")
+    auth_id = params.get("AUTH_ID") or params.get("auth")
+    refresh_id = params.get("REFRESH_ID") or params.get("refresh_id")
+    # Переводим в int, только если значение есть
+    expires_raw = params.get("AUTH_EXPIRES") or params.get("expires", 3600)
+    expires_in = int(expires_raw)
+    member_id = params.get("member_id") or params.get("MEMBER_ID")
+
+    # Теперь проверка сработает, так как мы "прочесали" и URL, и Form
     if not domain or not auth_id:
+        logger.warning(f"Auth failed. Params found: {list(params.keys())}")
         return templates.TemplateResponse(
             "error.html", 
             {"request": request, "message": "Ошибка: Не получены данные авторизации от Битрикс24."}, 

@@ -128,6 +128,16 @@
 {% endblock %}
 
 {% block extra_js %}
+
+<script src="//api.bitrix24.com/api/v1/"></script>
+<script>
+    // Инициализация библиотеки Битрикс24
+    BX24.init(function(){
+        console.log("Приложение Битрикс24 готово к работе");
+        // Эта пустая функция сообщает порталу, что фрейм загружен успешно
+    });
+</script>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const presetSelect = document.getElementById('preset_id');
