@@ -29,7 +29,7 @@
         </p>
     </div>
 
-    <form method="POST" action="/save" id="settings-form">
+    <form method="POST" action="/bitrix/admin/save" id="settings-form">
         <input type="hidden" name="DOMAIN" value="{{ domain }}">
         <input type="hidden" name="AUTH_ID" value="{{ auth_id }}">
         <input type="hidden" name="REFRESH_ID" value="{{ refresh_id }}">
@@ -52,130 +52,102 @@
                     </option>
                     {% endfor %}
                 </select>
-                <p class="b24-info">
-                    Пресет определяет набор полей реквизитов для новых компаний (Организация или ИП)
-                </p>
+                <p class="b24-info">Пресет определяет набор полей реквизитов (Организация или ИП)</p>
             </div>
             <input type="hidden" id="preset_name" name="preset_name" value="{{ current_preset_name }}">
         </div>
 
         <div class="b24-card">
             <h2 class="b24-card__title">Поле для УНП</h2>
-            <div class="mb-4">
-                <label class="b24-label" for="unp_field_code">
-                    Выберите пользовательское поле для хранения УНП:
-                </label>
-                <select id="unp_field_code" name="unp_field_code" class="b24-select" required>
-                    <option value="" disabled {% if not current_unp_field %}selected{% endif %}>-- Выберите поле --</option>
-                    {% for field in userfields %}
-                    <option 
-                        value="{{ field.FIELD_NAME }}" 
-                        data-label="{{ field.EDIT_FORM_LABEL }}"
-                        {% if field.FIELD_NAME == current_unp_field %}selected{% endif %}
-                    >
-                        {{ field.EDIT_FORM_LABEL }} ({{ field.FIELD_NAME }})
-                    </option>
-                    {% endfor %}
-                </select>
-                <p class="b24-info">
-                    Из этого поля приложение будет брать УНП для запроса в ЕГР
-                </p>
+            <div class="flex items-end gap-4 mb-4">
+                <div class="flex-grow">
+                    <label class="b24-label" for="unp_field_code">Выберите пользовательское поле:</label>
+                    <select id="unp_field_code" name="unp_field_code" class="b24-select" required>
+                        <option value="" disabled {% if not current_unp_field %}selected{% endif %}>-- Выберите поле --</option>
+                        {% for field in userfields %}
+                        <option 
+                            value="{{ field.FIELD_NAME }}" 
+                            data-label="{{ field.EDIT_FORM_LABEL }}"
+                            {% if field.FIELD_NAME == current_unp_field %}selected{% endif %}
+                        >
+                            {{ field.EDIT_FORM_LABEL }} ({{ field.FIELD_NAME }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" 
+                        formaction="/bitrix/admin/create-unp-field/" 
+                        formnovalidate
+                        class="b24-btn b24-btn--secondary" 
+                        style="margin-bottom: 16px;">
+                    ➕ Создать поле УНП
+                </button>
             </div>
+            <p class="b24-info">Из этого поля приложение будет брать УНП для запроса в ЕГР</p>
             <input type="hidden" id="unp_field_label" name="unp_field_label" value="{{ current_unp_label }}">
         </div>
 
         <div class="b24-card">
             <h2 class="b24-card__title">Шаблоны (маски) для ИП</h2>
-            <p class="b24-info" style="margin-bottom: 16px;">
-                Используйте переменные: <b>{company_name}</b> (ФИО), <b>{company_unp}</b> (УНП).
-            </p>
-            
             <div class="mb-4">
-                <label class="b24-label" for="ip_mask_full">Полное наименование:</label>
-                <input type="text" id="ip_mask_full" name="ip_mask_full" class="b24-input" style="width: 100%; padding: 8px; margin-top: 4px;"
+                <label class="b24-label">Полное наименование:</label>
+                <input type="text" name="ip_mask_full" class="b24-input w-full p-2 border rounded" 
                        value="{{ app_cfg.ip_mask_full if app_cfg and app_cfg.ip_mask_full else 'Индивидуальный предприниматель {company_name}' }}">
             </div>
-
             <div class="mb-4">
-                <label class="b24-label" for="ip_mask_short">Краткое наименование:</label>
-                <input type="text" id="ip_mask_short" name="ip_mask_short" class="b24-input" style="width: 100%; padding: 8px; margin-top: 4px;"
+                <label class="b24-label">Краткое наименование:</label>
+                <input type="text" name="ip_mask_short" class="b24-input w-full p-2 border rounded" 
                        value="{{ app_cfg.ip_mask_short if app_cfg and app_cfg.ip_mask_short else 'ИП {company_name}' }}">
             </div>
-
             <div class="mb-4">
-                <label class="b24-label" for="ip_mask_basis">Основание действия (в лице):</label>
-                <input type="text" id="ip_mask_basis" name="ip_mask_basis" class="b24-input" style="width: 100%; padding: 8px; margin-top: 4px;"
+                <label class="b24-label">Основание действия:</label>
+                <input type="text" name="ip_mask_basis" class="b24-input w-full p-2 border rounded" 
                        value="{{ app_cfg.ip_mask_basis if app_cfg and app_cfg.ip_mask_basis else 'Свидетельства о регистрации № {company_unp}' }}">
             </div>
         </div>
 
-        <div class="flex justify-start" style="margin-top: 20px;">
-            <button type="submit" class="b24-btn b24-btn--primary" id="submit-btn" style="padding: 10px 20px; cursor: pointer;">
-                <span class="b24-loading" id="loading-spinner" style="display: none; margin-right: 8px;">⏳</span>
+        <div class="mt-5">
+            <button type="submit" class="b24-btn b24-btn--primary" id="submit-btn">
+                <span class="b24-loading" id="loading-spinner" style="display: none; margin-right: 8px;"></span>
                 <span id="btn-text">💾 Сохранить настройки</span>
             </button>
         </div>
     </form>
-
-    <div class="b24-card" style="margin-top: 24px;">
-        <h2 class="b24-card__title">Информация</h2>
-        <div class="text-sm text-gray-600 space-y-2">
-            <p>• При сохранении настроек они будут применяться при изменении компаний</p>
-            <p>• Если у компании уже заполнены реквизиты с таким УНП, данные не перезапишутся</p>
-        </div>
-    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
-
-<script src="//api.bitrix24.com/api/v1/"></script>
+<script src="https://api.bitrix24.com/api/v1/"></script>
 <script>
-    // Инициализация библиотеки Битрикс24
     BX24.init(function(){
-        console.log("Приложение Битрикс24 готово к работе");
-        // Эта пустая функция сообщает порталу, что фрейм загружен успешно
+        console.log("Bitrix24 Ready");
+        BX24.fitWindow();
     });
-</script>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const presetSelect = document.getElementById('preset_id');
-    const presetNameInput = document.getElementById('preset_name');
-    const fieldSelect = document.getElementById('unp_field_code');
-    const fieldLabelInput = document.getElementById('unp_field_label');
-    const form = document.getElementById('settings-form');
-    const submitBtn = document.getElementById('submit-btn');
-    const loadingSpinner = document.getElementById('loading-spinner');
-    const btnText = document.getElementById('btn-text');
-    
-    // Update hidden fields when selections change
-    if (presetSelect) {
-        presetSelect.addEventListener('change', function() {
-            const selectedOption = this.options[this.selectedIndex];
-            if (selectedOption) {
-                presetNameInput.value = selectedOption.dataset.name || selectedOption.text;
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.getElementById('settings-form');
+        const presetSelect = document.getElementById('preset_id');
+        const fieldSelect = document.getElementById('unp_field_code');
+
+        // Синхронизация скрытых имен для сохранения в БД
+        if (presetSelect) {
+            presetSelect.addEventListener('change', function() {
+                document.getElementById('preset_name').value = this.options[this.selectedIndex].text;
+            });
+        }
+        if (fieldSelect) {
+            fieldSelect.addEventListener('change', function() {
+                document.getElementById('unp_field_label').value = this.options[this.selectedIndex].dataset.label || this.options[this.selectedIndex].text;
+            });
+        }
+
+        form.addEventListener('submit', function(e) {
+            // Если нажата кнопка "Сохранить" (не "Создать поле")
+            if (e.submitter && e.submitter.id === 'submit-btn') {
+                document.getElementById('loading-spinner').style.display = 'inline-block';
+                document.getElementById('btn-text').textContent = 'Сохранение...';
             }
         });
-    }
-    
-    if (fieldSelect) {
-        fieldSelect.addEventListener('change', function() {
-            const selectedOption = this.options[this.selectedIndex];
-            if (selectedOption) {
-                fieldLabelInput.value = selectedOption.dataset.label || selectedOption.text;
-            }
-        });
-    }
-    
-    // Show loading state on form submit
-    if (form) {
-        form.addEventListener('submit', function() {
-            submitBtn.disabled = true;
-            loadingSpinner.style.display = 'inline-block';
-            btnText.textContent = 'Сохранение...';
-        });
-    }
-});
+    });
 </script>
 {% endblock %}

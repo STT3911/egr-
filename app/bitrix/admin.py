@@ -126,6 +126,29 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
         },
     )
 
+@router.post("/create-unp-field", response_class=HTMLResponse)
+async def create_unp_field(request: Request, db: AsyncSession = Depends(get_db)):
+    """Handler for 'Create UNP Field' button."""
+    form = await request.form() 
+    domain = form.get("DOMAIN")
+    auth_id = form.get("AUTH_ID")
+
+    # Проверка прав
+    if not await _check_is_admin_on_the_fly(domain, auth_id):
+        return HTMLResponse("Forbidden", status_code=403)
+
+    bitrix = BitrixClient(db, domain=domain)
+    msg = ""
+    try:
+        new_field = await bitrix.create_unp_userfield()
+        msg = f" Поле {new_field['FIELD_NAME']} успешно создано!"
+    except Exception as e:
+        msg = f" Ошибка: {str(e)}"
+        if "already exists" in msg.lower():
+            msg = "ℹ Поле УНП уже существует в вашей CRM."
+
+    return await admin_panel(request, db)
+
 
 @router.post("/save", response_class=HTMLResponse)
 async def save_settings(

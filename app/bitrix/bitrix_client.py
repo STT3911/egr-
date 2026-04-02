@@ -129,7 +129,6 @@ class BitrixClient:
             
             return data.get("result")
     
-    # ... (Остальные методы get_company, is_admin, get_requisite_presets остаются без изменений) ...
 
     async def get_company(self, company_id: int) -> Optional[dict]:
         try:
@@ -203,3 +202,33 @@ class BitrixClient:
         except BitrixAPIError as e:
             logger.error(f"Error updating address for requisite {requisite_id}: {e}")
             return False
+
+    async def get_requisite_presets(self) -> list:
+        """Получение списка пресетов реквизитов."""
+        result = await self.call("crm.requisite.preset.list ", {
+            "select": ["ID", "NAME"],
+            "filter": {"ENTITY_TYPE_ID": 8}, # 8 = Requisites
+            "order": {"SORT": "ASC"}
+        })
+        return result if isinstance(result, list) else []
+
+    async def get_company_userfields(self) -> list:
+        """Получение списка полей компании."""
+        result = await self.call("crm.userfield.list", {
+            "filter": {"ENTITY_ID": "CRM_COMPANY"}
+        })
+        return result if isinstance(result, list) else []
+
+    async def create_unp_userfield(self) -> dict:
+        """Автоматическое создание поля 'УНП (EGR)' в компаниях."""
+        field_data = {
+            "USER_TYPE_ID": "string",
+            "ENTITY_ID": "CRM_COMPANY",
+            "FIELD_NAME": "EGR_UNP",
+            "EDIT_FORM_LABEL": "УНП (EGR)",
+            "LIST_COLUMN_LABEL": "УНП (EGR)",
+            "USER_TYPE_ID": "string",
+            "XML_ID": "EGR_UNP"
+        }
+        field_id = await self.call("crm.userfield.add", {"fields": field_data})
+        return {"ID": field_id, "FIELD_NAME": "UF_CRM_EGR_UNP"} 

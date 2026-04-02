@@ -205,5 +205,19 @@
     </div>
     
     {% block extra_js %}{% endblock %}
+
+    <script src="https://api.bitrix24.com/api/v1/"></script>
+    <script>
+        // Инициализация при загрузке каждой страницы
+        if (typeof BX24 !== 'undefined') {
+            BX24.init(function(){
+                console.log("Bitrix24 SDK initialized in base.html");
+                // Устанавливаем корректную высоту фрейма под контент
+                const height = document.body.scrollHeight + 50;
+                BX24.fitWindow();
+            });
+        }
+    </script>
+</body>
 </body>
 </html>
