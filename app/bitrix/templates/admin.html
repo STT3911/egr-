@@ -67,10 +67,10 @@
                         {% for field in userfields %}
                         <option 
                             value="{{ field.FIELD_NAME }}" 
-                            data-label="{{ field.EDIT_FORM_LABEL }}"
+                            data-label="{{ field.NICE_NAME }}"
                             {% if field.FIELD_NAME == current_unp_field %}selected{% endif %}
                         >
-                            {{ field.EDIT_FORM_LABEL }} ({{ field.FIELD_NAME }})
+                            {{ field.NICE_NAME }}
                         </option>
                         {% endfor %}
                     </select>

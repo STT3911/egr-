@@ -143,10 +143,9 @@ class RequisiteService:
                 logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} with data")
             else:
                 requisite_id = int(requisite["ID"])
-                await self.bitrix.update_requisite(requisite_id, fields_to_write)
+                # ИСПРАВЛЕНО: добавили unp вторым аргументом
+                await self.bitrix.update_requisite(requisite_id, unp, fields_to_write) 
                 logger.info(f"[Company {company_id}] Updated existing requisite ID={requisite_id} with data")
                 
         except BitrixAPIError as e:
             logger.error(f"[Company {company_id}] Error saving requisite: {e}")
-
-        logger.info(f"[Company {company_id}] Processing completed successfully")

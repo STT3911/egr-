@@ -38,31 +38,25 @@ async def _check_is_admin_on_the_fly(domain: str, auth_id: str) -> bool:
         return False
 
 
-@router.post("/", response_class=HTMLResponse)
-@router.get("/", response_class=HTMLResponse)
+@router.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
 async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
-    # 1. Сначала берем всё из URL (Query Params)
+    # 1. Собираем параметры из URL и тела POST-запроса
     params = dict(request.query_params)
-    
-    # 2. Если это POST, добавляем данные из формы (тела запроса)
     if request.method == "POST":
         try:
             form_data = await request.form()
-            # .update() объединит данные. Если ключи совпадут, форма приоритетнее
             params.update(dict(form_data))
         except Exception as e:
             logger.error(f"Error reading form data: {e}")
 
-    # 3. Ищем данные (учитываем, что Битрикс может прислать AUTH_ID или auth)
+    # 2. Ищем данные авторизации
     domain = params.get("DOMAIN") or params.get("domain")
     auth_id = params.get("AUTH_ID") or params.get("auth")
     refresh_id = params.get("REFRESH_ID") or params.get("refresh_id")
-    # Переводим в int, только если значение есть
     expires_raw = params.get("AUTH_EXPIRES") or params.get("expires", 3600)
     expires_in = int(expires_raw)
     member_id = params.get("member_id") or params.get("MEMBER_ID")
 
-    # Теперь проверка сработает, так как мы "прочесали" и URL, и Form
     if not domain or not auth_id:
         logger.warning(f"Auth failed. Params found: {list(params.keys())}")
         return templates.TemplateResponse(
@@ -71,7 +65,7 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
             status_code=400
         )
 
-    # 1. ПРОВЕРЯЕМ ПРАВА ДО ТОГО, КАК ТРОГАТЬ БАЗУ ДАННЫХ
+    # 3. Проверка прав администратора
     is_admin = await _check_is_admin_on_the_fly(domain, auth_id)
     if not is_admin:
         return templates.TemplateResponse(
@@ -80,15 +74,14 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
             status_code=403,
         )
 
-    # 2. Теперь безопасно сохраняем настройки и обновляем токены (OAuth)
-    result = await db.execute(select(AppSettings).limit(1))
+    # 4. Обновление токенов в БД (с фильтром по домену!)
+    result = await db.execute(select(AppSettings).filter(AppSettings.bitrix_domain == domain).limit(1))
     app_cfg = result.scalar_one_or_none()
     
     if not app_cfg:
-        app_cfg = AppSettings()
+        app_cfg = AppSettings(bitrix_domain=domain)
         db.add(app_cfg)
 
-    app_cfg.bitrix_domain = domain
     if member_id:
         app_cfg.bitrix_member_id = member_id
     app_cfg.access_token = auth_id
@@ -98,7 +91,7 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
     
     await db.commit()
 
-    # 3. Получаем данные для отрисовки формы (пресеты и поля)
+    # 5. Загрузка данных для списков
     presets = []
     userfields = []
     error_message = ""
@@ -107,10 +100,27 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
         bitrix = BitrixClient(db, domain=domain)
         presets = await bitrix.get_requisite_presets()
         userfields = await bitrix.get_company_userfields()
+        
+        # Исправляем пустые строки: добавляем NICE_NAME
+        for f in userfields:
+            base_name = f.get('FIELD_NAME', 'Неизвестное поле')
+            nice_name = ""
+            for key in ['EDIT_FORM_LABEL', 'LIST_COLUMN_LABEL', 'LIST_FILTER_LABEL']:
+                val = f.get(key)
+                if isinstance(val, dict) and val.get('ru'):
+                    nice_name = val['ru']
+                    break
+                elif isinstance(val, str) and val.strip():
+                    nice_name = val.strip()
+                    break
+            # Если имени нет, показываем системный код
+            f['NICE_NAME'] = nice_name if nice_name else base_name
+            
     except BitrixAPIError as e:
         logger.error(f"Error loading admin data: {e}")
         error_message = f"Ошибка подключения к API: {e}"
 
+    # Передаем current_preset_id и current_unp_field, чтобы форма не сбрасывалась
     return templates.TemplateResponse(
         "admin.html",
         {
@@ -118,10 +128,12 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
             "app_cfg": app_cfg,
             "presets": presets,
             "userfields": userfields,
+            "current_preset_id": str(app_cfg.requisite_preset_id) if app_cfg and app_cfg.requisite_preset_id else "",
+            "current_unp_field": app_cfg.unp_field_code if app_cfg else "",
             "error_message": error_message,
             "success_message": "",
             "domain": domain,
-            "auth_id": auth_id, # Передаем в шаблон, чтобы сохранить в скрытых полях формы!
+            "auth_id": auth_id,
             "refresh_id": refresh_id,
         },
     )
@@ -133,84 +145,82 @@ async def create_unp_field(request: Request, db: AsyncSession = Depends(get_db))
     domain = form.get("DOMAIN")
     auth_id = form.get("AUTH_ID")
 
-    # Проверка прав
     if not await _check_is_admin_on_the_fly(domain, auth_id):
         return HTMLResponse("Forbidden", status_code=403)
 
     bitrix = BitrixClient(db, domain=domain)
-    msg = ""
     try:
-        new_field = await bitrix.create_unp_userfield()
-        msg = f" Поле {new_field['FIELD_NAME']} успешно создано!"
+        await bitrix.create_unp_userfield()
     except Exception as e:
-        msg = f" Ошибка: {str(e)}"
-        if "already exists" in msg.lower():
-            msg = "ℹ Поле УНП уже существует в вашей CRM."
+        logger.error(f"Field creation info: {e}")
 
+    # После создания возвращаем обычную админку
     return await admin_panel(request, db)
 
 
 @router.post("/save", response_class=HTMLResponse)
-async def save_settings(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
+async def save_settings(request: Request, db: AsyncSession = Depends(get_db)):
     """Save settings selected by administrator."""
     form = await request.form()
     
-    # Извлекаем токены прямо из формы (их нужно добавить как <input type="hidden"> в admin.html)
     domain = form.get("DOMAIN")
     auth_id = form.get("AUTH_ID")
     
-    # Извлекаем настройки полей
     preset_id = form.get("preset_id", "")
-    preset_name = form.get("preset_name", "")
     unp_field_code = form.get("unp_field_code", "")
-    unp_field_label = form.get("unp_field_label", "")
-    
-    # Извлекаем МАСКИ ДЛЯ ИП (восстановлено из вашего ТЗ)
     ip_mask_full = form.get("ip_mask_full", "Индивидуальный предприниматель {company_name}")
     ip_mask_short = form.get("ip_mask_short", "ИП {company_name}")
     ip_mask_basis = form.get("ip_mask_basis", "Свидетельство о регистрации № {company_unp}")
 
-    # Снова проверяем права (защита от прямой отправки POST-запроса)
-    is_admin = await _check_is_admin_on_the_fly(domain, auth_id)
-    if not is_admin:
+    if not await _check_is_admin_on_the_fly(domain, auth_id):
         return templates.TemplateResponse(
             "error.html",
             {"request": request, "message": "Сессия истекла или нет прав администратора."},
             status_code=403,
         )
 
-    # Сохраняем в БД
-    result = await db.execute(select(AppSettings).limit(1))
+    # Ищем настройки конкретно для этого домена
+    result = await db.execute(select(AppSettings).filter(AppSettings.bitrix_domain == domain).limit(1))
     app_cfg = result.scalar_one_or_none()
     
     if app_cfg is None:
         return templates.TemplateResponse("error.html", {"request": request, "message": "Ошибка: Приложение не инициализировано."}, status_code=500)
 
+    # Сохраняем настройки
     if preset_id:
         app_cfg.requisite_preset_id = int(preset_id)
-        app_cfg.requisite_preset_name = str(preset_name)
     if unp_field_code:
         app_cfg.unp_field_code = str(unp_field_code)
-        app_cfg.unp_field_label = str(unp_field_label)
         
-    # Сохраняем маски в БД (убедитесь, что эти колонки добавлены в models.py)
     app_cfg.ip_mask_full = str(ip_mask_full)
     app_cfg.ip_mask_short = str(ip_mask_short)
     app_cfg.ip_mask_basis = str(ip_mask_basis)
 
     await db.commit()
-    logger.info("Settings and IP masks saved successfully.")
+    logger.info(f"Settings saved successfully for {domain}")
 
-    # Перезагружаем списки для рендера успешной страницы
+    # Загружаем списки заново для отображения успешной страницы
+    presets, userfields = [], []
     try:
         bitrix = BitrixClient(db, domain=domain)
         presets = await bitrix.get_requisite_presets()
         userfields = await bitrix.get_company_userfields()
+        
+        # Точно так же добавляем NICE_NAME, чтобы списки не сломались после сохранения
+        for f in userfields:
+            base_name = f.get('FIELD_NAME', 'Неизвестное поле')
+            nice_name = ""
+            for key in ['EDIT_FORM_LABEL', 'LIST_COLUMN_LABEL', 'LIST_FILTER_LABEL']:
+                val = f.get(key)
+                if isinstance(val, dict) and val.get('ru'):
+                    nice_name = val['ru']
+                    break
+                elif isinstance(val, str) and val.strip():
+                    nice_name = val.strip()
+                    break
+            f['NICE_NAME'] = nice_name if nice_name else base_name
     except:
-        presets, userfields = [], []
+        pass
 
     return templates.TemplateResponse(
         "admin.html",
@@ -219,7 +229,9 @@ async def save_settings(
             "app_cfg": app_cfg,
             "presets": presets,
             "userfields": userfields,
-            "success_message": "✅ Настройки и маски ИП успешно сохранены!",
+            "current_preset_id": str(app_cfg.requisite_preset_id) if app_cfg.requisite_preset_id else "",
+            "current_unp_field": app_cfg.unp_field_code,
+            "success_message": "✅ Настройки успешно сохранены!",
             "error_message": "",
             "domain": domain,
             "auth_id": auth_id,

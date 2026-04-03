@@ -28,7 +28,6 @@ class BitrixClient:
     Handles OAuth token management and API calls.
     """
     
-    # Добавлен параметр domain для поддержки мультипортальности в будущем
     def __init__(self, db: AsyncSession, domain: Optional[str] = None):
         self.db = db
         self.domain = domain
@@ -43,7 +42,6 @@ class BitrixClient:
         if self.domain:
             stmt = stmt.where(AppSettings.bitrix_domain == self.domain)
         else:
-            # Fallback для локального приложения (берем первую запись)
             stmt = stmt.limit(1)
             
         result = await self.db.execute(stmt)
@@ -60,7 +58,6 @@ class BitrixClient:
         
         now = datetime.now(timezone.utc)
         
-        # Убедимся, что время из БД имеет таймзону (если алхимия возвращает naive datetime)
         expires_at = cfg.token_expires_at
         if expires_at and expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
@@ -74,7 +71,6 @@ class BitrixClient:
                 raise BitrixAPIError("Refresh token not available")
             
             async with httpx.AsyncClient(timeout=30) as client:
-                # OAuth запрос лучше делать POST-ом, передавая данные в form-data или json
                 resp = await client.post(
                     "https://oauth.bitrix.info/oauth/token/",
                     data={
@@ -91,16 +87,13 @@ class BitrixClient:
                 cfg.refresh_token = data.get("refresh_token", cfg.refresh_token)
                 cfg.token_expires_at = now + timedelta(seconds=data.get("expires_in", 3600))
                 
-                # Внимание: commit сохранит все текущие изменения в сессии.
                 await self.db.commit()
                 logger.info("Token refreshed successfully")
         
         return cfg.access_token
     
     async def call(self, method: str, params: dict = None) -> Any:
-        """
-        Make POST API call to Bitrix24 REST API.
-        """
+        """Make POST API call to Bitrix24 REST API."""
         cfg = await self._load_settings()
         
         if not cfg.bitrix_domain:
@@ -112,8 +105,6 @@ class BitrixClient:
         payload = params or {}
         payload["auth"] = token
         
-        # КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Используем POST и json=payload. 
-        # GET не поддерживает передачу вложенных словарей (например, fields)
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, json=payload)
             
@@ -129,7 +120,6 @@ class BitrixClient:
             
             return data.get("result")
     
-
     async def get_company(self, company_id: int) -> Optional[dict]:
         try:
             return await self.call("crm.company.get", {"id": company_id})
@@ -137,14 +127,31 @@ class BitrixClient:
             logger.error(f"Error getting company {company_id}: {e}")
             return None
 
-    async def find_requisite_by_unp(self, company_id: int, unp: str) -> Optional[dict]:
-        """Find requisite by UNP."""
+    async def get_company_requisites(self, company_id: int) -> list:
+        """Ищет все существующие реквизиты у компании."""
         try:
             result = await self.call(
                 "crm.requisite.list",
                 {
                     "filter": {
-                        "ENTITY_TYPE_ID": 4, # Обязательный параметр для ускорения поиска!
+                        "ENTITY_TYPE_ID": 4, 
+                        "ENTITY_ID": company_id
+                    }
+                }
+            )
+            return result if isinstance(result, list) else []
+        except BitrixAPIError as e:
+            logger.error(f"Error getting requisites: {e}")
+            return []
+
+    async def find_requisite_by_unp(self, company_id: int, unp: str) -> Optional[dict]:
+        """Find requisite specifically by UNP."""
+        try:
+            result = await self.call(
+                "crm.requisite.list",
+                {
+                    "filter": {
+                        "ENTITY_TYPE_ID": 4, 
                         "ENTITY_ID": company_id,
                         "RQ_INN": unp,
                     },
@@ -154,7 +161,7 @@ class BitrixClient:
             requisites = result or []
             return requisites[0] if requisites else None
         except BitrixAPIError as e:
-            logger.error(f"Error finding requisite: {e}")
+            logger.error(f"Error finding requisite by UNP: {e}")
             return None
     
     async def create_requisite(self, entity_id: int, preset_id: int, unp: str, fields: dict) -> int:
@@ -171,22 +178,25 @@ class BitrixClient:
         result = await self.call("crm.requisite.add", data)
         return int(result)
     
-    async def update_requisite(self, requisite_id: int, fields: dict) -> bool:
-        """Update requisite fields."""
+    async def update_requisite(self, requisite_id: int, unp: str, fields: dict) -> bool:
+        """Update existing requisite fields."""
         try:
-            await self.call("crm.requisite.update", {"id": requisite_id, "fields": fields})
+            data = {
+                "id": requisite_id,
+                "fields": {
+                    "RQ_INN": unp,
+                    **fields
+                }
+            }
+            await self.call("crm.requisite.update", data)
             return True
         except BitrixAPIError as e:
             logger.error(f"Error updating requisite {requisite_id}: {e}")
             return False
 
     async def update_requisite_address(self, requisite_id: int, address_type_id: int, address_fields: dict) -> bool:
-        """
-        Update requisite address directly via crm.requisite.update
-        """
+        """Update requisite address directly via crm.requisite.update"""
         try:
-            # В Битрикс24 адреса реквизитов обновляются через передачу массива RQ_ADDR
-            # Ключ массива — это ID типа адреса (1 - Юридический, 6 - Фактический и т.д.)
             await self.call(
                 "crm.requisite.update",
                 {
@@ -205,7 +215,8 @@ class BitrixClient:
 
     async def get_requisite_presets(self) -> list:
         """Получение списка пресетов реквизитов."""
-        result = await self.call("crm.requisite.preset.list ", {
+        # Исправлен лишний пробел в названии метода "crm.requisite.preset.list "
+        result = await self.call("crm.requisite.preset.list", {
             "select": ["ID", "NAME"],
             "filter": {"ENTITY_TYPE_ID": 8}, # 8 = Requisites
             "order": {"SORT": "ASC"}
@@ -214,21 +225,21 @@ class BitrixClient:
 
     async def get_company_userfields(self) -> list:
         """Получение списка полей компании."""
-        result = await self.call("crm.userfield.list", {
-            "filter": {"ENTITY_ID": "CRM_COMPANY"}
+        # Заменено на метод для сущности Компании
+        result = await self.call("crm.company.userfield.list", {
+            "order": {"SORT": "ASC"}
         })
         return result if isinstance(result, list) else []
 
     async def create_unp_userfield(self) -> dict:
-        """Автоматическое создание поля 'УНП (EGR)' в компаниях."""
+        """Автоматическое создание поля 'УНП' в компаниях."""
         field_data = {
+            "FIELD_NAME": "UNP",
             "USER_TYPE_ID": "string",
-            "ENTITY_ID": "CRM_COMPANY",
-            "FIELD_NAME": "EGR_UNP",
-            "EDIT_FORM_LABEL": "УНП (EGR)",
-            "LIST_COLUMN_LABEL": "УНП (EGR)",
-            "USER_TYPE_ID": "string",
-            "XML_ID": "EGR_UNP"
+            "XML_ID": "UNP",
+            "EDIT_FORM_LABEL": {"ru": "УНП", "en": "UNP"},
+            "LIST_COLUMN_LABEL": {"ru": "УНП", "en": "UNP"}
         }
-        field_id = await self.call("crm.userfield.add", {"fields": field_data})
-        return {"ID": field_id, "FIELD_NAME": "UF_CRM_EGR_UNP"} 
+        # Заменено на метод для сущности Компании
+        field_id = await self.call("crm.company.userfield.add", {"fields": field_data})
+        return {"ID": field_id, "FIELD_NAME": "UF_CRM_UNP"}
