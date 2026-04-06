@@ -66,86 +66,95 @@ class RequisiteService:
             
         unp = str(unp_raw).strip()
         
-        # Шаг 4: Ищем существующий реквизит
-        try:
-            requisite = await self.bitrix.find_requisite_by_unp(company_id, unp)
-        except BitrixAPIError as e:
-            logger.error(f"[Company {company_id}] Error finding requisite: {e}")
-            return
-            
-        # Защита от бесконечного цикла: проверяем, нужно ли вообще что-то обновлять
-        is_new = requisite is None
-        if not is_new:
-            rq_name = (requisite.get("RQ_NAME") or "").strip()
-            rq_short_name = (requisite.get("RQ_SHORT_NAME") or "").strip()
-            rq_basis = (requisite.get("RQ_LEGAL_FORM") or "").strip() # В зависимости от вашего пресета
-            
-            # Если основные поля уже заполнены — прерываем работу.
-            if rq_name and rq_short_name and rq_basis:
-                logger.info(f"[Requisite {requisite.get('ID')}] Fields already filled - skipping to prevent loop")
-                return
-
-        # Шаг 5: Идем в ЕГР (Только если реквизит новый или пустой!)
+        # Шаг 4: СРАЗУ идем в ЕГР за эталонными данными
         egr_info = await self.egr.get_company_info(unp)
         
-        # Шаг 6: Формируем данные для заполнения (Используем маски из БД!)
-        # Простейшая эвристика: если ЕГР вернул пустоту, или в названии есть "ИП", считаем это ИП.
-        # В идеале egr_info должен возвращать флаг is_ip
+        # Шаг 5: Формируем правильные поля для записи
         is_ip = egr_info.is_empty or "ИП" in company_title.upper() or "ИНДИВИДУАЛЬНЫЙ" in company_title.upper()
-        
         fields_to_write = {}
         
         if is_ip:
-            # ПРИМЕНЯЕМ НАСТРОЙКИ АДМИНА
-            fields_to_write["RQ_NAME"] = _apply_ip_mask(
+            name = _apply_ip_mask(app_cfg.ip_mask_short, company_title, unp, "ИП {company_name}")
+            fields_to_write["NAME"] = name
+            fields_to_write["RQ_COMPANY_NAME"] = name
+            fields_to_write["RQ_COMPANY_FULL_NAME"] = _apply_ip_mask(
                 app_cfg.ip_mask_full, company_title, unp, "Индивидуальный предприниматель {company_name}"
             )
-            fields_to_write["RQ_SHORT_NAME"] = _apply_ip_mask(
-                app_cfg.ip_mask_short, company_title, unp, "ИП {company_name}"
-            )
-            # Часто основание пишется в RQ_DIRECTOR, но оставляю вашу логику
             fields_to_write["RQ_LEGAL_FORM"] = _apply_ip_mask(
                 app_cfg.ip_mask_basis, company_title, unp, "Свидетельство о регистрации № {company_unp}"
             )
         else:
-            # Это юридическое лицо (ООО, ЗАО и т.д.)
-            if egr_info.full_name:
-                fields_to_write["RQ_NAME"] = egr_info.full_name
-            if egr_info.short_name:
-                fields_to_write["RQ_SHORT_NAME"] = egr_info.short_name
+            name = egr_info.short_name or egr_info.full_name
+            fields_to_write["NAME"] = name
+            fields_to_write["RQ_COMPANY_NAME"] = egr_info.short_name
+            fields_to_write["RQ_COMPANY_FULL_NAME"] = egr_info.full_name
             if egr_info.authority:
                 fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority
                 
-        # Шаг 7: Добавляем юридический адрес В ТОТ ЖЕ ЗАПРОС
+        # Добавляем адрес
         if egr_info.full_address:
             address_fields = {"ADDRESS_1": egr_info.full_address}
             if egr_info.postal_code:
                 address_fields["ZIP_CODE"] = str(egr_info.postal_code)
             if egr_info.region:
                 address_fields["REGION"] = egr_info.region
-                
-            # Тип адреса 1 - это Юридический по умолчанию в Битрикс24
             fields_to_write["RQ_ADDR"] = {"1": address_fields}
-            
-        if not fields_to_write:
-            logger.info(f"[Company {company_id}] No data to write")
+
+        if not fields_to_write.get("NAME"):
+            logger.info(f"[Company {company_id}] No data from EGR to write")
             return
 
-        # Шаг 8: Делаем ОДИН запрос к API Битрикс24 (Создание или Обновление)
+        # Шаг 6: Получаем то, что СЕЙЧАС написано в Битриксе
         try:
-            if is_new:
-                requisite_id = await self.bitrix.create_requisite(
-                    entity_id=company_id,
-                    preset_id=app_cfg.requisite_preset_id,
-                    unp=unp,
-                    fields=fields_to_write,
-                )
-                logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} with data")
-            else:
-                requisite_id = int(requisite["ID"])
-                # ИСПРАВЛЕНО: добавили unp вторым аргументом
-                await self.bitrix.update_requisite(requisite_id, unp, fields_to_write) 
-                logger.info(f"[Company {company_id}] Updated existing requisite ID={requisite_id} with data")
-                
+            requisite = await self.bitrix.find_requisite_by_unp(company_id, unp)
         except BitrixAPIError as e:
-            logger.error(f"[Company {company_id}] Error saving requisite: {e}")
+            logger.error(f"[Company {company_id}] Error finding requisite: {e}")
+            return
+            
+        is_new = requisite is None
+        new_title = fields_to_write.get("RQ_COMPANY_NAME") or fields_to_write.get("NAME")
+
+        # --- Шаг 7: УМНАЯ ЗАЩИТА ОТ ЦИКЛА (Сравнение) ---
+        needs_title_update = bool(new_title and company_title != new_title)
+        needs_req_update = False
+        
+        if is_new:
+            needs_req_update = True
+        else:
+            # Сравниваем эталон с тем, что в карточке. Отличается? ПЕРЕЗАПИСЫВАЕМ!
+            existing_name = requisite.get("NAME", "")
+            if existing_name != fields_to_write.get("NAME"):
+                needs_req_update = True
+
+        if not needs_title_update and not needs_req_update:
+            logger.info(f"[Company {company_id}] Битрикс и ЕГР синхронизированы. Останавливаемся (защита от цикла).")
+            return
+        # ------------------------------------------------
+
+        # Шаг 8: Обновляем Битрикс!
+        try:
+            if needs_title_update:
+                await self.bitrix.call("crm.company.update", {
+                    "id": company_id,
+                    "fields": {"TITLE": new_title}
+                })
+                logger.info(f"[Company {company_id}] Overwrote main TITLE to: {new_title}")
+
+            if needs_req_update:
+                if is_new:
+                    requisite_id = await self.bitrix.create_requisite(
+                        entity_id=company_id,
+                        preset_id=app_cfg.requisite_preset_id,
+                        unp=unp,
+                        fields=fields_to_write,
+                    )
+                    logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id}")
+                else:
+                    requisite_id = int(requisite["ID"])
+                    await self.bitrix.update_requisite(requisite_id, unp, fields_to_write)
+                    logger.info(f"[Company {company_id}] Overwrote existing requisite ID={requisite_id}")
+                    
+        except BitrixAPIError as e:
+            logger.error(f"[Company {company_id}] Error saving data: {e}")
+
+        logger.info(f"[Company {company_id}] Processing completed successfully")
