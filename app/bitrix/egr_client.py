@@ -43,6 +43,9 @@ class EGRCompanyInfo:
     region: str = ""
     registration_date: str = ""
     is_empty: bool = True
+    phone: str = ""
+    email: str = ""
+    website: str = ""
 
 
 class EGRClient:
@@ -165,7 +168,19 @@ class EGRClient:
             info.registration_date = grp["registration_date"]
         elif profile.get("registration_date"):
             info.registration_date = profile["registration_date"]
-        
+
+        #contacts
+        contacts = profile.get("contacts", [])
+        if isinstance(contacts, list):
+            # Проходим по списку с конца, чтобы взять самые свежие (последние) данные
+            for contact in reversed(contacts):
+                if isinstance(contact, dict):
+                    if not info.phone and contact.get("phone"):
+                        info.phone = contact["phone"]
+                    if not info.email and contact.get("email"):
+                        info.email = contact["email"]
+                    if not info.website and contact.get("website"):
+                        info.website = contact["website"]
         # Flag
         info.is_empty = not any([
             info.full_name, info.short_name, info.authority,
