@@ -21,11 +21,24 @@ def get_allowed_api_keys() -> set:
     return {key.strip() for key in settings.ALLOWED_API_KEYS.split(",") if key.strip()}
 
 
-async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+async def verify_api_key(request: Request, api_key: str = Security(api_key_header)) -> str:
     """
     Verify API key from header.
     Returns the API key if valid, raises HTTPException otherwise.
     """
+    path = request.url.path
+    
+    # --- НОВЫЙ БЛОК: Разрешаем публичный доступ к поиску И карточкам компаний ---
+    is_public_route = (
+        path.endswith("/lookup") or 
+        path.startswith("/api/v1/companies/") or 
+        path.startswith("/api/v1/grp/")
+    )
+    
+    if is_public_route:
+        return "public-access"
+    # ----------------------------------------------------------------------------
+
     # Skip auth in development mode if no keys configured
     if settings.APP_ENV == "development" and not settings.ALLOWED_API_KEYS:
         logger.warning("⚠️  API authentication disabled in development mode")
