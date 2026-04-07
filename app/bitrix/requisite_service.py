@@ -116,30 +116,81 @@ class RequisiteService:
 
         # --- Шаг 7: УМНАЯ ЗАЩИТА ОТ ЦИКЛА (Сравнение) ---
         needs_title_update = bool(new_title and company_title != new_title)
-        needs_req_update = False
         
+        needs_req_update = False
         if is_new:
             needs_req_update = True
         else:
-            # Сравниваем эталон с тем, что в карточке. Отличается? ПЕРЕЗАПИСЫВАЕМ!
             existing_name = requisite.get("NAME", "")
             if existing_name != fields_to_write.get("NAME"):
                 needs_req_update = True
 
-        if not needs_title_update and not needs_req_update:
+        needs_address_update = False
+        needs_contact_update = False  # НОВАЯ ПЕРЕМЕННАЯ ДЛЯ КОНТАКТОВ
+
+        try:
+            current_comp = await self.bitrix.call("crm.company.get", {"id": company_id})
+            
+            # 1. Проверяем Адрес
+            if egr_info.full_address and current_comp.get("ADDRESS") != egr_info.full_address:
+                needs_address_update = True
+                
+            # 2. Проверяем Телефон (если есть в ЕГР, но пуст в Битриксе)
+            if hasattr(egr_info, 'phone') and egr_info.phone:
+                if not current_comp.get("PHONE"):
+                    needs_contact_update = True
+                    
+            # 3. Проверяем E-mail (если есть в ЕГР, но пуст в Битриксе)
+            if hasattr(egr_info, 'email') and egr_info.email:
+                if not current_comp.get("EMAIL"):
+                    needs_contact_update = True
+                    
+            # 4. Проверяем Сайт (если есть в ЕГР, но пуст в Битриксе)
+            if hasattr(egr_info, 'website') and egr_info.website:
+                if not current_comp.get("WEB"):
+                    needs_contact_update = True
+
+        except Exception as e:
+            logger.error(f"[Company {company_id}] Error checking current fields: {e}")
+
+        # Теперь защита останавливает скрипт ТОЛЬКО если ВСЕ поля идеальны
+        if not needs_title_update and not needs_req_update and not needs_address_update and not needs_contact_update:
             logger.info(f"[Company {company_id}] Битрикс и ЕГР синхронизированы. Останавливаемся (защита от цикла).")
             return
         # ------------------------------------------------
 
         # Шаг 8: Обновляем Битрикс!
         try:
+            # 1. Формируем поля для обновления фасада карточки
+            company_update_fields = {}
             if needs_title_update:
+                company_update_fields["TITLE"] = new_title
+                
+            if needs_address_update:
+                company_update_fields["ADDRESS"] = egr_info.full_address
+                if egr_info.postal_code:
+                    company_update_fields["ADDRESS_POSTAL_CODE"] = str(egr_info.postal_code)
+
+            # --- ЗАПОЛНЯЕМ КОНТАКТЫ ---
+            if hasattr(egr_info, 'phone') and egr_info.phone:
+                company_update_fields["PHONE"] = [{"VALUE": egr_info.phone, "VALUE_TYPE": "WORK"}]
+                
+            if hasattr(egr_info, 'email') and egr_info.email:
+                company_update_fields["EMAIL"] = [{"VALUE": egr_info.email, "VALUE_TYPE": "WORK"}]
+                
+            if hasattr(egr_info, 'website') and egr_info.website:
+                company_update_fields["WEB"] = [{"VALUE": egr_info.website, "VALUE_TYPE": "WORK"}]
+            # ----------------------------------------
+
+            # Если есть что обновлять - отправляем запрос
+            if company_update_fields:
                 await self.bitrix.call("crm.company.update", {
                     "id": company_id,
-                    "fields": {"TITLE": new_title}
+                    "fields": company_update_fields
                 })
-                logger.info(f"[Company {company_id}] Overwrote main TITLE to: {new_title}")
+                logger.info(f"[Company {company_id}] Updated main card fields: {list(company_update_fields.keys())}")
 
+            # 2. Обновляем реквизиты (бухгалтерию)
             if needs_req_update:
                 if is_new:
                     requisite_id = await self.bitrix.create_requisite(
