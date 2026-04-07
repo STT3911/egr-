@@ -91,7 +91,7 @@ def is_unp_query(query: str) -> bool:
 
 
 @router.get("/lookup", response_model=CompanyLookupResponse)
-async def lookup_companies(
+def lookup_companies(
     q: str = Query(..., min_length=1, description="Поиск по УНП или названию"),
     limit: int = Query(10, ge=1, le=50, description="Максимум результатов"),
     db: Session = Depends(get_db),

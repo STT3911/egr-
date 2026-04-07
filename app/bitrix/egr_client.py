@@ -9,7 +9,6 @@ import asyncio
 
 import httpx
 
-# ИСПРАВЛЕНИЕ 1: Импорт настроек перенесен в начало файла
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -43,9 +42,13 @@ class EGRCompanyInfo:
     region: str = ""
     registration_date: str = ""
     is_empty: bool = True
+    
+    # Контакты и деятельность
     phone: str = ""
     email: str = ""
     website: str = ""
+    ved_code: str = ""
+    ved_name: str = ""
 
 
 class EGRClient:
@@ -55,7 +58,6 @@ class EGRClient:
     """
     
     def __init__(self):
-        # Используем getattr на случай, если переменной нет в .env
         api_url = getattr(settings, "EGR_API_URL", "https://test.tendex.by")
         self.base_url = api_url.rstrip("/")
     
@@ -80,7 +82,6 @@ class EGRClient:
                     logger.warning(f"EGR: status {resp.status_code} for {url}")
                     return None
                 
-                # ИСПРАВЛЕНИЕ 2: Безопасный парсинг JSON
                 try:
                     return resp.json()
                 except ValueError:
@@ -107,12 +108,6 @@ class EGRClient:
     async def get_company_info(self, unp: str) -> EGRCompanyInfo:
         """
         Get normalized company info from EGR API.
-        
-        Args:
-            unp: УНП организации
-            
-        Returns:
-            EGRCompanyInfo - always returns an object, never raises exception.
         """
         logger.info(f"EGR: requesting data for UNP={unp}")
         
@@ -129,29 +124,28 @@ class EGRClient:
             logger.error(f"EGR GRP error: {grp}")
             grp = None
             
-        # Защита от возврата пустого словаря вместо None
         profile = profile if isinstance(profile, dict) else {}
         grp = grp if isinstance(grp, dict) else {}
         
         info = EGRCompanyInfo()
         
-        # Full name
+        # 1. Full name
         if grp.get("full_name"):
             info.full_name = grp["full_name"]
         elif profile.get("current_name_ru"):
             info.full_name = profile["current_name_ru"]
         
-        # Short name
+        # 2. Short name
         if grp.get("short_name"):
             info.short_name = grp["short_name"]
         elif profile.get("current_short_name_ru"):
             info.short_name = profile["current_short_name_ru"]
         
-        # Authority (inspectorate)
+        # 3. Authority
         if grp.get("inspectorate_name"):
             info.authority = grp["inspectorate_name"]
         
-        # Address - ИСПРАВЛЕНИЕ 3: Безопасное чтение списка адресов
+        # 4. Address
         addresses = profile.get("addresses", [])
         if isinstance(addresses, list) and len(addresses) > 0:
             addr = addresses[0]
@@ -163,16 +157,15 @@ class EGRClient:
         if not info.full_address and grp.get("address"):
             info.full_address = grp["address"]
         
-        # Registration date
+        # 5. Registration date
         if grp.get("registration_date"):
             info.registration_date = grp["registration_date"]
         elif profile.get("registration_date"):
             info.registration_date = profile["registration_date"]
 
-        #contacts
+        # 6. Contacts (Берем самые свежие с конца)
         contacts = profile.get("contacts", [])
         if isinstance(contacts, list):
-            # Проходим по списку с конца, чтобы взять самые свежие (последние) данные
             for contact in reversed(contacts):
                 if isinstance(contact, dict):
                     if not info.phone and contact.get("phone"):
@@ -181,17 +174,16 @@ class EGRClient:
                         info.email = contact["email"]
                     if not info.website and contact.get("website"):
                         info.website = contact["website"]
+
+        # 7. VED (ОКЭД)
+        ved_list = profile.get("ved", [])
+        if isinstance(ved_list, list):
+            for v in reversed(ved_list):
+                if isinstance(v, dict) and v.get("ved_code"):
+                    info.ved_code = str(v["ved_code"])
+                    info.ved_name = str(v.get("ved_name", ""))
+                    break
+        
         # Flag
         info.is_empty = not any([
-            info.full_name, info.short_name, info.authority,
-            info.full_address, info.registration_date,
-        ])
-        
-        logger.info(
-            f"EGR: UNP={unp} → "
-            f"full_name='{info.full_name}', "
-            f"short_name='{info.short_name}', "
-            f"is_empty={info.is_empty}"
-        )
-        
-        return info
+            info.full_name
