@@ -5,6 +5,8 @@ Webhook handler for OnCrmCompanyUpdate event.
 import logging
 from typing import Any
 
+from app.bitrix.bitrix_client import BitrixClient
+from app.bitrix.egr_client import EGRClient
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select  # ИСПРАВЛЕНИЕ: Добавлен импорт select
@@ -89,18 +91,18 @@ async def _validate_webhook_source(db: AsyncSession, payload: dict) -> bool:
         logger.warning(f"Webhook rejected: member_id mismatch ({incoming_member_id} != {app_cfg.bitrix_member_id}).")
         return False
         
-    # ИСПРАВЛЕНИЕ: Мы удалили проверку is_admin отсюда. 
-    # Вебхук должен срабатывать для всех пользователей, которые меняют УНП.
     
     return True
 
 async def _process_company_update_task(company_id: int) -> None:
     """Background task to process company update."""
-    # Используем AsyncSessionLocal корректно для фоновой задачи
     async with AsyncSessionLocal() as db:
-        service = RequisiteService(db)
+        bitrix_client = BitrixClient(db)
+        egr_client = EGRClient()
+        service = RequisiteService(bitrix_client, egr_client)
         await service.process_company_update(company_id)
 
+        
 @router.post("/company-update")
 async def company_update_webhook(
     request: Request,

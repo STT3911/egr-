@@ -186,4 +186,15 @@ class EGRClient:
         
         # Flag
         info.is_empty = not any([
-            info.full_name
+            info.full_name, info.short_name, info.authority,
+            info.full_address, info.registration_date,
+        ])
+        
+        logger.info(
+            f"EGR: UNP={unp} → "
+            f"full_name='{info.full_name}', "
+            f"short_name='{info.short_name}', "
+            f"is_empty={info.is_empty}"
+        )
+        
+        return info

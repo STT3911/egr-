@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime
-from app.bitrix.client import BitrixAPIError # Убедись, что путь к ошибкам у тебя такой
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +16,11 @@ class RequisiteService:
             # Шаг 1-3: Получаем компанию и УНП
             company = await self.bitrix.call("crm.company.get", {"id": company_id})
             company_title = company.get("TITLE", "")
+
+            logger.info(f"[Company {company_id}] ВСЕ ПОЛЯ ОТ БИТРИКСА: {company}")
             
-            # Предполагаем, что твое поле называется UF_CRM_UNP (измени, если у тебя другое, например UF_CRM_...)
-            unp_raw = company.get("UF_CRM_UNP")  
+            # Твой правильный код поля УНП
+            unp_raw = company.get("UF_CRM_1775144152")  
             
             if not unp_raw or str(unp_raw).strip() == "":
                 logger.info(f"[Company {company_id}] No UNP provided, skipping")
@@ -50,7 +51,8 @@ class RequisiteService:
                 fields_to_write["RQ_COMPANY_NAME"] = egr_info.short_name
                 fields_to_write["RQ_COMPANY_FULL_NAME"] = egr_info.full_name
                 if egr_info.authority:
-                    fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority
+                    # ИСПРАВЛЕНИЕ: Обрезаем название налоговой до 80 символов для Битрикса
+                    fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority[:80]
                     
             # Добавляем ОКЭД
             if egr_info.ved_code:
@@ -82,7 +84,7 @@ class RequisiteService:
                     }
                 })
                 requisite = req_list[0] if req_list else None
-            except BitrixAPIError as e:
+            except Exception as e:
                 logger.error(f"[Company {company_id}] Error finding requisite: {e}")
                 return
                 
@@ -96,17 +98,23 @@ class RequisiteService:
             if is_new:
                 needs_req_update = True
             else:
-                existing_name = requisite.get("NAME", "")
-                if existing_name != fields_to_write.get("NAME"):
-                    needs_req_update = True
+                for key in ["NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED", "RQ_LEGAL_FORM", "RQ_STATE_REG_DATE"]:
+                    if key in fields_to_write and requisite.get(key) != fields_to_write[key]:
+                        needs_req_update = True
+                        break
 
             needs_address_update = False
             needs_contact_update = False 
+            needs_address_clear = False  # НОВОЕ: Флаг для очистки старого адреса
 
             # Проверяем фасад карточки
             try:
                 if egr_info.full_address and company.get("REG_ADDRESS") != egr_info.full_address:
                     needs_address_update = True
+                
+                # Проверяем, есть ли мусор в старом фактическом адресе
+                if company.get("ADDRESS") or company.get("ADDRESS_POSTAL_CODE"):
+                    needs_address_clear = True
                     
                 if hasattr(egr_info, 'phone') and egr_info.phone:
                     if not company.get("PHONE"):
@@ -122,7 +130,8 @@ class RequisiteService:
             except Exception as e:
                 logger.error(f"[Company {company_id}] Error checking current fields: {e}")
 
-            if not any([needs_title_update, needs_req_update, needs_address_update, needs_contact_update]):
+            # ИСПРАВЛЕНИЕ: Добавили needs_address_clear в проверку
+            if not any([needs_title_update, needs_req_update, needs_address_update, needs_contact_update, needs_address_clear]):
                 logger.info(f"[Company {company_id}] Битрикс и ЕГР синхронизированы. Останавливаемся (защита от цикла).")
                 return
             # ------------------------------------------------
@@ -139,6 +148,14 @@ class RequisiteService:
                     if egr_info.postal_code:
                         company_update_fields["REG_ADDRESS_POSTAL_CODE"] = str(egr_info.postal_code)
 
+                if needs_address_clear:
+                    company_update_fields["ADDRESS"] = None
+                    company_update_fields["ADDRESS_POSTAL_CODE"] = None
+                    company_update_fields["ADDRESS_CITY"] = None
+                    company_update_fields["ADDRESS_REGION"] = None
+                    company_update_fields["ADDRESS_PROVINCE"] = None
+                    company_update_fields["ADDRESS_COUNTRY"] = None
+                    
                 if needs_contact_update:
                     if hasattr(egr_info, 'phone') and egr_info.phone:
                         company_update_fields["PHONE"] = [{"VALUE": egr_info.phone, "VALUE_TYPE": "WORK"}]
@@ -173,7 +190,7 @@ class RequisiteService:
                         await self.bitrix.update_requisite(requisite_id, unp, fields_to_write)
                         logger.info(f"[Company {company_id}] Overwrote existing requisite ID={requisite_id}")
                         
-            except BitrixAPIError as e:
+            except Exception as e:
                 logger.error(f"[Company {company_id}] Error saving data: {e}")
 
             logger.info(f"[Company {company_id}] Processing completed successfully")
