@@ -13,17 +13,21 @@ class RequisiteService:
         logger.info(f"[Company {company_id}] Starting processing")
 
         try:
+            # --- НОВОЕ: Загружаем настройки из БД ---
+            cfg = await self.bitrix._load_settings()
+            
+            # Если поле в админке еще не сохранено, используем твое текущее как запасной вариант
+            unp_field_code = cfg.unp_field_code if cfg and cfg.unp_field_code else "UF_CRM_1775144152"
+            
             # Шаг 1-3: Получаем компанию и УНП
             company = await self.bitrix.call("crm.company.get", {"id": company_id})
             company_title = company.get("TITLE", "")
 
-            logger.info(f"[Company {company_id}] ВСЕ ПОЛЯ ОТ БИТРИКСА: {company}")
-            
-            # Твой правильный код поля УНП
-            unp_raw = company.get("UF_CRM_1775144152")  
+            # Читаем УНП из динамически заданного поля!
+            unp_raw = company.get(unp_field_code)  
             
             if not unp_raw or str(unp_raw).strip() == "":
-                logger.info(f"[Company {company_id}] No UNP provided, skipping")
+                logger.info(f"[Company {company_id}] No UNP provided in field {unp_field_code}, skipping")
                 return
                 
             unp = str(unp_raw).strip()
@@ -40,18 +44,29 @@ class RequisiteService:
             fields_to_write = {}
             
             if is_ip:
-                name = egr_info.short_name or egr_info.full_name
-                fields_to_write["NAME"] = name
-                fields_to_write["RQ_COMPANY_NAME"] = name
-                fields_to_write["RQ_COMPANY_FULL_NAME"] = egr_info.full_name
-                fields_to_write["RQ_LEGAL_FORM"] = f"Свидетельство о регистрации № {unp}"
+                base_name = egr_info.short_name or egr_info.full_name
+                
+                # --- НОВОЕ: Динамические маски для ИП из базы данных ---
+                mask_full = cfg.ip_mask_full if cfg and cfg.ip_mask_full else "Индивидуальный предприниматель {company_name}"
+                mask_short = cfg.ip_mask_short if cfg and cfg.ip_mask_short else "ИП {company_name}"
+                mask_basis = cfg.ip_mask_basis if cfg and cfg.ip_mask_basis else "Свидетельство о регистрации № {company_unp}"
+                
+                full_name_masked = mask_full.replace("{company_name}", egr_info.full_name)
+                short_name_masked = mask_short.replace("{company_name}", base_name)
+                basis_masked = mask_basis.replace("{company_unp}", unp).replace("{company_name}", base_name)
+                
+                fields_to_write["NAME"] = short_name_masked
+                fields_to_write["RQ_COMPANY_NAME"] = short_name_masked
+                fields_to_write["RQ_COMPANY_FULL_NAME"] = full_name_masked
+                fields_to_write["RQ_LEGAL_FORM"] = basis_masked
+                # --------------------------------------------------------
             else:
                 name = egr_info.short_name or egr_info.full_name
                 fields_to_write["NAME"] = name
                 fields_to_write["RQ_COMPANY_NAME"] = egr_info.short_name
                 fields_to_write["RQ_COMPANY_FULL_NAME"] = egr_info.full_name
                 if egr_info.authority:
-                    # ИСПРАВЛЕНИЕ: Обрезаем название налоговой до 80 символов для Битрикса
+                    # Обрезаем название налоговой до 80 символов для Битрикса
                     fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority[:80]
                     
             # Добавляем ОКЭД
@@ -105,7 +120,7 @@ class RequisiteService:
 
             needs_address_update = False
             needs_contact_update = False 
-            needs_address_clear = False  # НОВОЕ: Флаг для очистки старого адреса
+            needs_address_clear = False  
 
             # Проверяем фасад карточки
             try:
@@ -130,7 +145,6 @@ class RequisiteService:
             except Exception as e:
                 logger.error(f"[Company {company_id}] Error checking current fields: {e}")
 
-            # ИСПРАВЛЕНИЕ: Добавили needs_address_clear в проверку
             if not any([needs_title_update, needs_req_update, needs_address_update, needs_contact_update, needs_address_clear]):
                 logger.info(f"[Company {company_id}] Битрикс и ЕГР синхронизированы. Останавливаемся (защита от цикла).")
                 return
@@ -148,6 +162,7 @@ class RequisiteService:
                     if egr_info.postal_code:
                         company_update_fields["REG_ADDRESS_POSTAL_CODE"] = str(egr_info.postal_code)
 
+                # Очищаем поля фактического адреса
                 if needs_address_clear:
                     company_update_fields["ADDRESS"] = None
                     company_update_fields["ADDRESS_POSTAL_CODE"] = None
@@ -174,8 +189,10 @@ class RequisiteService:
                 # 2. Бухгалтерия (Реквизиты)
                 if needs_req_update:
                     if is_new:
-                        PRESET_ID_IP = 5     # Твой ID шаблона ИП
-                        PRESET_ID_LEGAL = 1  # Твой ID шаблона ООО
+                        # --- НОВОЕ: Динамический пресет из БД ---
+                        PRESET_ID_LEGAL = cfg.requisite_preset_id if cfg and cfg.requisite_preset_id else 1
+                        PRESET_ID_IP = 5 # Пока хардкод для ИП, так как в БД только 1 поле для пресета
+                        
                         correct_preset_id = PRESET_ID_IP if is_ip else PRESET_ID_LEGAL
 
                         requisite_id = await self.bitrix.create_requisite(
