@@ -21,10 +21,17 @@ WORKDIR /app
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
+    ca-certificates \
     libpq-dev \
     postgresql-client \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# egr.gov.by отдаёт только leaf-сертификат; intermediate (GlobalSign GCC R6 AlphaSSL CA 2023)
+# не приходит в цепочке — без него TLS валится (unknown CA). URL из AIA сертификата.
+RUN curl -fsSL http://secure.globalsign.com/cacert/gsgccr6alphasslca2023.crt \
+    -o /usr/local/share/ca-certificates/globalsign-gcc-r6-alphassl-ca-2023.crt \
+    && update-ca-certificates
 
 # Create non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser -m -d /home/appuser appuser
@@ -48,6 +55,9 @@ RUN chown -R appuser:appuser /app /home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH
 ENV PYTHONPATH=/app:$PYTHONPATH
 ENV PYTHONUNBUFFERED=1
+# Системный bundle после update-ca-certificates (в т.ч. intermediate для egr.gov.by)
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 # Switch to non-root user
 USER appuser

@@ -12,6 +12,7 @@ from app.database.models import (
     CompanyContactHistory,
     SyncHistory,
     RawCompanyData,
+    CompanyPlaceLocation,
 )
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
@@ -263,6 +264,11 @@ class CompanyCRUD:
                     base_info.get("VNAIMBY") or common_info.get("fullNameBel")
                 )
 
+        place_location_address = None
+        pl = self.db.query(CompanyPlaceLocation).filter(CompanyPlaceLocation.unp == unp).first()
+        if pl and pl.address:
+            place_location_address = pl.address
+
         return {
             "unp": company.unp,
             "current_status_code": company.current_status_code,
@@ -270,6 +276,7 @@ class CompanyCRUD:
             "registration_date": company.registration_date.isoformat() if company.registration_date else None,
             "liquidation_date": company.liquidation_date.isoformat() if company.liquidation_date else None,
             **current_name_fields,
+            "place_location_address": place_location_address,
             "names": [
                 {
                     "full_name_ru": n.full_name_ru,

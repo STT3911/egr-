@@ -14,12 +14,36 @@ from app.services.aggregator import AggregatorService
 from app.services.mapper_service import CompanyMapper
 from app.crud.company import CompanyCRUD
 from app.services.egr_client import EGRClient
+from app.services.egr_client import MobileEGRClient
 from app.services.grp_client import GRPClient
-from app.database.models import SystemState, RawCompanyData, GrpRawData, GrpTaxpayerData, Company
+from app.database.models import SystemState, RawCompanyData, GrpRawData, GrpTaxpayerData, Company, CompanyPlaceLocation
 from app.crud.grp import GrpCRUD
 from app.core.database import SessionLocal
 
 logger = get_logger("tasks")
+
+
+def _extract_place_location_address(payload) -> str | None:
+    """
+    Попытка извлечь “человекочитаемый” адрес из ответа egrmobile placeLocation.
+    Формат ответа может меняться, поэтому используем эвристику по ключам.
+    """
+    if not payload or not isinstance(payload, dict):
+        return None
+    # Частые варианты ключей (на всякий случай)
+    for k in ("address", "fullAddress", "placeAddress", "locationAddress", "addressRus", "addressBel"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    # Иногда адрес может лежать в под-объекте
+    for parent in ("data", "result", "placeLocation", "place_location"):
+        obj = payload.get(parent)
+        if isinstance(obj, dict):
+            for k in ("address", "fullAddress", "placeAddress", "locationAddress", "addressRus", "addressBel"):
+                v = obj.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+    return None
 
 
 def _needs_enrichment(raw_data: dict) -> bool:
@@ -982,6 +1006,84 @@ def update_reference_tables():
     except Exception as e:
         logger.exception("❌ Ошибка при обновлении справочников: %s", e)
         return False
+
+
+@celery_app.task(bind=True, max_retries=3, time_limit=600, soft_time_limit=540)
+def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
+    """
+    Фоновая синхронизация адреса placeLocation (Mobile API) для компаний.
+    Берём UNP, по которым нет записи в egr_company_place_locations, тянем
+    https://egr.gov.by/egrmobile/api/v1/extracts/placeLocation?pan={unp}
+    и сохраняем raw_json + address.
+    """
+    async def _run():
+        db = SessionLocal()
+        mobile = MobileEGRClient(settings.EGR_MOBILE_API_URL)
+        try:
+            rows = db.execute(text("""
+                SELECT c.unp
+                FROM egr_companies c
+                LEFT JOIN egr_company_place_locations pl ON pl.unp = c.unp
+                WHERE pl.unp IS NULL
+                ORDER BY c.unp
+                LIMIT :limit
+            """), {"limit": batch_size}).fetchall()
+            unps = [int(r[0]) for r in rows if r and r[0] is not None]
+            if not unps:
+                logger.info("egr_sync_place_locations: nothing to fetch")
+                return 0
+
+            sem = asyncio.Semaphore(max(1, int(parallel)))
+            now = datetime.now()
+
+            async def _fetch_one(unp: int):
+                async with sem:
+                    payload = await mobile.get_place_location(str(unp))
+                    addr = _extract_place_location_address(payload)
+                    return unp, payload, addr
+
+            results = await asyncio.gather(*[_fetch_one(u) for u in unps], return_exceptions=True)
+
+            saved = 0
+            for res in results:
+                if isinstance(res, Exception):
+                    continue
+                unp, payload, addr = res
+                # Если API временно падает и вернул None — просто пропускаем (попробуем позже)
+                if payload is None:
+                    continue
+                # Upsert
+                db.execute(text("""
+                    INSERT INTO egr_company_place_locations (unp, raw_json, address, fetched_at, created_at, updated_at)
+                    VALUES (:unp, :raw_json::jsonb, :address, :fetched_at, now(), now())
+                    ON CONFLICT (unp) DO UPDATE SET
+                        raw_json = EXCLUDED.raw_json,
+                        address = EXCLUDED.address,
+                        fetched_at = EXCLUDED.fetched_at,
+                        updated_at = now()
+                """), {
+                    "unp": unp,
+                    "raw_json": json.dumps(payload, ensure_ascii=False),
+                    "address": addr,
+                    "fetched_at": now,
+                })
+                saved += 1
+
+            db.commit()
+            logger.info("egr_sync_place_locations: saved %s/%s", saved, len(unps))
+            return saved
+        finally:
+            try:
+                await mobile.close()
+            except Exception:
+                pass
+            db.close()
+
+    try:
+        return asyncio.run(_run())
+    except Exception as e:
+        logger.exception("egr_sync_place_locations failed: %s", e)
+        raise self.retry(exc=e, countdown=60)
 
 
 # Максимальный размер файла (байт), для которого при ошибке стриминга пробуем загрузить целиком

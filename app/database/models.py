@@ -157,6 +157,22 @@ class Company(Base):
     events = relationship("CompanyEvent", back_populates="company", cascade="all, delete-orphan")
 
 
+class CompanyPlaceLocation(Base):
+    """
+    placeLocation из Mobile API: https://egr.gov.by/egrmobile/api/v1/extracts/placeLocation?pan={unp}
+    Храним отдельно от egr_raw_company_data, чтобы не перетирать большой JSON и обновлять независимо.
+    """
+    __tablename__ = "egr_company_place_locations"
+
+    unp = Column(BigInteger, primary_key=True, index=True)
+    raw_json = Column(JSONB, nullable=True)
+    address = Column(Text, nullable=True)  # “человекочитаемый” адрес (если удаётся извлечь)
+
+    fetched_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class CompanyNameHistory(Base):
     """Company name history"""
     __tablename__ = "egr_company_names_history"

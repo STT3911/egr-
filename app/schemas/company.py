@@ -49,6 +49,7 @@ class CompanyProfileResponse(BaseModel):
     current_name_ru: Optional[str] = None
     current_short_name_ru: Optional[str] = None
     current_name_by: Optional[str] = None
+    place_location_address: Optional[str] = None
     names: List[CompanyNameSchema] = []
     addresses: List[CompanyAddressSchema] = []
     ved: List[CompanyVEDSchema] = []

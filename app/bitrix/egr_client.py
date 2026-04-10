@@ -65,7 +65,7 @@ class EGRClient:
         """Make GET request to EGR API."""
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=False) as client:
                 headers = {"Accept": "application/json"}
                 
                 api_key = getattr(settings, "API_KEY", None)

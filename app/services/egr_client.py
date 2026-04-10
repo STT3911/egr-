@@ -1,9 +1,36 @@
 """EGR API clients"""
+import os
+from pathlib import Path
+
 import httpx
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from app.core.logger import get_logger
 
 logger = get_logger("egr_client")
+
+
+def _httpx_ssl_verify() -> Union[bool, str]:
+    """
+    Цепочка доверия для HTTPS.
+
+    egr.gov.by отдаёт leaf без intermediate; в образе добавляем intermediate в
+    /usr/local/share/ca-certificates и update-ca-certificates → полный bundle в
+    /etc/ssl/certs/ca-certificates.crt.
+
+    httpx с verify=True по умолчанию опирается на certifi, где этой цепочки нет,
+    поэтому в контейнере явно используем системный bundle, если файл есть.
+    """
+    flag = os.environ.get("HTTPX_SSL_VERIFY", "").strip().lower()
+    if flag in ("0", "false", "no"):
+        return False
+    for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        p = os.environ.get(key)
+        if p and Path(p).is_file():
+            return p
+    system_ca = Path("/etc/ssl/certs/ca-certificates.crt")
+    if system_ca.is_file():
+        return str(system_ca)
+    return True
 
 
 class BaseClient:
@@ -37,7 +64,7 @@ class BaseClient:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
                 headers=headers,
-                verify=True,  # SECURITY: Enable SSL verification to prevent MITM attacks
+                verify=_httpx_ssl_verify(),
                 limits=self._limits,
                 http2=True  # Enable HTTP/2 for better performance
             )
@@ -113,12 +140,16 @@ class MobileEGRClient(BaseClient):
     
     async def get_common_info(self, identifier: str) -> Optional[Dict]:
         """Get common company information"""
-        params = {"pan": identifier} if len(identifier) == 9 else {"unn": identifier}
+        # egrmobile использует:
+        # - pan: УНП (9 цифр)
+        # - unn: альтернативный идентификатор (для ИП/прочего, когда не 9 цифр)
+        params = {"pan": identifier} if identifier.isdigit() and len(identifier) == 9 else {"unn": identifier}
         return await self._make_request("GET", "extracts/commonInfo", params=params)
 
     async def get_place_location(self, identifier: str) -> Optional[Dict]:
         """Get company location"""
-        params = {"unn": identifier} if len(identifier) == 9 else {"pan": identifier}
+        # В ссылке пользователя используется pan={company_unp}
+        params = {"pan": identifier} if identifier.isdigit() and len(identifier) == 9 else {"unn": identifier}
         return await self._make_request("GET", "extracts/placeLocation", params=params)
 
 

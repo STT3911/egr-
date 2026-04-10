@@ -48,6 +48,12 @@ _beat_schedule = {
         "schedule": crontab(hour=4, minute=0),
         "args": (),
     },
+    # placeLocation (Mobile API) — подтягиваем адрес отдельным фоном
+    "egr-sync-place-locations": {
+        "task": "app.tasks.sync_tasks.egr_sync_place_locations",
+        "schedule": timedelta(minutes=10),
+        "args": (500, 20),
+    },
     "reprocess-failed-rows": {
         "task": "app.tasks.sync_tasks.reprocess_failed_rows",
         "schedule": crontab(day_of_week=6, hour=5, minute=0),
