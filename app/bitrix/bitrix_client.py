@@ -234,7 +234,7 @@ class BitrixClient:
     async def create_unp_userfield(self) -> dict:
         """Автоматическое создание поля 'УНП' в компаниях."""
         field_data = {
-            "FIELD_NAME": "UNP",
+            "FIELD_NAME": "UF_CRM_UNP",
             "USER_TYPE_ID": "string",
             "XML_ID": "UNP",
             "EDIT_FORM_LABEL": {"ru": "УНП", "en": "UNP"},
