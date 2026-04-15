@@ -16,6 +16,7 @@ from app.tasks.sync_tasks import process_pending_raw
 from app.utils.search_normalizer import normalize_company_name
 from app.core.public_token import verify_public_token
 
+
 logger = get_logger("api.companies")
 router = APIRouter()
 
@@ -135,7 +136,7 @@ def lookup_companies(
             INNER JOIN egr_company_names_history n ON n.company_id = c.id
             WHERE 
                 CAST(c.unp AS TEXT) LIKE :unp_pattern || '%'
-                AND (n.valid_to IS NULL OR n.valid_to > NOW())
+                AND n.valid_to IS NULL
             ORDER BY 
                 c.unp,
                 -- Сначала точное совпадение
@@ -173,58 +174,22 @@ def lookup_companies(
         search_mode = "starts_with" if len(search_normalized) <= 3 else "contains"
         
         sql = text("""
-            WITH ranked_companies AS (
-                SELECT DISTINCT ON (c.unp)
-                    c.unp,
-                    n.full_name_ru,
-                    n.short_name_ru,
-                    n.full_name_by,
-                    n.search_name,
-                    -- Приоритеты для релевантной сортировки
-                    CASE 
-                        -- Точное совпадение в search_name
-                        WHEN n.search_name = :normalized_exact THEN 1
-                        -- Начинается с поискового запроса
-                        WHEN n.search_name LIKE :normalized_start THEN 2
-                        -- Содержит поисковый запрос
-                        WHEN n.search_name LIKE :normalized_contains THEN 3
-                        -- Fallback: поиск по оригинальным полям
-                        WHEN LOWER(COALESCE(n.full_name_ru, '')) LIKE :original_contains THEN 4
-                        WHEN LOWER(COALESCE(n.short_name_ru, '')) LIKE :original_contains THEN 5
-                        ELSE 6
-                    END as relevance_rank,
-                    -- Дополнительный вес для коротких названий (более точных)
-                    LENGTH(COALESCE(n.search_name, n.full_name_ru, '')) as name_length
-                FROM egr_companies c
-                INNER JOIN egr_company_names_history n ON n.company_id = c.id
-                WHERE 
-                    -- Актуальные записи
-                    (n.valid_to IS NULL OR n.valid_to > NOW())
-                    AND (
-                        -- Поиск по нормализованному полю
-                        n.search_name LIKE :normalized_contains
-                        -- ИЛИ fallback на оригинальные поля
-                        OR LOWER(COALESCE(n.full_name_ru, '')) LIKE :original_contains
-                        OR LOWER(COALESCE(n.short_name_ru, '')) LIKE :original_contains
-                        OR LOWER(COALESCE(n.full_name_by, '')) LIKE :original_contains
-                    )
-                ORDER BY 
-                    c.unp,
-                    -- Сначала самые актуальные записи
-                    (n.valid_to IS NULL) DESC,
-                    n.valid_to DESC NULLS LAST
-            )
-            SELECT 
-                unp,
-                full_name_ru,
-                short_name_ru,
-                full_name_by
-            FROM ranked_companies
-            WHERE relevance_rank < 6  -- Исключаем нерелевантные
-            ORDER BY 
-                relevance_rank ASC,
-                name_length ASC,      -- Короткие названия в первую очередь
-                unp ASC
+            SELECT
+                c.unp,
+                n.full_name_ru,
+                n.short_name_ru,
+                n.full_name_by,
+                CASE
+                    WHEN n.search_name = :normalized_exact THEN 1
+                    WHEN n.search_name LIKE :normalized_start THEN 2
+                    ELSE 3
+                END as relevance_rank,
+                LENGTH(COALESCE(n.search_name, n.full_name_ru, '')) as name_length
+            FROM egr_company_names_history n
+            JOIN egr_companies c ON c.id = n.company_id
+            WHERE n.search_name LIKE :normalized_contains
+              AND n.valid_to IS NULL
+            ORDER BY relevance_rank ASC, name_length ASC
             LIMIT :limit
         """)
         
@@ -233,7 +198,6 @@ def lookup_companies(
                 "normalized_exact": search_normalized,
                 "normalized_start": f"{search_normalized}%",
                 "normalized_contains": f"%{search_normalized}%",
-                "original_contains": f"%{query.lower()}%",
                 "limit": limit,
             }).mappings().all()
             
@@ -496,7 +460,8 @@ async def compare_apis(
     except Exception as e:
         logger.error(f"Error comparing APIs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+
 @router.get("/public/{identifier}", response_model=CompanyProfileResponse)
 async def get_company_public(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
@@ -545,6 +510,13 @@ async def get_company_public(
         # Текущие контакты (только активные)
         current_contacts = [c for c in company.contacts_history if c.valid_to is None]
 
+        # Место нахождения из egr_company_place_locations
+        from app.database.models import CompanyPlaceLocation
+        place_location = db.query(CompanyPlaceLocation).filter(
+            CompanyPlaceLocation.unp == int(identifier)
+        ).first()
+        place_location_address = place_location.address if place_location else None
+
         # Статус
         status_name = None
         if company.current_status_code:
@@ -563,6 +535,7 @@ async def get_company_public(
             "current_name_ru": current_name.full_name_ru if current_name else None,
             "current_short_name_ru": current_name.short_name_ru if current_name else None,
             "current_name_by": current_name.full_name_by if current_name else None,
+            "place_location_address": place_location_address,
             "names": [],  # история скрыта
             "addresses": [
                 {

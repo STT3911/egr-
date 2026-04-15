@@ -48,7 +48,7 @@ _beat_schedule = {
         "schedule": crontab(hour=4, minute=0),
         "args": (),
     },
-    # placeLocation (Mobile API) — подтягиваем адрес отдельным фоном
+
     "egr-sync-place-locations": {
         "task": "app.tasks.sync_tasks.egr_sync_place_locations",
         "schedule": timedelta(minutes=10),

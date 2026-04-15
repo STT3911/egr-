@@ -123,7 +123,7 @@ class RequisiteService:
             if is_new:
                 needs_req_update = True
             else:
-                for key in ["NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED", "RQ_LEGAL_FORM"]:
+                for key in ["NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED", "RQ_LEGAL_FORM", "RQ_OGRNIP"]:
                     if key in fields_to_write:
                         # Приводим к строке, чтобы None не триггерил обновление при сравнении с ""
                         old_val = str(requisite.get(key) or "").strip()

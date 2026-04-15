@@ -1,4 +1,7 @@
 """Main FastAPI application"""
+from app.bitrix.admin import router as bitrix_admin_router
+from app.bitrix.install import router as bitrix_install_router
+from app.bitrix.webhook import router as bitrix_webhook_router
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -60,10 +63,7 @@ app.include_router(grp.router, prefix="/api/v1/grp", tags=["GRP"])
 
 # Умный поиск интегрирован в companies.router (/api/v1/companies/lookup)
 
-# Bitrix24 Integration routers
-from app.bitrix.admin import router as bitrix_admin_router
-from app.bitrix.install import router as bitrix_install_router
-from app.bitrix.webhook import router as bitrix_webhook_router
+#bitrix
 
 app.include_router(bitrix_admin_router, prefix="/bitrix/admin", tags=["Bitrix24 Admin"])
 app.include_router(bitrix_install_router, prefix="/bitrix", tags=["Bitrix24 Install"])

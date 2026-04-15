@@ -146,12 +146,21 @@ class MobileEGRClient(BaseClient):
         params = {"pan": identifier} if identifier.isdigit() and len(identifier) == 9 else {"unn": identifier}
         return await self._make_request("GET", "extracts/commonInfo", params=params)
 
-    async def get_place_location(self, identifier: str) -> Optional[Dict]:
-        """Get company location"""
-        # В ссылке пользователя используется pan={company_unp}
+    async def get_place_location(self, identifier: str) -> Optional[str]:
+        """Get company location (returns plain text address)"""
         params = {"pan": identifier} if identifier.isdigit() and len(identifier) == 9 else {"unn": identifier}
-        return await self._make_request("GET", "extracts/placeLocation", params=params)
-
+        url = f"{self.base_url}/extracts/placeLocation"
+        client = await self._get_client()
+        try:
+            response = await client.request("GET", url, params=params)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            text = response.text.strip()
+            return text if text else None
+        except Exception as e:
+            logger.error("get_place_location error (%s): %s", identifier, repr(e))
+            return None
 
 class EGRClient(BaseClient):
     """Client for https://egr.gov.by/api/v2/egr (HTTPS)"""

@@ -25,24 +25,27 @@ logger = get_logger("tasks")
 
 def _extract_place_location_address(payload) -> str | None:
     """
-    Попытка извлечь “человекочитаемый” адрес из ответа egrmobile placeLocation.
-    Формат ответа может меняться, поэтому используем эвристику по ключам.
+    Извлечь адрес из ответа egrmobile placeLocation.
+    API возвращает plain text строку с адресом.
     """
-    if not payload or not isinstance(payload, dict):
+    if not payload:
         return None
-    # Частые варианты ключей (на всякий случай)
-    for k in ("address", "fullAddress", "placeAddress", "locationAddress", "addressRus", "addressBel"):
-        v = payload.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    # Иногда адрес может лежать в под-объекте
-    for parent in ("data", "result", "placeLocation", "place_location"):
-        obj = payload.get(parent)
-        if isinstance(obj, dict):
-            for k in ("address", "fullAddress", "placeAddress", "locationAddress", "addressRus", "addressBel"):
-                v = obj.get(k)
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
+    # Новый формат: plain text строка
+    if isinstance(payload, str):
+        return payload.strip() if payload.strip() else None
+    # Старый формат: dict с разными ключами
+    if isinstance(payload, dict):
+        for k in ("address", "fullAddress", "placeAddress", "locationAddress", "addressRus", "addressBel"):
+            v = payload.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        for parent in ("data", "result", "placeLocation", "place_location"):
+            obj = payload.get(parent)
+            if isinstance(obj, dict):
+                for k in ("address", "fullAddress", "placeAddress", "locationAddress", "addressRus", "addressBel"):
+                    v = obj.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
     return None
 
 
@@ -1040,7 +1043,11 @@ def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
                 async with sem:
                     payload = await mobile.get_place_location(str(unp))
                     addr = _extract_place_location_address(payload)
-                    return unp, payload, addr
+                    if isinstance(payload, str):
+                        payload_json = {"address": payload}
+                    else:
+                        payload_json = payload
+                    return unp, payload_json, addr
 
             results = await asyncio.gather(*[_fetch_one(u) for u in unps], return_exceptions=True)
 
@@ -1055,7 +1062,7 @@ def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
                 # Upsert
                 db.execute(text("""
                     INSERT INTO egr_company_place_locations (unp, raw_json, address, fetched_at, created_at, updated_at)
-                    VALUES (:unp, :raw_json::jsonb, :address, :fetched_at, now(), now())
+                    VALUES (:unp, cast(:raw_json as jsonb), :address, :fetched_at, now(), now())
                     ON CONFLICT (unp) DO UPDATE SET
                         raw_json = EXCLUDED.raw_json,
                         address = EXCLUDED.address,

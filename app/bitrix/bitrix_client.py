@@ -155,7 +155,8 @@ class BitrixClient:
                         "ENTITY_ID": company_id,
                         "RQ_INN": unp,
                     },
-                    "select": ["ID", "ENTITY_ID", "RQ_NAME", "RQ_SHORT_NAME", "RQ_LEGAL_FORM", "RQ_REASON"],
+                    # ИСПРАВЛЕНО: Правильные названия полей Битрикса
+                    "select": ["ID", "NAME", "RQ_COMPANY_NAME", "RQ_INN"], 
                 },
             )
             requisites = result or []
