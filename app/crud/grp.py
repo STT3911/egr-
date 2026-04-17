@@ -48,13 +48,29 @@ class GrpCRUD:
         if not record:
             record = GrpRawData(unp=unp)
             self.db.add(record)
-        
-        record.raw_json = raw_json or {}
-        record.http_status = http_status
-        record.last_error = error
-        record.updated_at = datetime.now()
-        record.parsed = False  # Сбросить флаг при обновлении сырых данных
-        record.parsed_at = None
+
+        has_payload = isinstance(raw_json, dict) and bool(raw_json)
+        updated_at = datetime.now()
+
+        if has_payload and not error:
+            record.raw_json = raw_json
+            record.http_status = http_status
+            record.last_error = None
+            record.updated_at = updated_at
+            # Only successful fetches invalidate the parsed snapshot.
+            record.parsed = False
+            record.parsed_at = None
+        else:
+            # Do not destroy the last good snapshot on transient fetch failures.
+            if record.raw_json is None:
+                record.raw_json = raw_json or {}
+            record.http_status = http_status
+            record.last_error = error
+            record.updated_at = updated_at
+            if record.parsed is None:
+                record.parsed = False
+            if record.parsed_at is None and not record.parsed:
+                record.parsed_at = None
         
         self.db.flush()
         return record
@@ -65,14 +81,15 @@ class GrpCRUD:
     
     def get_unparsed_raw_data(self, limit: int = 100) -> List[GrpRawData]:
         """Получить неспарсенные сырые данные."""
-        return (
+        rows = (
             self.db.query(GrpRawData)
             .filter(GrpRawData.parsed == False)
             .filter(GrpRawData.raw_json != None)
             .order_by(GrpRawData.fetched_at.asc())
-            .limit(limit)
+            .limit(max(limit * 5, limit))
             .all()
         )
+        return [row for row in rows if row.raw_json][:limit]
 
     def upsert_from_api(
         self,
@@ -143,8 +160,9 @@ class GrpCRUD:
         
         for raw_record in unparsed:
             try:
-                self.parse_from_raw(raw_record.unp)
-                success += 1
+                parsed_record = self.parse_from_raw(raw_record.unp)
+                if parsed_record is not None:
+                    success += 1
             except Exception as e:
                 errors += 1
                 # Можно логировать ошибку
@@ -152,6 +170,31 @@ class GrpCRUD:
         
         self.db.commit()
         return success, errors
+
+    def reconcile_preserved_rows(self, limit: int = 1000) -> int:
+        """Mark error-only raw rows as handled if parsed data already exists."""
+        rows = (
+            self.db.query(GrpRawData)
+            .join(GrpTaxpayerData, GrpTaxpayerData.unp == GrpRawData.unp)
+            .filter(GrpRawData.parsed == False)
+            .order_by(GrpRawData.updated_at.asc())
+            .limit(limit)
+            .all()
+        )
+
+        reconciled = 0
+        now = datetime.now()
+        for row in rows:
+            if row.raw_json:
+                continue
+            row.parsed = True
+            row.parsed_at = now
+            reconciled += 1
+
+        if reconciled:
+            self.db.commit()
+
+        return reconciled
     
     def get_by_unp(self, unp: int) -> Optional[GrpTaxpayerData]:
         """Получить распарсенные данные по УНП."""

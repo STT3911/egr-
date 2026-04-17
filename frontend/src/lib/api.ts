@@ -106,6 +106,22 @@ export type GrpTaxpayerData = {
   raw?: Record<string, unknown>;
 };
 
+export type CompanyTaxDebtItem = {
+  debtor_unp: number;
+  imns_code: string;
+  imns_name?: string;
+  debt_date: string;
+  repayment_date: string;
+  slice_date: string;
+};
+
+export type CompanyTaxDebtResponse = {
+  unp: number;
+  count: number;
+  latest_slice_date?: string;
+  items: CompanyTaxDebtItem[];
+};
+
 export type CompanyLookupResponse = {
   query: string;
   count: number;
@@ -137,6 +153,13 @@ export const getGrpTaxpayerData = async (unp: string, forceRefresh = false) => {
   const qs = forceRefresh ? "?force_refresh=true" : "";
   return request<GrpTaxpayerData>(
     `/api/v1/grp/${encodeURIComponent(unp)}${qs}`
+  );
+};
+
+export const getCompanyTaxDebt = async (unp: string, limit = 100) => {
+  const qs = toQuery({ limit });
+  return request<CompanyTaxDebtResponse>(
+    `/api/v1/companies/${encodeURIComponent(unp)}/tax-debt?${qs}`
   );
 };
 

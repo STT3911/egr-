@@ -62,6 +62,16 @@ class Settings(BaseSettings):
 
     # GRP: включать ли задачи grp_fetch_raw / grp_process_raw в расписание Beat (по умолчанию выключено — запуск вручную)
     GRP_SCHEDULE_ENABLED: bool = False
+    GRP_FETCH_LIMIT: int = 60
+    GRP_FETCH_BATCH_SIZE: int = 10
+    GRP_FETCH_CONCURRENCY: int = 2
+    GRP_FETCH_MAX_RETRIES: int = 4
+    GRP_FETCH_SUCCESS_DELAY_SECONDS: float = 2.0
+    GRP_FETCH_RETRY_BASE_DELAY_SECONDS: float = 5.0
+    GRP_FETCH_RETRY_COOLDOWN_MINUTES: int = 30
+    GRP_FETCH_SCHEDULE_SECONDS: int = 300
+    GRP_PROCESS_LIMIT: int = 500
+    GRP_PROCESS_SCHEDULE_SECONDS: int = 60
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"

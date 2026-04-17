@@ -3,7 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Moon, Sun } from "lucide-react";
-import { getCompanyProfile, CompanyProfile, getGrpTaxpayerData, GrpTaxpayerData } from "@/lib/api";
+import {
+  getCompanyProfile,
+  CompanyProfile,
+  getGrpTaxpayerData,
+  GrpTaxpayerData,
+  getCompanyTaxDebt,
+  CompanyTaxDebtResponse,
+} from "@/lib/api";
 
 const fieldLabels: Record<string, string> = {
   current_name_ru: "Полное название",
@@ -27,6 +34,9 @@ const Company = () => {
   const [grpData, setGrpData] = useState<GrpTaxpayerData | null>(null);
   const [grpLoading, setGrpLoading] = useState(false);
   const [grpError, setGrpError] = useState<string | null>(null);
+  const [taxDebtData, setTaxDebtData] = useState<CompanyTaxDebtResponse | null>(null);
+  const [taxDebtLoading, setTaxDebtLoading] = useState(false);
+  const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
 
@@ -92,6 +102,27 @@ const Company = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unp]);
 
+  useEffect(() => {
+    const loadTaxDebt = async () => {
+      if (!unp) return;
+      setTaxDebtLoading(true);
+      setTaxDebtError(null);
+      try {
+        const data = await getCompanyTaxDebt(unp);
+        setTaxDebtData(data);
+      } catch (err) {
+        setTaxDebtError(
+          err instanceof Error ? err.message : "Ошибка загрузки данных по налоговой задолженности"
+        );
+        setTaxDebtData(null);
+      } finally {
+        setTaxDebtLoading(false);
+      }
+    };
+
+    loadTaxDebt();
+  }, [unp]);
+
   const toggleTheme = () => {
     const newTheme = !isDark;
     setIsDark(newTheme);
@@ -119,6 +150,17 @@ const Company = () => {
         minute: "2-digit",
       }).format(d) + " UTC"
     );
+  };
+
+  const formatDate = (value?: string) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(d);
   };
 
   return (
@@ -570,6 +612,80 @@ const Company = () => {
                     </div>
                   )}
 
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-destructive/20">
+            <CardHeader
+              className="rounded-t-lg"
+              style={{
+                background: "linear-gradient(90deg, hsl(var(--destructive) / 0.08) 0%, hsl(var(--primary) / 0.08) 100%)",
+              }}
+            >
+              <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                <div className="w-2 h-2 rounded-full bg-destructive animate-pulse"></div>
+                Налоговая задолженность
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 sm:p-6">
+              {taxDebtLoading && !taxDebtData && (
+                <p className="text-muted-foreground text-sm">Загрузка данных о задолженности...</p>
+              )}
+
+              {taxDebtError && (
+                <div className="glass p-3 rounded-lg border border-destructive/30 text-destructive text-sm mb-4">
+                  {taxDebtError}
+                </div>
+              )}
+
+              {!taxDebtLoading && !taxDebtError && taxDebtData && taxDebtData.count === 0 && (
+                <div className="space-y-2">
+                  <p className="text-muted-foreground text-sm">
+                    Записей о налоговой задолженности по этой компании сейчас нет.
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    Если таблица задолженности в БД ещё не заполнена, здесь тоже будет пусто.
+                  </p>
+                </div>
+              )}
+
+              {taxDebtData && taxDebtData.count > 0 && (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
+                    <div className="text-foreground font-medium">
+                      Найдено записей: {taxDebtData.count}
+                    </div>
+                    <div className="text-muted-foreground">
+                      Последний срез: {formatDate(taxDebtData.latest_slice_date)}
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-muted-foreground border-b border-border/50">
+                          <th className="py-2 pr-4 whitespace-nowrap">ИМНС</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Дата задолженности</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Дата погашения</th>
+                          <th className="py-2 whitespace-nowrap">Срез</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/50">
+                        {taxDebtData.items.map((item, idx) => (
+                          <tr key={`${item.imns_code}-${item.debt_date}-${item.slice_date}-${idx}`} className="hover:bg-destructive/5 transition-colors">
+                            <td className="py-2 pr-4 text-foreground">
+                              {item.imns_name || `Код ${item.imns_code}`}
+                            </td>
+                            <td className="py-2 pr-4 text-foreground">{item.debt_date || "—"}</td>
+                            <td className="py-2 pr-4 text-foreground">{item.repayment_date || "—"}</td>
+                            <td className="py-2 text-foreground">{formatDate(item.slice_date)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </CardContent>

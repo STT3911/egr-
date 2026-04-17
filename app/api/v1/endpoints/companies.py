@@ -2,8 +2,9 @@
 from fastapi import APIRouter, HTTPException, Query, Path, Depends
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import desc, text
 from app.schemas.company import CompanyProfileResponse, CompanyLookupResponse
+from app.schemas.nalog_debt import CompanyNalogDebtResponse, NalogDebtRecordResponse
 from app.crud.company import CompanyCRUD
 from app.services.aggregator import AggregatorService
 from app.core.config import settings
@@ -11,7 +12,7 @@ from app.services.egr_client import EGRClient, MobileEGRClient
 from app.core.logger import get_logger
 from app.core.database import get_db
 from app.core.security import verify_api_key
-from app.database.models import RawCompanyData
+from app.database.models import NalogDebtRecord, RawCompanyData
 from app.tasks.sync_tasks import process_pending_raw
 from app.utils.search_normalizer import normalize_company_name
 from app.core.public_token import verify_public_token
@@ -306,6 +307,44 @@ async def get_company_profile(
     except Exception as e:
         logger.error(f"Error getting company profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{identifier}/tax-debt", response_model=CompanyNalogDebtResponse)
+async def get_company_tax_debt(
+    identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
+    limit: int = Query(100, ge=1, le=1000, description="Сколько записей задолженности вернуть"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Return tax debt records for a company by UNP."""
+    unp = int(identifier)
+    rows = (
+        db.query(NalogDebtRecord)
+        .filter(NalogDebtRecord.debtor_unp == unp)
+        .order_by(desc(NalogDebtRecord.slice_date), NalogDebtRecord.debt_date, NalogDebtRecord.imns_code)
+        .limit(limit)
+        .all()
+    )
+
+    latest_slice = rows[0].slice_date.isoformat() if rows and rows[0].slice_date else None
+    items = [
+        NalogDebtRecordResponse(
+            debtor_unp=int(row.debtor_unp),
+            imns_code=row.imns_code,
+            imns_name=row.imns_name,
+            debt_date=row.debt_date,
+            repayment_date=row.repayment_date,
+            slice_date=row.slice_date.isoformat(),
+        )
+        for row in rows
+    ]
+
+    return CompanyNalogDebtResponse(
+        unp=unp,
+        count=len(items),
+        latest_slice_date=latest_slice,
+        items=items,
+    )
 
 
 @router.get("/{identifier}/raw")

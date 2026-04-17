@@ -65,13 +65,13 @@ _beat_schedule = {
 if settings.GRP_SCHEDULE_ENABLED:
     _beat_schedule["grp-fetch-raw"] = {
         "task": "app.tasks.sync_tasks.grp_fetch_raw",
-        "schedule": timedelta(seconds=120),
-        "args": (300,),
+        "schedule": timedelta(seconds=settings.GRP_FETCH_SCHEDULE_SECONDS),
+        "args": (settings.GRP_FETCH_LIMIT, settings.GRP_FETCH_BATCH_SIZE),
     }
     _beat_schedule["grp-process-raw"] = {
         "task": "app.tasks.sync_tasks.grp_process_raw",
-        "schedule": timedelta(seconds=30),
-        "args": (500,),
+        "schedule": timedelta(seconds=settings.GRP_PROCESS_SCHEDULE_SECONDS),
+        "args": (settings.GRP_PROCESS_LIMIT,),
     }
 
 # Ежемесячный экспорт GRP в JSON — всегда в расписании
@@ -89,5 +89,4 @@ celery_app.conf.update(
     enable_utc=True,
     beat_schedule=_beat_schedule,
 )
-
 

@@ -258,6 +258,11 @@ docker compose restart egr_celery_worker egr_celery_beat
 
 После этого `grp_fetch_raw` и `grp_process_raw` будут выполняться по расписанию (каждые 2 мин и 30 с). Чтобы снова отключить — поставьте `GRP_SCHEDULE_ENABLED=false` и перезапустите.
 
+Отдельно от этого в расписании всегда остаётся ежемесячный JSON-экспорт GRP:
+
+- `grp_monthly_export` — 1-го числа каждого месяца в `06:00`
+- выгружает `grp_raw_data` и `grp_taxpayer_data` в `data/db_export`
+
 ### Celery: новые задачи и ручной запуск
 
 - **Добавить новую задачу:** в `app/tasks/sync_tasks.py` — функция с декоратором `@celery_app.task`; в `app/tasks/celery_app.py` в `beat_schedule` — расписание (crontab или timedelta).

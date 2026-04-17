@@ -4,9 +4,11 @@ import json
 import os
 from datetime import date, timedelta, datetime
 
+import httpx
+
 # Порог размера файла (байт): выше — парсим потоково через ijson, чтобы не грузить весь файл в память
 _LARGE_JSON_BYTES = 50 * 1024 * 1024  # 50 MB
-from sqlalchemy import or_, text
+from sqlalchemy import and_, or_, text
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.tasks.celery_app import celery_app
@@ -21,6 +23,37 @@ from app.crud.grp import GrpCRUD
 from app.core.database import SessionLocal
 
 logger = get_logger("tasks")
+
+
+def _is_retryable_grp_error(error_msg: str | None, status_code: int | None = None) -> bool:
+    msg = (error_msg or "").lower()
+    return status_code == 429 or any(
+        token in msg
+        for token in ("429", "rate limit", "timeout", "server disconnected", "temporarily unavailable")
+    )
+
+
+def _is_terminal_grp_error(error_msg: str | None, status_code: int | None = None) -> bool:
+    msg = (error_msg or "").lower()
+    return status_code in {400, 404} or " 400 " in msg or " 404 " in msg or "not found" in msg
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except Exception:
+        return None
 
 
 def _extract_place_location_address(payload) -> str | None:
@@ -510,7 +543,7 @@ def egr_process_raw(limit: int = 1000):
 
 
 @celery_app.task
-def grp_fetch_raw(limit: int = 300, batch_size: int = 30):
+def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
     """
     Воркер 1 (GRP): только ходит в GRP API и сохраняет сырые данные в grp_raw_data.
     Не парсит в grp_taxpayer_data. Работает независимо от grp_process_raw.
@@ -518,33 +551,83 @@ def grp_fetch_raw(limit: int = 300, batch_size: int = 30):
     from app.database.models import Company, GrpTaxpayerData, GrpRawData
     from app.crud.grp import GrpCRUD
     from app.services.grp_client import GRPClient
+    limit = max(1, int(limit or settings.GRP_FETCH_LIMIT))
+    batch_size = max(1, int(batch_size or settings.GRP_FETCH_BATCH_SIZE))
+    concurrency = max(1, int(settings.GRP_FETCH_CONCURRENCY))
+    max_retries = max(1, int(settings.GRP_FETCH_MAX_RETRIES))
+    success_delay = max(0.0, float(settings.GRP_FETCH_SUCCESS_DELAY_SECONDS))
+    retry_base_delay = max(0.5, float(settings.GRP_FETCH_RETRY_BASE_DELAY_SECONDS))
+    retry_before = datetime.now() - timedelta(minutes=max(1, int(settings.GRP_FETCH_RETRY_COOLDOWN_MINUTES)))
+
     db = SessionLocal()
     crud = GrpCRUD(db)
     try:
         base_query = (
             db.query(Company.unp)
             .outerjoin(GrpTaxpayerData, Company.unp == GrpTaxpayerData.unp)
+            .outerjoin(GrpRawData, Company.unp == GrpRawData.unp)
             .filter(GrpTaxpayerData.unp == None)
+            .filter(
+                or_(
+                    GrpRawData.unp == None,
+                    and_(
+                        or_(
+                            GrpRawData.last_error.ilike("%429%"),
+                            GrpRawData.last_error.ilike("%rate limit%"),
+                            GrpRawData.last_error.ilike("%timeout%"),
+                            GrpRawData.last_error.ilike("%server disconnected%"),
+                            GrpRawData.last_error.ilike("%temporarily unavailable%"),
+                        ),
+                        or_(GrpRawData.updated_at == None, GrpRawData.updated_at <= retry_before),
+                    ),
+                )
+            )
         )
         unps = [r[0] for r in base_query.order_by(Company.unp.asc()).limit(limit).all()]
         if not unps:
             logger.info("grp_fetch_raw: nothing to do")
             return 0
+
+        logger.info(
+            "grp_fetch_raw: fetching %s missing GRP rows (batch_size=%s, concurrency=%s)",
+            len(unps),
+            batch_size,
+            concurrency,
+        )
+
         async def _fetch_batch(batch_unps):
             client = GRPClient()
-            sem = asyncio.Semaphore(3)
+            sem = asyncio.Semaphore(concurrency)
             async def _one(u):
                 async with sem:
-                    for retry in range(3):
+                    for retry in range(max_retries):
                         try:
                             payload = await client.get_taxpayer(int(u))
-                            await asyncio.sleep(1.0)
-                            return u, payload, 200, None
+                            await asyncio.sleep(success_delay)
+                            if isinstance(payload, dict) and payload:
+                                return u, payload, 200, None
+                            return u, None, 404, "GRP returned empty payload"
                         except Exception as e:
-                            if retry < 2:
-                                await asyncio.sleep(1.5 * (retry + 1))
+                            status_code = e.response.status_code if isinstance(e, httpx.HTTPStatusError) and e.response else None
+                            error_msg = str(e)[:500]
+
+                            if retry < max_retries - 1 and _is_retryable_grp_error(error_msg, status_code):
+                                delay = retry_base_delay * (2 ** retry)
+                                logger.warning(
+                                    "grp_fetch_raw: retryable error for UNP %s (retry %s/%s after %.1fs): %s",
+                                    u,
+                                    retry + 1,
+                                    max_retries,
+                                    delay,
+                                    error_msg[:200],
+                                )
+                                await asyncio.sleep(delay)
                                 continue
-                            return u, None, None, str(e)[:200]
+
+                            if _is_terminal_grp_error(error_msg, status_code):
+                                return u, None, status_code or 400, error_msg
+
+                            return u, None, status_code, error_msg
                     return u, None, None, "timeout"
             try:
                 return await asyncio.gather(*(_one(u) for u in batch_unps))
@@ -553,6 +636,8 @@ def grp_fetch_raw(limit: int = 300, batch_size: int = 30):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         fetched = 0
+        success_rows = 0
+        error_rows = 0
         try:
             for i in range(0, len(unps), batch_size):
                 batch = unps[i : i + batch_size]
@@ -560,10 +645,19 @@ def grp_fetch_raw(limit: int = 300, batch_size: int = 30):
                 for u, payload, status, err in results:
                     crud.save_raw_data(unp=u, raw_json=payload if isinstance(payload, dict) else None, http_status=status, error=err)
                     fetched += 1
+                    if payload:
+                        success_rows += 1
+                    else:
+                        error_rows += 1
                 db.commit()
         finally:
             loop.close()
-        logger.info("grp_fetch_raw: saved %s raw rows", fetched)
+        logger.info(
+            "grp_fetch_raw: processed=%s success=%s errors=%s",
+            fetched,
+            success_rows,
+            error_rows,
+        )
         return fetched
     finally:
         db.close()
@@ -579,8 +673,14 @@ def grp_process_raw(limit: int = 500):
     db = SessionLocal()
     crud = GrpCRUD(db)
     try:
+        reconciled = crud.reconcile_preserved_rows(limit=max(limit * 5, limit))
         success, errors = crud.parse_batch(limit=limit)
-        logger.info("grp_process_raw: parsed %s, errors %s", success, errors)
+        logger.info(
+            "grp_process_raw: parsed %s, errors %s, reconciled %s",
+            success,
+            errors,
+            reconciled,
+        )
         return success
     finally:
         db.close()
@@ -828,6 +928,216 @@ def export_grp_taxpayers_to_json(batch_size: int = 50000):
         raise
     finally:
         db.close()
+
+
+@celery_app.task
+def grp_monthly_export(batch_size: int = 50000):
+    """
+    Ежемесячный экспорт GRP-данных в JSON.
+
+    Это production-обёртка над двумя существующими экспортами:
+    - grp_raw_data -> JSON
+    - grp_taxpayer_data -> JSON
+
+    Нужна для планового бэкапа GRP-среза по расписанию Celery Beat.
+    """
+    logger.info("grp_monthly_export: started (batch_size=%s)", batch_size)
+
+    try:
+        raw_result = export_grp_raw_to_json.run(batch_size=batch_size)
+        taxpayers_result = export_grp_taxpayers_to_json.run(batch_size=batch_size)
+
+        summary = {
+            "status": "ok",
+            "batch_size": batch_size,
+            "grp_raw": raw_result,
+            "grp_taxpayer": taxpayers_result,
+        }
+
+        logger.info(
+            "grp_monthly_export: completed raw=%s taxpayer=%s dir=%s",
+            raw_result.get("records") if isinstance(raw_result, dict) else raw_result,
+            taxpayers_result.get("records") if isinstance(taxpayers_result, dict) else taxpayers_result,
+            raw_result.get("dir") if isinstance(raw_result, dict) else None,
+        )
+        return summary
+    except Exception as e:
+        logger.exception("grp_monthly_export failed: %s", e)
+        raise
+
+
+@celery_app.task
+def restore_grp_raw_from_export_json(input_dir: str | None = None):
+    """
+    Restore grp_raw_data from backup JSON files in settings.DB_EXPORT_DIR.
+
+    Expected files:
+    - grp_raw_YYYY-MM-DD_000.json
+    - grp_raw_YYYY-MM-DD_001.json
+    """
+    input_dir = input_dir or settings.DB_EXPORT_DIR
+    if not os.path.isdir(input_dir):
+        logger.warning("GRP raw export directory not found: %s", input_dir)
+        return 0
+
+    files = sorted(
+        os.path.join(input_dir, name)
+        for name in os.listdir(input_dir)
+        if name.lower().startswith("grp_raw_") and name.lower().endswith(".json")
+    )
+    if not files:
+        logger.info("restore_grp_raw_from_export_json: no files found in %s", input_dir)
+        return 0
+
+    db = SessionLocal()
+    restored = 0
+    try:
+        for file_idx, file_path in enumerate(files, 1):
+            try:
+                with open(file_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except Exception as e:
+                logger.error("restore_grp_raw_from_export_json: failed to read %s: %s", file_path, e)
+                continue
+
+            if not isinstance(payload, list):
+                logger.warning("restore_grp_raw_from_export_json: unexpected format in %s", file_path)
+                continue
+
+            logger.info(
+                "restore_grp_raw_from_export_json: processing file %s/%s (%s rows) from %s",
+                file_idx,
+                len(files),
+                len(payload),
+                os.path.basename(file_path),
+            )
+
+            for item in payload:
+                unp = item.get("unp")
+                if not unp:
+                    continue
+
+                row = db.query(GrpRawData).filter(GrpRawData.unp == unp).first()
+                if not row:
+                    row = GrpRawData(unp=unp)
+                    db.add(row)
+
+                row.raw_json = item.get("raw_json") or {}
+                row.http_status = item.get("http_status")
+                row.last_error = item.get("last_error")
+                row.fetched_at = _parse_iso_datetime(item.get("fetched_at"))
+                row.updated_at = _parse_iso_datetime(item.get("updated_at"))
+                row.parsed = bool(item.get("parsed"))
+                row.parsed_at = _parse_iso_datetime(item.get("parsed_at"))
+                restored += 1
+
+            db.commit()
+
+        logger.info("restore_grp_raw_from_export_json: restored %s rows from %s", restored, input_dir)
+        return restored
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task
+def restore_grp_taxpayers_from_export_json(input_dir: str | None = None):
+    """
+    Restore grp_taxpayer_data from backup JSON files in settings.DB_EXPORT_DIR.
+
+    Expected files:
+    - grp_taxpayer_YYYY-MM-DD_000.json
+    - grp_taxpayer_YYYY-MM-DD_001.json
+    """
+    input_dir = input_dir or settings.DB_EXPORT_DIR
+    if not os.path.isdir(input_dir):
+        logger.warning("GRP taxpayer export directory not found: %s", input_dir)
+        return 0
+
+    files = sorted(
+        os.path.join(input_dir, name)
+        for name in os.listdir(input_dir)
+        if name.lower().startswith("grp_taxpayer_") and name.lower().endswith(".json")
+    )
+    if not files:
+        logger.info("restore_grp_taxpayers_from_export_json: no files found in %s", input_dir)
+        return 0
+
+    db = SessionLocal()
+    restored = 0
+    try:
+        for file_idx, file_path in enumerate(files, 1):
+            try:
+                with open(file_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except Exception as e:
+                logger.error("restore_grp_taxpayers_from_export_json: failed to read %s: %s", file_path, e)
+                continue
+
+            if not isinstance(payload, list):
+                logger.warning("restore_grp_taxpayers_from_export_json: unexpected format in %s", file_path)
+                continue
+
+            logger.info(
+                "restore_grp_taxpayers_from_export_json: processing file %s/%s (%s rows) from %s",
+                file_idx,
+                len(files),
+                len(payload),
+                os.path.basename(file_path),
+            )
+
+            for item in payload:
+                unp = item.get("unp")
+                if not unp:
+                    continue
+
+                row = db.query(GrpTaxpayerData).filter(GrpTaxpayerData.unp == unp).first()
+                if not row:
+                    row = GrpTaxpayerData(unp=unp)
+                    db.add(row)
+
+                row.full_name = item.get("full_name")
+                row.short_name = item.get("short_name")
+                row.registration_date = _parse_iso_date(item.get("registration_date"))
+                row.inspectorate_code = item.get("inspectorate_code")
+                row.inspectorate_name = item.get("inspectorate_name")
+                row.status_code = item.get("status_code")
+                row.status_date = _parse_iso_date(item.get("status_date"))
+                row.address = item.get("address")
+                row.fetched_at = _parse_iso_datetime(item.get("fetched_at"))
+                row.updated_at = _parse_iso_datetime(item.get("updated_at"))
+                restored += 1
+
+            db.commit()
+
+        logger.info("restore_grp_taxpayers_from_export_json: restored %s rows from %s", restored, input_dir)
+        return restored
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task
+def restore_grp_from_export_json(input_dir: str | None = None):
+    """
+    Restore both grp_raw_data and grp_taxpayer_data from backup JSON files.
+    """
+    input_dir = input_dir or settings.DB_EXPORT_DIR
+    logger.info("restore_grp_from_export_json: started for %s", input_dir)
+    raw_count = restore_grp_raw_from_export_json.run(input_dir=input_dir)
+    taxpayer_count = restore_grp_taxpayers_from_export_json.run(input_dir=input_dir)
+    summary = {
+        "status": "ok",
+        "input_dir": input_dir,
+        "grp_raw_restored": raw_count,
+        "grp_taxpayer_restored": taxpayer_count,
+    }
+    logger.info("restore_grp_from_export_json: completed %s", summary)
+    return summary
 
 
 @celery_app.task(bind=True)
