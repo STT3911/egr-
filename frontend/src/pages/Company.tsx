@@ -645,9 +645,6 @@ const Company = () => {
                   <p className="text-muted-foreground text-sm">
                     Записей о налоговой задолженности по этой компании сейчас нет.
                   </p>
-                  <p className="text-muted-foreground text-xs">
-                    Если таблица задолженности в БД ещё не заполнена, здесь тоже будет пусто.
-                  </p>
                 </div>
               )}
 
