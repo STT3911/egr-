@@ -1,6 +1,6 @@
 """CRUD operations for companies"""
 from typing import Optional, Dict, Any, List
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -213,15 +213,13 @@ class CompanyCRUD:
 
     def get_full_dossier(self, unp: int) -> Optional[Dict[str, Any]]:
         """Get full company dossier — optimized, single query"""
-        from sqlalchemy.orm import joinedload
-
         company = (
             self.db.query(Company)
             .options(
-                joinedload(Company.names_history),
-                joinedload(Company.addresses_history),
-                joinedload(Company.ved_history),
-                joinedload(Company.contacts_history),
+                selectinload(Company.names_history),
+                selectinload(Company.addresses_history),
+                selectinload(Company.ved_history),
+                selectinload(Company.contacts_history),
             )
             .filter(Company.unp == unp)
             .first()
@@ -330,8 +328,6 @@ class CompanyCRUD:
         )
         self.db.add(sync_log)
         self.db.commit()
-
-
 
 
 

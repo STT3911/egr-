@@ -126,7 +126,49 @@ def lookup_companies(
     if is_unp_query(cleaned_query):
         # 🔍 ПОИСК ПО УНП - оптимизированный запрос
         logger.info(f"UNP search: {cleaned_query}")
+        if len(cleaned_query) == 9:
+            try:
+                exact_sql = text("""
+                    SELECT
+                        c.unp,
+                        n.full_name_ru,
+                        n.short_name_ru,
+                        n.full_name_by
+                    FROM egr_companies c
+                    LEFT JOIN egr_company_names_history n
+                        ON n.company_id = c.id
+                       AND n.valid_to IS NULL
+                    WHERE c.unp = :unp_exact
+                    LIMIT 1
+                """)
+                rows = db.execute(
+                    exact_sql,
+                    {"unp_exact": int(cleaned_query)},
+                ).mappings().all()
+            except Exception as e:
+                logger.error(f"Error in exact UNP search: {str(e)}")
+                raise HTTPException(status_code=500, detail="РћС€РёР±РєР° РїРѕРёСЃРєР° РїРѕ РЈРќРџ")
         
+        if len(cleaned_query) == 9:
+            for row in rows:
+                name = row["full_name_ru"] or row["short_name_ru"] or row["full_name_by"]
+                if name:
+                    results.append({
+                        "unp": int(row["unp"]),
+                        "name": name,
+                        "full_name_ru": row["full_name_ru"],
+                        "short_name_ru": row["short_name_ru"],
+                        "full_name_by": row["full_name_by"],
+                    })
+
+            elapsed = time.time() - start_time
+            return {
+                "query": query,
+                "count": len(results),
+                "execution_time": round(elapsed, 3),
+                "results": results,
+            }
+
         sql = text("""
             SELECT DISTINCT ON (c.unp)
                 c.unp,
@@ -319,7 +361,14 @@ async def get_company_tax_debt(
     """Return tax debt records for a company by UNP."""
     unp = int(identifier)
     rows = (
-        db.query(NalogDebtRecord)
+        db.query(
+            NalogDebtRecord.debtor_unp,
+            NalogDebtRecord.imns_code,
+            NalogDebtRecord.imns_name,
+            NalogDebtRecord.debt_date,
+            NalogDebtRecord.repayment_date,
+            NalogDebtRecord.slice_date,
+        )
         .filter(NalogDebtRecord.debtor_unp == unp)
         .order_by(desc(NalogDebtRecord.slice_date), NalogDebtRecord.debt_date, NalogDebtRecord.imns_code)
         .limit(limit)

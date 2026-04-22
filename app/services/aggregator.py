@@ -21,8 +21,18 @@ class AggregatorService:
         self.mobile_client = MobileEGRClient(settings.EGR_MOBILE_API_URL) if settings.EGR_MOBILE_API_URL else None
         self.mapper = CompanyMapper()
         self.db = SessionLocal()
-        import redis as redis_lib
-        self.redis = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        self.redis = None
+        try:
+            import redis as redis_lib
+            self.redis = redis_lib.Redis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_timeout=settings.REDIS_SOCKET_TIMEOUT_SECONDS,
+                socket_connect_timeout=settings.REDIS_CONNECT_TIMEOUT_SECONDS,
+                retry_on_timeout=False,
+            )
+        except Exception as e:
+            logger.warning(f"Redis init error: {e}")
         
     async def fetch_and_save_raw(self, unp: int) -> bool:
         """Download JSON and save to DB. Priority: Legacy -> Mobile"""
@@ -141,10 +151,11 @@ class AggregatorService:
             # 1. Проверяем Redis (быстрее всего — 5-10мс)
             if use_cache:
                 try:
-                    cached_raw = self.redis.get(cache_key)
-                    if cached_raw:
-                        logger.info(f"Redis cache hit for {unp}")
-                        return json.loads(cached_raw)
+                    if self.redis:
+                        cached_raw = self.redis.get(cache_key)
+                        if cached_raw:
+                            logger.info(f"Redis cache hit for {unp}")
+                            return json.loads(cached_raw)
                 except Exception as e:
                     logger.warning(f"Redis error for {unp}: {e}")
 
@@ -155,7 +166,8 @@ class AggregatorService:
                 logger.info(f"DB cache hit for {unp}")
                 # Сохраняем в Redis на 1 час
                 try:
-                    self.redis.setex(cache_key, 3600, json.dumps(cached, default=str))
+                    if self.redis:
+                        self.redis.setex(cache_key, 3600, json.dumps(cached, default=str))
                 except Exception as e:
                     logger.warning(f"Redis save error for {unp}: {e}")
                 return cached
@@ -167,7 +179,8 @@ class AggregatorService:
                 profile = company_crud.get_full_dossier(unp)
                 if profile:
                     try:
-                        self.redis.setex(cache_key, 3600, json.dumps(profile, default=str))
+                        if self.redis:
+                            self.redis.setex(cache_key, 3600, json.dumps(profile, default=str))
                     except Exception as e:
                         logger.warning(f"Redis save error for {unp}: {e}")
                 return profile
@@ -177,4 +190,3 @@ class AggregatorService:
     def close(self):
         """Close database connection"""
         self.db.close()
-

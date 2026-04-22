@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379"
     REDIS_HOST: str = "redis"
     REDIS_PORT: int = 6379
+    REDIS_SOCKET_TIMEOUT_SECONDS: float = 0.5
+    REDIS_CONNECT_TIMEOUT_SECONDS: float = 0.5
 
     # Celery
     CELERY_BROKER_URL: str = "redis://redis:6379/4"

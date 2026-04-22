@@ -178,7 +178,7 @@ class CompanyNameHistory(Base):
     __tablename__ = "egr_company_names_history"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False, index=True)
     full_name_ru = Column(String)
     short_name_ru = Column(String)
     full_name_by = Column(String)
@@ -194,7 +194,7 @@ class CompanyAddressHistory(Base):
     __tablename__ = "egr_company_addresses_history"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False, index=True)
     full_address = Column(Text)
     postal_code = Column(Integer)
     region = Column(String)
@@ -210,7 +210,7 @@ class CompanyVEDHistory(Base):
     __tablename__ = "egr_company_ved_history"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False, index=True)
     ved_code = Column(String)
     ved_name = Column(String)
     valid_from = Column(Date)
@@ -224,7 +224,7 @@ class CompanyContactHistory(Base):
     __tablename__ = "egr_company_contacts_history"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False, index=True)
     email = Column(String, nullable=True)
     website = Column(String, nullable=True)
     phone = Column(String, nullable=True)
@@ -240,7 +240,7 @@ class SyncHistory(Base):
     __tablename__ = "egr_sync_history"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False, index=True)
     sync_type = Column(String(50), nullable=False)
     sync_date = Column(DateTime, nullable=False)
     changes_detected = Column(Boolean)
@@ -547,7 +547,6 @@ class NalogDebtRecord(Base):
             name="uq_nalog_debt_unp_imns_dates_slice",
         ),
     )
-
 
 
 
