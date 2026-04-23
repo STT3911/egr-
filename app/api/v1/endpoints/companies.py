@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.security import verify_api_key
 from app.database.models import NalogDebtRecord, RawCompanyData
 from app.tasks.sync_tasks import process_pending_raw
-from app.utils.search_normalizer import normalize_company_name
+from app.utils.search_normalizer import normalize_company_name as normalize_search_name
 from app.core.public_token import verify_public_token
 
 
@@ -219,7 +219,7 @@ def lookup_companies(
 
     else:
         # 🔍 УМНЫЙ ПОИСК ПО НАЗВАНИЮ
-        search_normalized = normalize_company_name(query)
+        search_normalized = normalize_search_name(query)
         
         # Если после нормализации ничего не осталось, используем оригинальный запрос в нижнем регистре
         if not search_normalized:
