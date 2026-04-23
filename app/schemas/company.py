@@ -66,6 +66,8 @@ class CompanyLookupItem(BaseModel):
     full_name_ru: Optional[str] = None
     short_name_ru: Optional[str] = None
     full_name_by: Optional[str] = None
+    matched_name: Optional[str] = None
+    matched_historical_name: bool = False
 
 
 class CompanyLookupResponse(BaseModel):
@@ -73,7 +75,6 @@ class CompanyLookupResponse(BaseModel):
     query: str
     count: int
     results: List[CompanyLookupItem] = []
-
 
 
 

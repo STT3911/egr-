@@ -119,6 +119,27 @@ def lookup_companies(
 
     start_time = time.time()
     results = []
+    seen_unps = set()
+
+    def add_lookup_row(row, *, matched_name=None, matched_historical_name=False):
+        unp = int(row["unp"])
+        if unp in seen_unps:
+            return
+
+        name = row["full_name_ru"] or row["short_name_ru"] or row["full_name_by"]
+        if not name:
+            return
+
+        results.append({
+            "unp": unp,
+            "name": name,
+            "full_name_ru": row["full_name_ru"],
+            "short_name_ru": row["short_name_ru"],
+            "full_name_by": row["full_name_by"],
+            "matched_name": matched_name,
+            "matched_historical_name": matched_historical_name,
+        })
+        seen_unps.add(unp)
     
     # Чистим УНП от пробелов и дефисов
     cleaned_query = re.sub(r'[\s-]', '', query)
@@ -151,15 +172,7 @@ def lookup_companies(
         
         if len(cleaned_query) == 9:
             for row in rows:
-                name = row["full_name_ru"] or row["short_name_ru"] or row["full_name_by"]
-                if name:
-                    results.append({
-                        "unp": int(row["unp"]),
-                        "name": name,
-                        "full_name_ru": row["full_name_ru"],
-                        "short_name_ru": row["short_name_ru"],
-                        "full_name_by": row["full_name_by"],
-                    })
+                add_lookup_row(row)
 
             elapsed = time.time() - start_time
             return {
@@ -201,6 +214,9 @@ def lookup_companies(
             logger.error(f"Error in UNP search: {str(e)}")
             raise HTTPException(status_code=500, detail="Ошибка поиска по УНП")
         
+        for row in rows:
+            add_lookup_row(row)
+
     else:
         # 🔍 УМНЫЙ ПОИСК ПО НАЗВАНИЮ
         search_normalized = normalize_company_name(query)
@@ -214,8 +230,6 @@ def lookup_companies(
         logger.info(f"Smart name search: '{query}' -> '{search_normalized}'")
         
         # Для коротких запросов ищем только по началу слова
-        search_mode = "starts_with" if len(search_normalized) <= 3 else "contains"
-        
         sql = text("""
             SELECT
                 c.unp,
@@ -243,7 +257,55 @@ def lookup_companies(
                 "normalized_contains": f"%{search_normalized}%",
                 "limit": limit,
             }).mappings().all()
-            
+
+            for row in rows:
+                add_lookup_row(row)
+
+            remaining_limit = limit - len(results)
+            if remaining_limit > 0:
+                historical_sql = text("""
+                    SELECT
+                        c.unp,
+                        COALESCE(current_n.full_name_ru, hist_n.full_name_ru) AS full_name_ru,
+                        COALESCE(current_n.short_name_ru, hist_n.short_name_ru) AS short_name_ru,
+                        COALESCE(current_n.full_name_by, hist_n.full_name_by) AS full_name_by,
+                        COALESCE(hist_n.full_name_ru, hist_n.short_name_ru, hist_n.full_name_by) AS matched_name,
+                        CASE
+                            WHEN hist_n.search_name = :normalized_exact THEN 1
+                            WHEN hist_n.search_name LIKE :normalized_start THEN 2
+                            ELSE 3
+                        END as relevance_rank,
+                        LENGTH(COALESCE(hist_n.search_name, hist_n.full_name_ru, '')) as name_length
+                    FROM egr_company_names_history hist_n
+                    JOIN egr_companies c ON c.id = hist_n.company_id
+                    LEFT JOIN egr_company_names_history current_n
+                       ON current_n.company_id = c.id
+                       AND current_n.valid_to IS NULL
+                    WHERE hist_n.valid_to IS NOT NULL
+                      AND hist_n.search_name IS NOT NULL
+                      AND hist_n.search_name != ''
+                      AND hist_n.search_name LIKE :normalized_contains
+                    ORDER BY relevance_rank ASC, name_length ASC, hist_n.valid_to DESC NULLS LAST
+                    LIMIT :limit
+                """)
+
+                historical_rows = db.execute(
+                    historical_sql,
+                    {
+                        "normalized_exact": search_normalized,
+                        "normalized_start": f"{search_normalized}%",
+                        "normalized_contains": f"%{search_normalized}%",
+                        "limit": remaining_limit,
+                    },
+                ).mappings().all()
+
+                for row in historical_rows:
+                    add_lookup_row(
+                        row,
+                        matched_name=row["matched_name"],
+                        matched_historical_name=True,
+                    )
+             
         except Exception as e:
             logger.error(f"Error in name search: {str(e)}")
             # Fallback на простой поиск
@@ -272,15 +334,7 @@ def lookup_companies(
     
     # Формируем результаты
     for row in rows:
-        name = row["full_name_ru"] or row["short_name_ru"] or row["full_name_by"]
-        if name:  # Только если есть название
-            results.append({
-                "unp": int(row["unp"]),
-                "name": name,
-                "full_name_ru": row["full_name_ru"],
-                "short_name_ru": row["short_name_ru"],
-                "full_name_by": row["full_name_by"],
-            })
+        add_lookup_row(row)
 
     # Логируем производительность
     elapsed = time.time() - start_time
