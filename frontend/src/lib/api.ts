@@ -6,6 +6,11 @@ export const API_BASE_URL =
 export type CompanyLookupResult = {
   unp: number;
   name: string;
+  full_name_ru?: string;
+  short_name_ru?: string;
+  full_name_by?: string;
+  matched_name?: string;
+  matched_historical_name?: boolean;
   status?: string;
   address?: string;
 };

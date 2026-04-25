@@ -211,6 +211,14 @@ export const CompanySearch = ({
                     >
                       {item.full_name_ru || item.short_name_ru || item.name}
                     </div>
+                    {item.matched_historical_name && item.matched_name && (
+                      <div
+                        className="text-xs text-amber-700 truncate mb-1"
+                        title={`Историческое название: ${item.matched_name}`}
+                      >
+                        Историческое название: {item.matched_name}
+                      </div>
+                    )}
                     <div className="text-xs text-muted-foreground font-mono whitespace-nowrap">
                       УНП: {item.unp}
                     </div>
