@@ -266,39 +266,38 @@ async def get_company_profile(
     Получить профиль компании или ИП по УНП/PAN
     """
     try:
+        company_crud = CompanyCRUD(db)
+        cached = company_crud.get_full_dossier(int(identifier))
+        if not cached:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Компания с УНП {identifier} не найдена в базе ЕГР"
+            )
+
         if db_only:
-            company_crud = CompanyCRUD(db)
-            cached = company_crud.get_full_dossier(int(identifier))
-            if not cached:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Компания с идентификатором {identifier} не найдена в БД"
-                )
             return CompanyProfileResponse(**cached)
 
-        aggregator = AggregatorService()
-        
         # Check if mobile API is configured
         if use_mobile_api and not settings.EGR_MOBILE_API_URL:
             raise HTTPException(
                 status_code=400,
                 detail="Мобильный API не настроен"
             )
-        
-        # Get profile
-        profile = await aggregator.get_company_profile(
-            identifier=identifier,
-            use_cache=not force_refresh
-        )
-        
-        if not profile:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Компания с идентификатором {identifier} не найдена"
-            )
-        
-        aggregator.close()
-        return CompanyProfileResponse(**profile)
+
+        if force_refresh:
+            aggregator = AggregatorService()
+            try:
+                profile = await aggregator.get_company_profile(
+                    identifier=identifier,
+                    use_cache=False
+                )
+            finally:
+                aggregator.close()
+
+            if profile:
+                return CompanyProfileResponse(**profile)
+
+        return CompanyProfileResponse(**cached)
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

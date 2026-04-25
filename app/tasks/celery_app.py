@@ -19,12 +19,12 @@ _beat_schedule = {
     # ----- EGR: fetch (API → raw) и process (raw → таблицы) -----
     "egr-fetch-raw": {
         "task": "app.tasks.sync_tasks.egr_fetch_raw",
-        "schedule": timedelta(seconds=60),
+        "schedule": crontab(hour="0,12", minute=30),
         "args": (500,),
     },
     "egr-process-raw": {
         "task": "app.tasks.sync_tasks.egr_process_raw",
-        "schedule": timedelta(seconds=20),
+        "schedule": crontab(hour="1,13", minute=30),
         "args": (1000,),
     },
     # ----- Остальные задачи (периодические) -----
@@ -48,10 +48,15 @@ _beat_schedule = {
         "schedule": crontab(hour=4, minute=0),
         "args": (),
     },
+    "gias-sync-directory-registries": {
+        "task": "app.tasks.sync_tasks.sync_gias_directory_registries",
+        "schedule": crontab(hour=4, minute=30),
+        "args": (),
+    },
 
     "egr-sync-place-locations": {
         "task": "app.tasks.sync_tasks.egr_sync_place_locations",
-        "schedule": timedelta(minutes=10),
+        "schedule": crontab(hour="2,14", minute=30),
         "args": (500, 20),
     },
     "reprocess-failed-rows": {
@@ -81,6 +86,9 @@ _beat_schedule["grp-monthly-export"] = {
     "args": (),
 }
 
+if not settings.GIAS_SYNC_ENABLED:
+    _beat_schedule.pop("gias-sync-directory-registries", None)
+
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
@@ -89,4 +97,3 @@ celery_app.conf.update(
     enable_utc=True,
     beat_schedule=_beat_schedule,
 )
-

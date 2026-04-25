@@ -39,6 +39,31 @@ class CompanyContactSchema(BaseModel):
     fax: Optional[str] = None
 
 
+class CompanyGiasAccreditationSchema(BaseModel):
+    state: Optional[str] = None
+    summary: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    web_site: Optional[str] = None
+    city_name: Optional[str] = None
+    placements_address: Optional[str] = None
+    dt_update: Optional[str] = None
+    dt_from: Optional[str] = None
+    dt_to: Optional[str] = None
+
+
+class CompanyGiasLockedSupplierSchema(BaseModel):
+    state: Optional[str] = None
+    name: Optional[str] = None
+    location: Optional[str] = None
+    reg_number: Optional[str] = None
+    add_date: Optional[str] = None
+    del_date: Optional[str] = None
+    base_incl_text: Optional[str] = None
+    base_excl_text: Optional[str] = None
+    author_initials: Optional[str] = None
+
+
 class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
@@ -54,6 +79,8 @@ class CompanyProfileResponse(BaseModel):
     addresses: List[CompanyAddressSchema] = []
     ved: List[CompanyVEDSchema] = []
     contacts: List[CompanyContactSchema] = []
+    gias_accreditation: Optional[CompanyGiasAccreditationSchema] = None
+    gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
 
     class Config:
         from_attributes = True
@@ -73,7 +100,6 @@ class CompanyLookupResponse(BaseModel):
     query: str
     count: int
     results: List[CompanyLookupItem] = []
-
 
 
 

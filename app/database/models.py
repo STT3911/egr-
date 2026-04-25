@@ -155,6 +155,8 @@ class Company(Base):
     contacts_history = relationship("CompanyContactHistory", back_populates="company", cascade="all, delete-orphan")
     sync_history = relationship("SyncHistory", back_populates="company", cascade="all, delete-orphan")
     events = relationship("CompanyEvent", back_populates="company", cascade="all, delete-orphan")
+    gias_accreditation = relationship("GiasAccreditedCustomer", back_populates="company", uselist=False)
+    gias_locked_suppliers = relationship("LockedSupplier", back_populates="company")
 
 
 class CompanyPlaceLocation(Base):
@@ -549,6 +551,193 @@ class NalogDebtRecord(Base):
     )
 
 
+class GiasSyncRun(Base):
+    """GIAS directory synchronization runs."""
+    __tablename__ = "gias_sync_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    registry_name = Column(String(64), nullable=False, index=True)
+    status = Column(String(20), nullable=False, index=True)
+    started_at = Column(DateTime, nullable=False, server_default=func.now())
+    finished_at = Column(DateTime, nullable=True)
+    records_fetched = Column(Integer, nullable=False, default=0)
+    created_count = Column(Integer, nullable=False, default=0)
+    updated_count = Column(Integer, nullable=False, default=0)
+    unchanged_count = Column(Integer, nullable=False, default=0)
+    history_created_count = Column(Integer, nullable=False, default=0)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class GiasAccreditedCustomer(Base):
+    """Current state of GIAS accredited customers registry."""
+    __tablename__ = "gias_accredited_customers"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=True, index=True, unique=True)
+    unp = Column(String(20), nullable=False, unique=True, index=True)
+    name = Column(Text, nullable=False)
+    uid_customer = Column(String(255), nullable=True)
+    customer_id = Column(String(255), nullable=True)
+    summary = Column(Text, nullable=True)
+    state = Column(String(50), nullable=True, index=True)
+    dt_update = Column(DateTime, nullable=True)
+    dt_from = Column(DateTime, nullable=True)
+    dt_to = Column(DateTime, nullable=True)
+    is_customer = Column(Boolean, nullable=True)
+    is_organizator = Column(Boolean, nullable=True)
+    phone = Column(String(100), nullable=True)
+    email = Column(String(255), nullable=True)
+    web_site = Column(String(255), nullable=True)
+    region = Column(Integer, nullable=True)
+    city_name = Column(String(255), nullable=True)
+    placements_address = Column(Text, nullable=True)
+    placements_country = Column(String(10), nullable=True)
+    placements_post_index = Column(String(20), nullable=True)
+    placements_city = Column(String(255), nullable=True)
+    placements_address_detail = Column(Text, nullable=True)
+    okogu_name = Column(String(255), nullable=True)
+    okogu_code = Column(Integer, nullable=True)
+    raw_json = Column(JSONB, nullable=True)
+    sync_hash = Column(String(64), nullable=True)
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    company = relationship("Company", back_populates="gias_accreditation")
+    history = relationship(
+        "GiasAccreditedCustomerHistory",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
+
+class GiasAccreditedCustomerHistory(Base):
+    """Change history for GIAS accredited customers."""
+    __tablename__ = "gias_accredited_customers_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("egr_companies.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    customer_id = Column(
+        BigInteger,
+        ForeignKey("gias_accredited_customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    unp = Column(String(20), nullable=False, index=True)
+    change_type = Column(String(20), nullable=False, index=True)
+    changed_fields = Column(JSONB, nullable=True)
+    raw_json = Column(JSONB, nullable=True)
+    observed_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    customer = relationship("GiasAccreditedCustomer", back_populates="history")
+
+
+class LockedSupplierAuthor(Base):
+    """Author directory for locked suppliers."""
+    __tablename__ = "locked_supplier_authors"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    uuid = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    initials = Column(Text, nullable=False)
+    summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class LockedSupplierReason(Base):
+    """Include/exclude reasons for locked suppliers."""
+    __tablename__ = "locked_supplier_reasons"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    kind = Column(String(16), nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("kind", "text", name="locked_supplier_reasons_kind_text_uniq"),
+    )
+
+
+class LockedSupplier(Base):
+    """Current state of locked suppliers registry."""
+    __tablename__ = "locked_suppliers"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=True, index=True)
+    uuid = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    chain_uuid = Column(UUID(as_uuid=True), nullable=False, index=True)
+    author_id = Column(BigInteger, ForeignKey("locked_supplier_authors.id"), nullable=True)
+    state = Column(String(32), nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    provider_unp = Column(String(32), nullable=True, index=True)
+    location = Column(Text, nullable=True)
+    reg_number = Column(String(32), nullable=True)
+    add_date = Column(DateTime, nullable=True)
+    del_date = Column(DateTime, nullable=True)
+    base_incl_id = Column(BigInteger, ForeignKey("locked_supplier_reasons.id"), nullable=True)
+    base_excl_id = Column(BigInteger, ForeignKey("locked_supplier_reasons.id"), nullable=True)
+    raw_json = Column(JSONB, nullable=True)
+    sync_hash = Column(String(64), nullable=True)
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    company = relationship("Company", back_populates="gias_locked_suppliers")
+    author = relationship("LockedSupplierAuthor", foreign_keys=[author_id])
+    base_incl = relationship("LockedSupplierReason", foreign_keys=[base_incl_id])
+    base_excl = relationship("LockedSupplierReason", foreign_keys=[base_excl_id])
+    history = relationship(
+        "LockedSupplierHistory",
+        back_populates="supplier",
+        cascade="all, delete-orphan",
+    )
+
+
+class LockedSupplierHistory(Base):
+    """Change history for locked suppliers."""
+    __tablename__ = "locked_suppliers_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("egr_companies.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    supplier_id = Column(
+        BigInteger,
+        ForeignKey("locked_suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider_unp = Column(String(32), nullable=True, index=True)
+    supplier_name = Column(Text, nullable=False)
+    chain_uuid = Column(UUID(as_uuid=True), nullable=False, index=True)
+    change_type = Column(String(20), nullable=False, index=True)
+    changed_fields = Column(JSONB, nullable=True)
+    state = Column(String(32), nullable=False)
+    location = Column(Text, nullable=True)
+    reg_number = Column(String(32), nullable=True)
+    add_date = Column(DateTime, nullable=True)
+    del_date = Column(DateTime, nullable=True)
+    base_incl_text = Column(Text, nullable=True)
+    base_excl_text = Column(Text, nullable=True)
+    raw_json = Column(JSONB, nullable=True)
+    observed_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    supplier = relationship("LockedSupplier", back_populates="history")
 
 
 

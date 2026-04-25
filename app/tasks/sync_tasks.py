@@ -18,6 +18,7 @@ from app.crud.company import CompanyCRUD
 from app.services.egr_client import EGRClient
 from app.services.egr_client import MobileEGRClient
 from app.services.grp_client import GRPClient
+from app.services.gias_directory import GiasDirectoryService
 from app.database.models import SystemState, RawCompanyData, GrpRawData, GrpTaxpayerData, Company, CompanyPlaceLocation
 from app.crud.grp import GrpCRUD
 from app.core.database import SessionLocal
@@ -2240,6 +2241,21 @@ def fetch_grp_to_json(limit: int = 10000, only_missing: bool = True, output_dir:
         return loop.run_until_complete(_fetch())
     finally:
         loop.close()
+
+
+@celery_app.task
+def sync_gias_directory_registries():
+    """Daily synchronization of GIAS directory registries."""
+    db = SessionLocal()
+    service = GiasDirectoryService(db)
+    try:
+        logger.info("📘 Starting GIAS directory synchronization")
+        result = service.sync_all()
+        logger.info("✅ GIAS directory synchronization completed: %s", result)
+        return result
+    finally:
+        service.close()
+        db.close()
 
 
 @celery_app.task

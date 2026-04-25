@@ -13,6 +13,8 @@ from app.database.models import (
     SyncHistory,
     RawCompanyData,
     CompanyPlaceLocation,
+    GiasAccreditedCustomer,
+    LockedSupplier,
 )
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
@@ -222,6 +224,11 @@ class CompanyCRUD:
                 joinedload(Company.addresses_history),
                 joinedload(Company.ved_history),
                 joinedload(Company.contacts_history),
+                joinedload(Company.gias_accreditation),
+                joinedload(Company.gias_locked_suppliers),
+                joinedload(Company.gias_locked_suppliers).joinedload(LockedSupplier.author),
+                joinedload(Company.gias_locked_suppliers).joinedload(LockedSupplier.base_incl),
+                joinedload(Company.gias_locked_suppliers).joinedload(LockedSupplier.base_excl),
             )
             .filter(Company.unp == unp)
             .first()
@@ -269,6 +276,41 @@ class CompanyCRUD:
         if pl and pl.address:
             place_location_address = pl.address
 
+        gias_accreditation = None
+        if company.gias_accreditation:
+            acc = company.gias_accreditation
+            gias_accreditation = {
+                "state": acc.state,
+                "summary": acc.summary,
+                "phone": acc.phone,
+                "email": acc.email,
+                "web_site": acc.web_site,
+                "city_name": acc.city_name,
+                "placements_address": acc.placements_address,
+                "dt_update": acc.dt_update.isoformat() if acc.dt_update else None,
+                "dt_from": acc.dt_from.isoformat() if acc.dt_from else None,
+                "dt_to": acc.dt_to.isoformat() if acc.dt_to else None,
+            }
+
+        gias_locked_suppliers = [
+            {
+                "state": item.state,
+                "name": item.name,
+                "location": item.location,
+                "reg_number": item.reg_number,
+                "add_date": item.add_date.isoformat() if item.add_date else None,
+                "del_date": item.del_date.isoformat() if item.del_date else None,
+                "base_incl_text": item.base_incl.text if item.base_incl else None,
+                "base_excl_text": item.base_excl.text if item.base_excl else None,
+                "author_initials": item.author.initials if item.author else None,
+            }
+            for item in sorted(
+                company.gias_locked_suppliers,
+                key=lambda row: (row.add_date is not None, row.add_date),
+                reverse=True,
+            )
+        ]
+
         return {
             "unp": company.unp,
             "current_status_code": company.current_status_code,
@@ -277,6 +319,8 @@ class CompanyCRUD:
             "liquidation_date": company.liquidation_date.isoformat() if company.liquidation_date else None,
             **current_name_fields,
             "place_location_address": place_location_address,
+            "gias_accreditation": gias_accreditation,
+            "gias_locked_suppliers": gias_locked_suppliers,
             "names": [
                 {
                     "full_name_ru": n.full_name_ru,
@@ -330,8 +374,6 @@ class CompanyCRUD:
         )
         self.db.add(sync_log)
         self.db.commit()
-
-
 
 
 

@@ -14,6 +14,13 @@ from app.database.models import (
     SyncHistory,
     ApiLog,
     NalogDebtRecord,
+    GiasSyncRun,
+    GiasAccreditedCustomer,
+    GiasAccreditedCustomerHistory,
+    LockedSupplierAuthor,
+    LockedSupplierReason,
+    LockedSupplier,
+    LockedSupplierHistory,
 )
 
 __all__ = [
@@ -29,8 +36,14 @@ __all__ = [
     "SyncHistory",
     "ApiLog",
     "NalogDebtRecord",
+    "GiasSyncRun",
+    "GiasAccreditedCustomer",
+    "GiasAccreditedCustomerHistory",
+    "LockedSupplierAuthor",
+    "LockedSupplierReason",
+    "LockedSupplier",
+    "LockedSupplierHistory",
 ]
-
 
 
 

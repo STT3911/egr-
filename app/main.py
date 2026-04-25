@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from app.api.v1.endpoints import companies, references, grp
+from app.api.v1.endpoints import companies, references, grp, gias
 from app.core.config import settings
 from app.core.logger import logger
 from app.core.error_handlers import (
@@ -60,6 +60,7 @@ async def rate_limit_middleware(request: Request, call_next):
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])
 app.include_router(references.router, prefix="/api/v1/references", tags=["References"])
 app.include_router(grp.router, prefix="/api/v1/grp", tags=["GRP"])
+app.include_router(gias.router, prefix="/api/v1/gias", tags=["GIAS"])
 
 # Умный поиск интегрирован в companies.router (/api/v1/companies/lookup)
 
@@ -112,7 +113,6 @@ async def root():
         "docs": "/docs",
         "health": "/api/v1/health"
     }
-
 
 
 

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # EGR API (все запросы через HTTPS для безопасности и скорости)
     EGR_API_URL: str = "https://egr.gov.by/api/v2/egr"
     EGR_MOBILE_API_URL: str = "https://egr.gov.by/egrmobile/api/v1"
+    GIAS_DIRECTORY_API_URL: str = "https://gias.by/directory/api/v1"
+    GIAS_DIRECTORY_TIMEOUT_SECONDS: float = 30.0
+    GIAS_DIRECTORY_PAGE_SIZE: int = 200
 
     # Application
     APP_ENV: str = "production"
@@ -72,6 +75,9 @@ class Settings(BaseSettings):
     GRP_FETCH_SCHEDULE_SECONDS: int = 300
     GRP_PROCESS_LIMIT: int = 500
     GRP_PROCESS_SCHEDULE_SECONDS: int = 60
+
+    # GIAS Directory: ежедневная синхронизация реестров
+    GIAS_SYNC_ENABLED: bool = True
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"
