@@ -12,6 +12,7 @@ asyncpg==0.30.0
 
 # Кэш
 redis==5.2.0
+elasticsearch==8.15.1
 
 # HTTP клиент
 httpx[http2]==0.27.2

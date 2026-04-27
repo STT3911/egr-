@@ -127,6 +127,13 @@ class AggregatorService:
             raw_entry.processed_at = datetime.now()
             raw_entry.last_error = None
             self.db.commit()
+
+            try:
+                from app.services.search_index import index_company_by_unp
+
+                index_company_by_unp(self.db, unp)
+            except Exception as search_error:
+                logger.warning(f"Search index update skipped for {unp}: {search_error}")
             
             logger.info(f"Successfully processed {unp}")
             

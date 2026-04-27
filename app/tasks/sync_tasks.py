@@ -2390,3 +2390,27 @@ def auto_fetch_grp_and_load(limit: int = 10000, only_missing: bool = True):
 
     logger.info(f"🎉 AUTO FETCH GRP AND LOAD COMPLETE!")
     return processed
+
+
+@celery_app.task
+def reindex_elasticsearch(limit: int | None = None, recreate: bool = False):
+    """Rebuild the Elasticsearch company index from PostgreSQL."""
+    from app.services.search_index import reindex_companies
+
+    db = SessionLocal()
+    try:
+        return reindex_companies(db, limit=limit, recreate=recreate)
+    finally:
+        db.close()
+
+
+@celery_app.task
+def process_search_index_queue(limit: int | None = None):
+    """Apply pending PostgreSQL search-index outbox rows to Elasticsearch."""
+    from app.services.search_index import process_search_index_queue as process_queue
+
+    db = SessionLocal()
+    try:
+        return process_queue(db, limit=limit)
+    finally:
+        db.close()

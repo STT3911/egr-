@@ -4,6 +4,7 @@ from app.core.database import Base
 # Import all models here for Alembic to detect them
 from app.database.models import (
     SystemState,
+    SearchIndexQueue,
     RawCompanyData,
     Company,
     CompanyPlaceLocation,
@@ -26,6 +27,7 @@ from app.database.models import (
 __all__ = [
     "Base",
     "SystemState",
+    "SearchIndexQueue",
     "RawCompanyData",
     "Company",
     "CompanyPlaceLocation",
@@ -44,7 +46,6 @@ __all__ = [
     "LockedSupplier",
     "LockedSupplierHistory",
 ]
-
 
 
 

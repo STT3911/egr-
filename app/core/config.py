@@ -28,6 +28,17 @@ class Settings(BaseSettings):
     REDIS_SOCKET_TIMEOUT_SECONDS: float = 0.5
     REDIS_CONNECT_TIMEOUT_SECONDS: float = 0.5
 
+    # Elasticsearch
+    ELASTICSEARCH_ENABLED: bool = False
+    ELASTICSEARCH_URL: str = "http://elasticsearch:9200"
+    ELASTICSEARCH_INDEX: str = "egr_companies"
+    ELASTICSEARCH_REQUEST_TIMEOUT_SECONDS: float = 2.0
+    ELASTICSEARCH_REQUIRE_SYNCED: bool = True
+    ELASTICSEARCH_REINDEX_BATCH_SIZE: int = 1000
+    ELASTICSEARCH_QUEUE_BATCH_SIZE: int = 500
+    ELASTICSEARCH_QUEUE_MAX_ATTEMPTS: int = 10
+    ELASTICSEARCH_QUEUE_SCHEDULE_SECONDS: int = 30
+
     # Celery
     CELERY_BROKER_URL: str = "redis://redis:6379/4"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/5"

@@ -64,6 +64,11 @@ _beat_schedule = {
         "schedule": crontab(day_of_week=6, hour=5, minute=0),
         "args": (),
     },
+    "process-search-index-queue": {
+        "task": "app.tasks.sync_tasks.process_search_index_queue",
+        "schedule": timedelta(seconds=settings.ELASTICSEARCH_QUEUE_SCHEDULE_SECONDS),
+        "args": (settings.ELASTICSEARCH_QUEUE_BATCH_SIZE,),
+    },
 }
 
 # GRP в расписании только если включено (по умолчанию — ручной запуск)

@@ -228,6 +228,34 @@ def lookup_companies(
                 raise HTTPException(status_code=400, detail="Слишком короткий поисковый запрос")
         
         logger.info(f"Smart name search: '{query}' -> '{search_normalized}'")
+
+        try:
+            from app.services.search_index import has_pending_index_work, search_companies
+
+            if settings.ELASTICSEARCH_REQUIRE_SYNCED and has_pending_index_work(db):
+                logger.info("Elasticsearch lookup skipped: search index queue is not synced")
+                es_rows = None
+            else:
+                es_rows = search_companies(query, limit)
+        except Exception as e:
+            logger.warning(f"Elasticsearch lookup skipped: {e}")
+            es_rows = None
+
+        if es_rows:
+            for row in es_rows:
+                add_lookup_row(
+                    row,
+                    matched_name=row.get("matched_name"),
+                    matched_historical_name=row.get("matched_historical_name", False),
+                )
+
+            elapsed = time.time() - start_time
+            return {
+                "query": query,
+                "count": len(results),
+                "execution_time": round(elapsed, 3),
+                "results": results,
+            }
         
         # Для коротких запросов ищем только по началу слова
         sql = text("""
@@ -347,6 +375,43 @@ def lookup_companies(
         "execution_time": round(elapsed, 3),
         "results": results,
     }
+
+
+@router.get("/search/status")
+def company_search_status(
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Return Elasticsearch index status."""
+    from app.services.search_index import get_index_status
+
+    return get_index_status(db)
+
+
+@router.post("/search/reindex")
+def reindex_company_search(
+    limit: Optional[int] = Query(None, ge=1, description="Maximum rows to index"),
+    recreate: bool = Query(False, description="Drop and recreate the index first"),
+    async_run: bool = Query(True, description="Run in Celery instead of current request"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Rebuild the Elasticsearch company index from PostgreSQL."""
+    if async_run:
+        from app.tasks.sync_tasks import reindex_elasticsearch
+
+        task = reindex_elasticsearch.delay(limit, recreate)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "limit": limit,
+            "recreate": recreate,
+        }
+
+    from app.services.search_index import reindex_companies
+
+    result = reindex_companies(db, limit=limit, recreate=recreate)
+    return {"status": "completed", **result}
 
 
 @router.get("/{identifier}", response_model=CompanyProfileResponse)

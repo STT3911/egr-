@@ -112,6 +112,13 @@ class CompanyCRUD:
         
         # Save contacts history
         self._save_contacts_history(company, data.get("contacts", []))
+
+        try:
+            from app.services.search_index import enqueue_company_for_indexing
+
+            enqueue_company_for_indexing(self.db, unp)
+        except Exception as search_error:
+            raise RuntimeError(f"Failed to enqueue company {unp} for search indexing: {search_error}") from search_error
         
         self.db.commit()
         return company
@@ -371,6 +378,5 @@ class CompanyCRUD:
         )
         self.db.add(sync_log)
         self.db.commit()
-
 
 

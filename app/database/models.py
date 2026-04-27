@@ -16,6 +16,20 @@ class SystemState(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class SearchIndexQueue(Base):
+    """Outbox queue for keeping Elasticsearch in sync with PostgreSQL."""
+    __tablename__ = "search_index_queue"
+
+    unp = Column(BigInteger, primary_key=True)
+    operation = Column(String(20), nullable=False, default="index")
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    enqueued_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    indexed_at = Column(DateTime, nullable=True)
+
+
 class RawCompanyData(Base):
     """
     Buffer for storing raw API responses (ELT pattern).
@@ -738,5 +752,4 @@ class LockedSupplierHistory(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     supplier = relationship("LockedSupplier", back_populates="history")
-
 
