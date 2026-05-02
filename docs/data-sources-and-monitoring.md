@@ -66,7 +66,23 @@
 
 Там работа идёт не через обычный REST, а через GWT-RPC. Для этого направления данные сначала собираются в JSON, а уже потом при необходимости импортируются в базу.
 
-### 5. Локальные JSON-файлы
+### 5. GIAS Directory API
+
+Из GIAS используются реестры каталога:
+
+- `https://gias.by/directory/api/v1/accredited_customers/page`
+- `https://gias.by/directory/api/v1/locked_suppliers/page`
+
+Оба источника читаются постранично через параметры `q`, `page`, `size`.
+
+Для них в базе поддерживаются:
+
+- текущее состояние реестров;
+- журнал запусков синхронизации;
+- история изменений по записям.
+- привязка к основной таблице `egr_companies` по `УНП`.
+
+### 6. Локальные JSON-файлы
 
 Кроме внешних API, система использует и локальные JSON-файлы как промежуточный слой.
 
@@ -227,6 +243,7 @@ docker compose exec -T egr-api python scripts/check_tax_debt_excel.py data/compa
 | EGR raw-данные | справочные значения | таблицы `ref_*` |
 | GRP API | сведения о налогоплательщике | сначала `grp_raw_data`, потом `grp_taxpayer_data` |
 | portal.nalog.gov.by | задолженность | JSON, затем `nalog_debt_records` |
+| GIAS Directory API | аккредитованные лица / временно недопущенные поставщики | `gias_accredited_customers`, `locked_suppliers`, таблицы истории и `gias_sync_runs` |
 | EGR JSON | пакетная загрузка EGR | `egr_raw_company_data`, затем рабочие EGR-таблицы |
 | GRP JSON | пакетная загрузка GRP | `grp_raw_data`, затем `grp_taxpayer_data` |
 
@@ -258,6 +275,16 @@ docker compose exec -T egr-api python scripts/check_tax_debt_excel.py data/compa
   - подтягивает `placeLocation` из Mobile API.
 
 - `reprocess_failed_rows` — по субботам в `05:00`
+
+### GIAS Directory
+
+Для GIAS в Celery Beat настроена ежедневная синхронизация.
+
+- `sync_gias_directory_registries` — каждый день в `04:30`
+  - обновляет `gias_accredited_customers`;
+  - обновляет `locked_suppliers`;
+  - пишет журнал в `gias_sync_runs`;
+  - сохраняет историю изменений в `gias_accredited_customers_history` и `locked_suppliers_history`.
   - повторно пытается обработать записи, которые раньше завершились ошибкой.
 
 - `auto_fetch_historical_data` — по воскресеньям в `01:00`

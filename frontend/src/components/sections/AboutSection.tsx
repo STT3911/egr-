@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
+import { AnimatedCounter } from "@/components/AnimatedCounter";
 
 const benefits = [
   "Актуальные данные из официального реестра ЕГР",
@@ -87,7 +88,9 @@ export const AboutSection = () => {
                   whileHover={{ scale: 1.05 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">500K+</div>
+                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">
+                    <AnimatedCounter value={1.6} suffix="M+" decimals={1} />
+                  </div>
                   <div className="text-muted-foreground">Компаний в базе</div>
                 </motion.div>
                 <motion.div
@@ -95,7 +98,9 @@ export const AboutSection = () => {
                   whileHover={{ scale: 1.05 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">20+</div>
+                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">
+                    <AnimatedCounter value={20} suffix="+" />
+                  </div>
                   <div className="text-muted-foreground">Справочников</div>
                 </motion.div>
                 <motion.div
@@ -103,7 +108,9 @@ export const AboutSection = () => {
                   whileHover={{ scale: 1.05 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">99.9%</div>
+                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">
+                    <AnimatedCounter value={99.9} suffix="%" decimals={1} />
+                  </div>
                   <div className="text-muted-foreground">Uptime</div>
                 </motion.div>
                 <motion.div
@@ -111,7 +118,9 @@ export const AboutSection = () => {
                   whileHover={{ scale: 1.05 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">&lt;100ms</div>
+                  <div className="text-4xl sm:text-5xl font-bold text-gradient mb-2">
+                    &lt;<AnimatedCounter value={100} suffix="ms" />
+                  </div>
                   <div className="text-muted-foreground">Время ответа</div>
                 </motion.div>
               </div>

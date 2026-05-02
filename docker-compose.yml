@@ -31,6 +31,28 @@ services:
         timeout: 3s
         retries: 5
 
+    elasticsearch:
+      image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTICSEARCH_VERSION:-8.15.3}
+      container_name: egr_elasticsearch
+      environment:
+        discovery.type: single-node
+        xpack.security.enabled: "false"
+        ES_JAVA_OPTS: "${ELASTICSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}"
+      volumes:
+        - egr_elasticsearch_data:/usr/share/elasticsearch/data
+      ports:
+        - "127.0.0.1:9200:9200"
+      networks:
+        - egr_default
+      mem_limit: 2g
+      healthcheck:
+        test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s >/dev/null || exit 1"]
+        interval: 10s
+        timeout: 10s
+        retries: 12
+        start_period: 30s
+
+
     # One-time init: migrations + SQL scripts + ref tables. API starts only after this completes.
     egr-init:
       build:
@@ -80,10 +102,15 @@ services:
         REDIS_URL: ${REDIS_URL:-redis://redis:6379/3}
         CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/4}
         CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/5}
+        ELASTICSEARCH_ENABLED: ${ELASTICSEARCH_ENABLED:-true}
+        ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-http://elasticsearch:9200}
+        ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-egr_companies}
+        ELASTICSEARCH_REQUIRE_SYNCED: ${ELASTICSEARCH_REQUIRE_SYNCED:-true}
+        ELASTICSEARCH_QUEUE_BATCH_SIZE: ${ELASTICSEARCH_QUEUE_BATCH_SIZE:-500}
         EGR_API_URL: ${EGR_API_URL:-http://egr.gov.by/api/v2/egr}
         EGR_MOBILE_API_URL: ${EGR_MOBILE_API_URL:-https://egr.gov.by/egrmobile/api/v1}
         APP_ENV: ${APP_ENV:-production}
-        DEBUG: ${DEBUG:-false}
+        DEBUG: ${APP_DEBUG:-false}
         LOG_LEVEL: ${LOG_LEVEL:-INFO}
         API_KEY: ${API_KEY:-}
         ALLOWED_API_KEYS: ${ALLOWED_API_KEYS:-}
@@ -99,6 +126,8 @@ services:
           condition: service_healthy
         redis:
           condition: service_healthy
+        elasticsearch:
+          condition: service_healthy
         egr-init:
           condition: service_completed_successfully
       networks:
@@ -111,7 +140,7 @@ services:
         retries: 5
         start_period: 60s
       command: >
-        sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+        sh -c "if [ \"${UVICORN_RELOAD:-0}\" = \"1\" ]; then exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload; else exec uvicorn app.main:app --host 0.0.0.0 --port 8000; fi"
 
     egr-celery-worker:
       build:
@@ -130,6 +159,11 @@ services:
         REDIS_URL: ${REDIS_URL:-redis://redis:6379/3}
         CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/4}
         CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/5}
+        ELASTICSEARCH_ENABLED: ${ELASTICSEARCH_ENABLED:-true}
+        ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-http://elasticsearch:9200}
+        ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-egr_companies}
+        ELASTICSEARCH_REQUIRE_SYNCED: ${ELASTICSEARCH_REQUIRE_SYNCED:-true}
+        ELASTICSEARCH_QUEUE_BATCH_SIZE: ${ELASTICSEARCH_QUEUE_BATCH_SIZE:-500}
         EGR_API_URL: ${EGR_API_URL:-http://egr.gov.by/api/v2/egr}
         EGR_MOBILE_API_URL: ${EGR_MOBILE_API_URL:-https://egr.gov.by/egrmobile/api/v1}
       volumes:
@@ -144,8 +178,9 @@ services:
           condition: service_healthy
       networks:
         - egr_default
-      # concurrency 6: больше параллельных задач; prefetch 4 — быстрее забирает из очереди
-      command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=6 --prefetch-multiplier=4 --max-tasks-per-child=500
+      healthcheck:
+        disable: true
+      command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=500
 
     egr-celery-beat:
       build:
@@ -164,6 +199,11 @@ services:
         REDIS_URL: ${REDIS_URL:-redis://redis:6379/3}
         CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/4}
         CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/5}
+        ELASTICSEARCH_ENABLED: ${ELASTICSEARCH_ENABLED:-true}
+        ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-http://elasticsearch:9200}
+        ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-egr_companies}
+        ELASTICSEARCH_REQUIRE_SYNCED: ${ELASTICSEARCH_REQUIRE_SYNCED:-true}
+        ELASTICSEARCH_QUEUE_BATCH_SIZE: ${ELASTICSEARCH_QUEUE_BATCH_SIZE:-500}
         EGR_API_URL: ${EGR_API_URL:-http://egr.gov.by/api/v2/egr}
         EGR_MOBILE_API_URL: ${EGR_MOBILE_API_URL:-https://egr.gov.by/egrmobile/api/v1}
       volumes:
@@ -178,6 +218,8 @@ services:
           condition: service_healthy
       networks:
         - egr_default
+      healthcheck:
+        disable: true
       # Schedule file in /tmp so appuser can write (volume /app is often read-only for container user)
       command: celery -A app.tasks.celery_app beat --loglevel=info -s /tmp/celerybeat-schedule
 
@@ -198,6 +240,11 @@ services:
         REDIS_URL: ${REDIS_URL:-redis://redis:6379/3}
         CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/4}
         CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/5}
+        ELASTICSEARCH_ENABLED: ${ELASTICSEARCH_ENABLED:-true}
+        ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-http://elasticsearch:9200}
+        ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-egr_companies}
+        ELASTICSEARCH_REQUIRE_SYNCED: ${ELASTICSEARCH_REQUIRE_SYNCED:-true}
+        ELASTICSEARCH_QUEUE_BATCH_SIZE: ${ELASTICSEARCH_QUEUE_BATCH_SIZE:-500}
         EGR_API_URL: ${EGR_API_URL:-http://egr.gov.by/api/v2/egr}
         EGR_MOBILE_API_URL: ${EGR_MOBILE_API_URL:-https://egr.gov.by/egrmobile/api/v1}
         LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -293,6 +340,8 @@ services:
       restart: unless-stopped
 
     gias-sync:
+      profiles:
+        - legacy-gias
       build:
         context: .
         dockerfile: Dockerfile
@@ -317,6 +366,8 @@ services:
       command: python -m gias.gias_plans
 
     gias-full-sync:
+      profiles:
+        - legacy-gias
       build:
         context: .
         dockerfile: Dockerfile
@@ -329,6 +380,7 @@ services:
         DB_NAME: ${DB_NAME:-egr_db}
         DB_USER: ${DB_USER:-postgres}
         DB_PASSWORD: ${DB_PASSWORD:-postgres}
+        SKIP_SQL_INIT: "1"
         GIAS_SYNC_YEARS: ${GIAS_SYNC_YEARS:-2026}
         GIAS_FULL_SYNC_LOOP: ${GIAS_FULL_SYNC_LOOP:-true}
         GIAS_FULL_SYNC_INTERVAL: ${GIAS_FULL_SYNC_INTERVAL:-3600}
@@ -343,6 +395,8 @@ services:
       command: python -m gias.gias_plans_all
 
     gias-fix-companies:
+      profiles:
+        - legacy-gias
       build:
         context: .
         dockerfile: Dockerfile
@@ -368,6 +422,8 @@ services:
 
 volumes:
   egr_postgres_data:
+    driver: local
+  egr_elasticsearch_data:
     driver: local
 
 networks:

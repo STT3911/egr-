@@ -22,6 +22,7 @@ export const CompanySearch = ({
   const [suggestions, setSuggestions] = useState<CompanyLookupResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [dropdownDirection, setDropdownDirection] = useState<'down' | 'up'>('down');
   const navigate = useNavigate();
   const searchRef = useRef<HTMLDivElement>(null);
@@ -124,6 +125,7 @@ export const CompanySearch = ({
   };
 
   const handleInputFocus = () => {
+    setFocused(true);
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
@@ -134,19 +136,39 @@ export const CompanySearch = ({
   return (
     <div ref={searchRef} className="relative w-full">
       <form onSubmit={handleSearch} className={isHero ? "max-w-2xl mx-auto" : "w-full"}>
-        <div className={`relative flex items-center gap-3 ${
+        <motion.div
+          animate={{
+            scale: focused && isHero ? 1.015 : 1,
+            boxShadow: focused
+              ? "0 18px 60px -28px hsl(var(--primary) / 0.65)"
+              : "0 16px 50px -28px hsl(var(--foreground) / 0.2)",
+          }}
+          transition={{ duration: 0.25 }}
+          className={`relative flex items-center gap-3 overflow-hidden ${
           isHero 
             ? "p-2 bg-card rounded-2xl shadow-card border border-border" 
             : "p-1 bg-card rounded-lg border border-border"
         }`}>
+          <motion.div
+            className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
+            animate={{ x: focused ? ["-120%", "680%"] : "-120%" }}
+            transition={{ duration: 1.2, ease: "easeInOut" }}
+          />
           <div className="flex-1 flex items-center gap-3 pl-4">
-            <Search className={`${isHero ? 'w-5 h-5' : 'w-4 h-4'} text-muted-foreground flex-shrink-0`} />
+            <motion.span
+              animate={{ rotate: loading ? 12 : 0, scale: focused ? 1.08 : 1 }}
+              transition={{ duration: 0.2 }}
+              className="flex"
+            >
+              <Search className={`${isHero ? 'w-5 h-5' : 'w-4 h-4'} text-muted-foreground flex-shrink-0`} />
+            </motion.span>
             <Input
               type="text"
               placeholder={placeholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={handleInputFocus}
+              onBlur={() => setFocused(false)}
               className={`border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60 ${
                 isHero ? 'text-base sm:text-lg' : 'text-sm'
               }`}
@@ -159,6 +181,7 @@ export const CompanySearch = ({
             className={`gradient-primary text-primary-foreground shadow-soft hover:shadow-glow transition-all ${
               isHero ? 'px-6 sm:px-8' : 'px-4'
             }`}
+            asChild={false}
           >
             {isHero ? (
               <>
@@ -169,7 +192,7 @@ export const CompanySearch = ({
               <Search className="w-4 h-4" />
             )}
           </Button>
-        </div>
+        </motion.div>
       </form>
 
       {/* Dropdown с подсказками */}
@@ -193,9 +216,12 @@ export const CompanySearch = ({
             <div 
               className="overflow-y-auto max-h-[400px] custom-scrollbar"
             >
-              {suggestions.slice(0, MAX_SUGGESTIONS).map((item) => (
-                <button
+              {suggestions.slice(0, MAX_SUGGESTIONS).map((item, index) => (
+                <motion.button
                   key={item.unp}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.18, delay: index * 0.035 }}
                   onClick={() => handleSelectCompany(item.unp)}
                   className="w-full px-4 py-3 flex items-center gap-3 hover:bg-accent/50 transition-colors border-b border-border last:border-0 text-left group"
                 >
@@ -226,7 +252,7 @@ export const CompanySearch = ({
                   <div className="flex-shrink-0 ml-2">
                     <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
                   </div>
-                </button>
+                </motion.button>
               ))}
             </div>
             {suggestions.length > MAX_SUGGESTIONS && (

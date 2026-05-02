@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Moon, Sun } from "lucide-react";
+import { motion } from "framer-motion";
+import { ArrowLeft, Building2, CalendarDays, Database, FileText, Moon, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -24,6 +25,11 @@ const fieldLabels: Record<string, string> = {
   creation_method_id: "Способ создания",
   creation_decision_no: "Номер решения о создании",
   liquidation_decision_no: "Номер решения о ликвидации",
+};
+
+const cardReveal = {
+  hidden: { opacity: 0, y: 18 },
+  visible: { opacity: 1, y: 0 },
 };
 
 const Company = () => {
@@ -176,6 +182,7 @@ const Company = () => {
       >
         {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
       </button>
+      <div className="absolute inset-0 pointer-events-none registry-grid opacity-40" />
       {/* Background Decorative Elements */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="hidden sm:block absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
@@ -198,7 +205,12 @@ const Company = () => {
         }} />
       </div>
 
-      <div className="max-w-4xl mx-auto space-y-6 relative z-10">
+      <motion.div
+        initial={{ opacity: 0, y: 18 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45 }}
+        className="max-w-4xl mx-auto space-y-6 relative z-10"
+      >
         {/* Back to Home Button */}
         <div className="flex items-center justify-start">
           <Link to="/">
@@ -239,6 +251,65 @@ const Company = () => {
         </div>
 
         {loading && <p className="text-muted-foreground">Загрузка...</p>}
+        {profile && (
+          <motion.div
+            variants={cardReveal}
+            initial="hidden"
+            animate="visible"
+            transition={{ duration: 0.45, delay: 0.08 }}
+            className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card/80 shadow-card backdrop-blur-xl"
+          >
+            <div className="absolute inset-0 registry-grid opacity-30" />
+            <motion.div
+              className="absolute inset-y-0 -left-32 w-28 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
+              animate={{ x: ["0%", "950%"] }}
+              transition={{ duration: 4.5, ease: "easeInOut", repeat: Infinity, repeatDelay: 3 }}
+            />
+            <div className="relative p-5 sm:p-6">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                <div className="space-y-3">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                    <Building2 className="h-3.5 w-3.5" />
+                    Карточка компании
+                  </div>
+                  <div>
+                    <div className="text-sm text-muted-foreground">Текущий статус</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="inline-flex h-2.5 w-2.5 rounded-full bg-green-500 shadow-[0_0_18px_hsl(142_76%_36%/0.7)]" />
+                      <span className="text-lg font-semibold text-foreground">
+                        {profile.current_status_name || "Статус не указан"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[31rem]">
+                  {[
+                    { icon: Database, label: "УНП", value: profile.unp || unp || "—" },
+                    { icon: CalendarDays, label: "Регистрация", value: formatDate(profile.registration_date) },
+                    { icon: FileText, label: "Названий", value: profile.names?.length ?? 0 },
+                    { icon: Building2, label: "Адресов", value: profile.addresses?.length ?? 0 },
+                  ].map((item) => (
+                    <motion.div
+                      key={item.label}
+                      whileHover={{ y: -4, scale: 1.02 }}
+                      className="rounded-xl border border-border/70 bg-background/70 p-3 shadow-soft"
+                    >
+                      <item.icon className="mb-2 h-4 w-4 text-primary" />
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                        {item.label}
+                      </div>
+                      <div className="mt-1 truncate text-sm font-semibold text-foreground">
+                        {item.value}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {error && (
           <Card className="border-destructive">
             <CardContent className="py-4 text-destructive">{error}</CardContent>
@@ -246,7 +317,14 @@ const Company = () => {
         )}
 
         {profile && (
-          <>
+          <motion.div
+            variants={{
+              visible: { transition: { staggerChildren: 0.08 } },
+            }}
+            initial="hidden"
+            animate="visible"
+            className="space-y-6"
+          >
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--accent) / 0.1) 100%)'
@@ -687,9 +765,9 @@ const Company = () => {
               )}
             </CardContent>
           </Card>
-        </>
+          </motion.div>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 };

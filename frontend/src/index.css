@@ -102,10 +102,24 @@
 @layer utilities {
   .gradient-hero {
     background:
-      radial-gradient(600px 600px at 15% 25%, hsl(var(--primary) / 0.1) 0%, transparent 60%),
-      radial-gradient(700px 700px at 85% 40%, hsl(var(--accent) / 0.08) 0%, transparent 60%),
-      radial-gradient(500px 500px at 30% 80%, hsl(var(--primary) / 0.05) 0%, transparent 60%),
+      linear-gradient(115deg, hsl(var(--primary) / 0.08), transparent 28%),
+      linear-gradient(245deg, hsl(var(--accent) / 0.08), transparent 32%),
       linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--secondary)) 100%);
+  }
+
+  .registry-grid {
+    background-image:
+      linear-gradient(hsl(var(--primary) / 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--primary) / 0.08) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: linear-gradient(to bottom, transparent 0%, black 18%, black 72%, transparent 100%);
+    animation: registry-grid-drift 22s linear infinite;
+  }
+
+  .registry-vignette {
+    background:
+      linear-gradient(90deg, hsl(var(--background)) 0%, transparent 18%, transparent 82%, hsl(var(--background)) 100%),
+      linear-gradient(180deg, hsl(var(--background)) 0%, transparent 24%, transparent 78%, hsl(var(--background)) 100%);
   }
 
   .text-gradient {
@@ -152,6 +166,11 @@
 
   .animate-shimmer {
     animation: shimmer 2s linear infinite;
+  }
+
+  .motion-safe-subtle {
+    transform: translateZ(0);
+    will-change: transform, opacity;
   }
 
   /* Custom Scrollbar */
@@ -207,6 +226,15 @@
   }
 }
 
+@keyframes registry-grid-drift {
+  0% {
+    background-position: 0 0, 0 0;
+  }
+  100% {
+    background-position: 44px 44px, 44px 44px;
+  }
+}
+
 @keyframes fadeInUp {
   0% {
     opacity: 0;
@@ -235,8 +263,8 @@
 
   .gradient-hero {
     background:
-      radial-gradient(300px 300px at 15% 25%, hsl(var(--primary) / 0.08) 0%, transparent 60%),
-      radial-gradient(400px 400px at 85% 40%, hsl(var(--accent) / 0.06) 0%, transparent 60%),
+      linear-gradient(130deg, hsl(var(--primary) / 0.08), transparent 38%),
+      linear-gradient(250deg, hsl(var(--accent) / 0.06), transparent 42%),
       linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--secondary)) 100%);
   }
 
@@ -296,6 +324,15 @@
     -moz-user-select: none;
     -ms-user-select: none;
     user-select: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .registry-grid,
+  .animate-float,
+  .animate-glow,
+  .animate-shimmer {
+    animation: none !important;
   }
 }
 

@@ -1,33 +1,14 @@
 import { motion } from "framer-motion";
 import { Building2, Shield, Zap } from "lucide-react";
 import { CompanySearch } from "@/components/CompanySearch";
+import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { AnimatedHeroBackdrop } from "./AnimatedHeroBackdrop";
 
 export const HeroSection = () => {
 
   return (
     <section className="relative min-h-screen flex items-center justify-center gradient-hero overflow-hidden pt-20">
-      {/* Background Elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.08)'
-        }} />
-        <div className="absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-40" style={{
-          backgroundColor: 'hsl(var(--accent) / 0.06)',
-          animationDelay: "2s"
-        }} />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full blur-3xl animate-pulse dark:opacity-20" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.03)',
-          animationDelay: "4s"
-        }} />
-        <div className="absolute top-10 right-1/4 w-32 h-32 rounded-full blur-2xl animate-bounce dark:opacity-25" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.06)',
-          animationDelay: "1s"
-        }} />
-        <div className="absolute bottom-10 left-1/4 w-48 h-48 rounded-full blur-2xl animate-bounce dark:opacity-35" style={{
-          backgroundColor: 'hsl(var(--accent) / 0.04)',
-          animationDelay: "3s"
-        }} />
-      </div>
+      <AnimatedHeroBackdrop />
 
       <div className="container mx-auto px-4 sm:px-6 relative z-10">
         <div className="max-w-4xl mx-auto text-center">
@@ -38,7 +19,13 @@ export const HeroSection = () => {
             transition={{ duration: 0.5 }}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass shadow-soft mb-8"
           >
-            <Zap className="w-4 h-4 text-primary" />
+            <motion.span
+              animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.12, 1] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+              className="flex"
+            >
+              <Zap className="w-4 h-4 text-primary" />
+            </motion.span>
             <span className="text-sm font-medium text-foreground">Данные ЕГР в реальном времени</span>
           </motion.div>
 
@@ -47,7 +34,7 @@ export const HeroSection = () => {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-foreground mb-6 leading-tight"
+            className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-foreground mb-6 leading-tight text-balance"
           >
             Вся информация о компаниях{" "}
             <span className="text-gradient">Беларуси</span>
@@ -58,7 +45,7 @@ export const HeroSection = () => {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-lg sm:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto"
+            className="text-lg sm:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto text-pretty"
           >
             Современный сервис для поиска и проверки компаний по данным Единого государственного регистра Республики Беларусь
           </motion.p>
@@ -82,20 +69,20 @@ export const HeroSection = () => {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.4 }}
-            className="grid grid-cols-2 sm:grid-cols-3 gap-6 sm:gap-8 max-w-xl mx-auto"
+            className="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-6 max-w-xl mx-auto"
           >
-            <div className="text-center glass p-4 rounded-2xl shadow-soft hover:shadow-glow transition-all duration-300">
-              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1">500K+</div>
+            <motion.div whileHover={{ y: -4, scale: 1.02 }} className="text-center glass p-4 rounded-xl shadow-soft hover:shadow-glow transition-all duration-300">
+              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1"><AnimatedCounter value={1.6} suffix="M+" decimals={1} /></div>
               <div className="text-sm text-muted-foreground">Компаний</div>
-            </div>
-            <div className="text-center glass p-4 rounded-2xl shadow-soft hover:shadow-glow transition-all duration-300">
-              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1">24/7</div>
+            </motion.div>
+            <motion.div whileHover={{ y: -4, scale: 1.02 }} className="text-center glass p-4 rounded-xl shadow-soft hover:shadow-glow transition-all duration-300">
+              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1"><AnimatedCounter value={24} suffix="/7" /></div>
               <div className="text-sm text-muted-foreground">Доступность</div>
-            </div>
-            <div className="text-center glass p-4 rounded-2xl shadow-soft hover:shadow-glow transition-all duration-300 col-span-2 sm:col-span-1">
-              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1">99.9%</div>
+            </motion.div>
+            <motion.div whileHover={{ y: -4, scale: 1.02 }} className="text-center glass p-4 rounded-xl shadow-soft hover:shadow-glow transition-all duration-300 col-span-2 sm:col-span-1">
+              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1"><AnimatedCounter value={99.9} suffix="%" decimals={1} /></div>
               <div className="text-sm text-muted-foreground">Точность</div>
-            </div>
+            </motion.div>
           </motion.div>
         </div>
       </div>

@@ -71,19 +71,7 @@ const itemVariants = {
 export const FeaturesSection = () => {
   return (
     <section id="features" className="py-20 sm:py-32 bg-background relative overflow-hidden">
-      {/* Background Decorative Elements */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-20 left-1/4 w-64 h-64 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.05)'
-        }} />
-        <div className="absolute bottom-20 right-1/4 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
-          backgroundColor: 'hsl(var(--accent) / 0.04)',
-          animationDelay: "2s"
-        }} />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl dark:opacity-15" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.03)'
-        }} />
-      </div>
+      <div className="absolute inset-0 pointer-events-none registry-grid opacity-35" />
 
       <div className="container mx-auto px-4 sm:px-6 relative z-10">
         {/* Header */}
@@ -117,15 +105,22 @@ export const FeaturesSection = () => {
             <motion.div
               key={index}
               variants={itemVariants}
-              className="group p-6 bg-card rounded-2xl border border-border hover:border-primary/30 transition-all duration-300 hover:shadow-card"
+              whileHover={{ y: -8 }}
+              transition={{ duration: 0.25 }}
+              className="group relative overflow-hidden p-6 bg-card rounded-xl border border-border hover:border-primary/30 transition-all duration-300 hover:shadow-card"
             >
-              <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center mb-4 group-hover:shadow-glow transition-shadow">
+              <motion.div
+                className="absolute inset-y-0 -left-24 w-20 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
+                whileHover={{ x: 360 }}
+                transition={{ duration: 0.7, ease: "easeInOut" }}
+              />
+              <div className="relative w-12 h-12 rounded-xl gradient-primary flex items-center justify-center mb-4 group-hover:shadow-glow transition-shadow">
                 <feature.icon className="w-6 h-6 text-primary-foreground" />
               </div>
-              <h3 className="text-lg font-semibold text-foreground mb-2">
+              <h3 className="relative text-lg font-semibold text-foreground mb-2">
                 {feature.title}
               </h3>
-              <p className="text-muted-foreground text-sm leading-relaxed">
+              <p className="relative text-muted-foreground text-sm leading-relaxed">
                 {feature.description}
               </p>
             </motion.div>
