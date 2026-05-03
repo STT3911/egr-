@@ -12,18 +12,18 @@ const proof = [
 
 const previewRows = [
   {
-    title: "Профиль компании",
-    caption: "Адрес, статус, даты и история изменений",
+    title: "Карточка компании",
+    caption: "Статус, адрес, история названий и регистрационные данные",
     icon: Building2,
   },
   {
     title: "Поиск по ЕГР",
-    caption: "Мгновенные подсказки по УНП и названию",
+    caption: "Подсказки по УНП, текущему и историческому названию",
     icon: Search,
   },
   {
-    title: "Статус данных",
-    caption: "Синхронизация и целостность выдачи",
+    title: "Контроль выдачи",
+    caption: "Синхронизация данных и аккуратная, понятная структура ответа",
     icon: ShieldCheck,
   },
 ];
@@ -46,7 +46,7 @@ export const HeroSection = () => {
               className="eyebrow mb-6"
             >
               <Sparkles className="h-4 w-4 text-accent" />
-              Минималистичный поиск по данным ЕГР
+              Поиск компаний по данным ЕГР Беларуси
             </motion.div>
 
             <motion.h1
@@ -55,8 +55,8 @@ export const HeroSection = () => {
               transition={{ duration: 0.55, delay: 0.05 }}
               className="max-w-4xl text-4xl font-extrabold leading-[0.95] text-foreground sm:text-5xl md:text-6xl xl:text-7xl"
             >
-              Единый сервис
-              <span className="block text-gradient">для поиска компаний Беларуси</span>
+              Всё о компаниях Беларуси
+              <span className="block text-gradient">в одном сервисе</span>
             </motion.h1>
 
             <motion.p
@@ -65,8 +65,9 @@ export const HeroSection = () => {
               transition={{ duration: 0.55, delay: 0.12 }}
               className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8"
             >
-              Ищите по УНП, быстро открывайте карточку компании и переходите к
-              нужным данным без перегруженных таблиц и лишнего визуального шума.
+              Ищите организации и ИП по УНП, открывайте полную карточку компании,
+              проверяйте статусы, адреса, историю названий и связанные данные без
+              перегруженных экранов и лишних переходов.
             </motion.p>
 
             <motion.div
@@ -89,7 +90,7 @@ export const HeroSection = () => {
               className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted-foreground"
             >
               <div className="glass rounded-full px-4 py-2">Поиск по УНП, названию и истории</div>
-              <div className="glass rounded-full px-4 py-2">Актуальные карточки и справочники</div>
+              <div className="glass rounded-full px-4 py-2">Карточки компаний и справочники ЕГР</div>
             </motion.div>
 
             <motion.div
@@ -102,7 +103,7 @@ export const HeroSection = () => {
                 href="#features"
                 className="glass inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold text-foreground hover:-translate-y-0.5 hover:shadow-soft"
               >
-                Посмотреть возможности
+                Что доступно в сервисе
               </a>
             </motion.div>
 
@@ -144,7 +145,7 @@ export const HeroSection = () => {
                       Live Preview
                     </div>
                     <div className="mt-1 max-w-sm text-xl font-semibold leading-tight text-foreground sm:text-2xl">
-                      Поиск и профиль без перегруза
+                      Быстрый доступ к данным компании
                     </div>
                   </div>
                   <div className="glass rounded-full px-3 py-2 text-xs font-semibold text-foreground">
@@ -186,7 +187,7 @@ export const HeroSection = () => {
                         <AnimatedCounter value={99.9} suffix="%" decimals={1} />
                       </div>
                       <div className="mt-2 text-sm leading-6 text-muted-foreground">
-                        Быстрая навигация от поиска к полной карточке компании.
+                        Поиск, карточка компании и справочники работают как единый сценарий.
                       </div>
                     </div>
 
@@ -196,7 +197,7 @@ export const HeroSection = () => {
                       </div>
                       <div className="mt-2 text-base font-semibold text-foreground">Поиск по всей базе</div>
                       <div className="mt-1 text-sm leading-6 text-muted-foreground">
-                        Полнотекстовый индекс и аккуратная выдача без лишнего шума.
+                        Полнотекстовый индекс ускоряет выдачу по компаниям и историческим названиям.
                       </div>
                     </div>
                   </div>
