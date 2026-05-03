@@ -1,73 +1,44 @@
 import { motion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { Search, Sparkles } from "lucide-react";
 
 export const CTASection = () => {
   return (
-    <section className="py-20 sm:py-32 bg-background relative overflow-hidden">
-      {/* Background */}
-      <div className="absolute inset-0 gradient-primary opacity-[0.03]" />
+    <section className="relative overflow-hidden px-4 py-20 sm:px-6 sm:py-28">
       <div className="absolute inset-0">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/10 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute top-20 left-20 w-32 h-32 bg-accent/10 rounded-full blur-2xl animate-bounce" style={{ animationDelay: "1s" }} />
-        <div className="absolute bottom-20 right-20 w-48 h-48 bg-primary/8 rounded-full blur-2xl animate-bounce" style={{ animationDelay: "3s" }} />
+        <div className="absolute left-1/2 top-1/2 h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl" />
       </div>
 
-      {/* Floating Elements */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.8, delay: 0.5 }}
-        className="absolute top-16 left-16 hidden lg:block"
-      >
-        <div className="glass p-3 rounded-xl shadow-card animate-float">
-          <Sparkles className="w-6 h-6 text-primary" />
-        </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.8, delay: 0.7 }}
-        className="absolute bottom-16 right-16 hidden lg:block"
-      >
-        <div className="glass p-3 rounded-xl shadow-card animate-float" style={{ animationDelay: "2s" }}>
-          <ArrowRight className="w-6 h-6 text-accent" />
-        </div>
-      </motion.div>
-
-      <div className="container mx-auto px-4 sm:px-6 relative z-10">
+      <div className="container relative z-10 mx-auto max-w-5xl">
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-          className="max-w-4xl mx-auto text-center"
+          transition={{ duration: 0.55 }}
+          className="surface-card shadow-glow rounded-[2.2rem] px-6 py-10 text-center sm:px-10 sm:py-14"
         >
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass shadow-soft mb-8">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <span className="text-sm font-medium text-foreground">Найдите компанию</span>
+          <div className="eyebrow mb-6">
+            <Sparkles className="h-4 w-4 text-accent" />
+            Готово к поиску
           </div>
 
-          <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-foreground mb-6">
-            Начните поиск прямо сейчас
+          <h2 className="mx-auto max-w-3xl text-3xl font-extrabold leading-tight text-foreground sm:text-4xl lg:text-5xl">
+            Хочется ярче, чище и с характером.
+            <span className="block text-gradient">Теперь интерфейс ощущается ровнее.</span>
           </h2>
 
-          <p className="text-lg sm:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto">
-            Введите УНП или название компании и получите полную информацию из базы данных ЕГР
+          <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
+            Основной сценарий здесь один: быстро найти компанию и перейти к
+            нужной информации без лишних развилок и вторичных CTA.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <button
-              onClick={() => {
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-              className="gradient-primary text-primary-foreground shadow-soft hover:shadow-glow transition-all px-8 py-6 text-lg animate-glow dark:shadow-glow dark:hover:shadow-xl inline-flex items-center gap-2"
+          <div className="mt-8 flex items-center justify-center">
+            <a
+              href="#page-top"
+              className="gradient-primary inline-flex items-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-semibold text-primary-foreground shadow-soft hover:-translate-y-0.5 hover:shadow-glow"
             >
+              <Search className="h-4 w-4" />
               Начать поиск
-              <ArrowRight className="w-5 h-5" />
-            </button>
+            </a>
           </div>
         </motion.div>
       </div>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
+import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Moon, Sun } from "lucide-react";
 import { getRawCompanyData } from "@/lib/api";
 
 const CompanyRawData = () => {
@@ -10,22 +11,7 @@ const CompanyRawData = () => {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isDark, setIsDark] = useState(false);
 
-  useEffect(() => {
-    const theme = localStorage.getItem("theme");
-    const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-
-    if (theme === "dark" || (!theme && systemPrefersDark)) {
-      setIsDark(true);
-      document.documentElement.classList.add("dark");
-    } else {
-      setIsDark(false);
-      document.documentElement.classList.remove("dark");
-    }
-  }, []);
-
-  
   useEffect(() => {
     const load = async () => {
       if (!unp) {
@@ -33,8 +19,10 @@ const CompanyRawData = () => {
         setLoading(false);
         return;
       }
+
       setLoading(true);
       setError(null);
+
       try {
         const raw = await getRawCompanyData(unp);
         setData(raw);
@@ -44,77 +32,52 @@ const CompanyRawData = () => {
         setLoading(false);
       }
     };
+
     load();
   }, [unp]);
 
-  const toggleTheme = () => {
-    const newTheme = !isDark;
-    setIsDark(newTheme);
-    localStorage.setItem("theme", newTheme ? "dark" : "light");
-
-    if (newTheme) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-background px-4 py-10 relative overflow-hidden" style={{
-      background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)'
-    }}>
+    <div
+      className="relative min-h-screen overflow-hidden bg-background px-4 pb-12 pt-28"
+      style={{
+        background:
+          "linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)",
+      }}
+    >
+      <Header />
 
-      {/* Floating Theme Toggle */}
-      <button
-        onClick={toggleTheme}
-        className="fixed top-6 right-6 z-50 w-12 h-12 rounded-full glass shadow-card hover:shadow-glow transition-all duration-300 flex items-center justify-center"
-        aria-label="Переключить тему"
-      >
-        {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-      </button>
-      {/* Background Decorative Elements */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="hidden sm:block absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.08)'
-        }} />
-        <div className="hidden sm:block absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
-          backgroundColor: 'hsl(var(--accent) / 0.06)',
-          animationDelay: "2s"
-        }} />
-        {/* Mobile decorative elements */}
-        <div className="sm:hidden absolute top-10 right-10 w-32 h-32 rounded-full blur-2xl animate-pulse dark:opacity-20" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.06)'
-        }} />
-        <div className="sm:hidden absolute bottom-10 left-10 w-24 h-24 rounded-full blur-xl animate-pulse dark:opacity-25" style={{
-          backgroundColor: 'hsl(var(--accent) / 0.05)',
-          animationDelay: "1.5s"
-        }} />
+        <div
+          className="absolute left-10 top-20 hidden h-72 w-72 rounded-full blur-3xl sm:block"
+          style={{ backgroundColor: "hsl(var(--primary) / 0.08)" }}
+        />
+        <div
+          className="absolute bottom-20 right-10 hidden h-96 w-96 rounded-full blur-3xl sm:block"
+          style={{ backgroundColor: "hsl(var(--accent) / 0.06)" }}
+        />
       </div>
 
-      <div className="max-w-5xl mx-auto space-y-6 relative z-10">
-        {/* Navigation Buttons */}
-        <div className="flex items-center justify-start gap-4">
+      <div className="relative z-10 mx-auto max-w-5xl space-y-6">
+        <div className="flex flex-wrap items-center gap-3">
           <Link to={unp ? `/company/${unp}` : "/"}>
-            <Button variant="ghost" className="flex items-center gap-2 glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300">
-              <ArrowLeft className="w-4 h-4" />
+            <Button variant="ghost" className="flex items-center gap-2">
+              <ArrowLeft className="h-4 w-4" />
               К компании
             </Button>
           </Link>
           <Link to="/">
-            <Button variant="ghost" className="flex items-center gap-2 glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300">
-              <ArrowLeft className="w-4 h-4" />
+            <Button variant="ghost" className="flex items-center gap-2">
+              <ArrowLeft className="h-4 w-4" />
               На главную
             </Button>
           </Link>
         </div>
 
         <div className="space-y-2">
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground">Raw данные</h1>
+          <h1 className="text-3xl font-extrabold text-foreground sm:text-4xl">Raw данные</h1>
           {unp && (
-            <div className="flex items-center gap-2">
-              <span className="glass px-3 py-1 rounded-full text-sm text-primary font-medium">
-                УНП {unp}
-              </span>
+            <div className="glass inline-flex rounded-full px-3 py-1 text-sm font-medium text-primary">
+              УНП {unp}
             </div>
           )}
         </div>
@@ -127,18 +90,22 @@ const CompanyRawData = () => {
         )}
 
         {data && (
-          <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
-            <CardHeader className="rounded-t-lg" style={{
-              background: 'linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--accent) / 0.1) 100%)'
-            }}>
-              <CardTitle className="text-gradient flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+          <Card className="border-primary/20">
+            <CardHeader
+              className="rounded-t-[1.75rem]"
+              style={{
+                background:
+                  "linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--accent) / 0.1) 100%)",
+              }}
+            >
+              <CardTitle className="flex items-center gap-2 text-gradient">
+                <div className="h-2 w-2 rounded-full bg-primary" />
                 Ответ API
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-6">
-              <div className="glass p-4 rounded-lg bg-secondary/30">
-                <pre className="text-sm overflow-x-auto whitespace-pre-wrap text-foreground font-mono leading-relaxed">
+            <CardContent>
+              <div className="glass rounded-[1.4rem] bg-secondary/30 p-4">
+                <pre className="font-mono text-sm leading-relaxed text-foreground whitespace-pre-wrap overflow-x-auto">
                   {JSON.stringify(data, null, 2)}
                 </pre>
               </div>

@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowRight, Building2, Loader2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Search, ArrowRight, Building2, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { lookupCompanies, CompanyLookupResult } from "@/lib/api";
-import { motion, AnimatePresence } from "framer-motion";
 
 interface CompanySearchProps {
   variant?: "hero" | "compact";
@@ -13,41 +12,38 @@ interface CompanySearchProps {
   onSearchStart?: () => void;
 }
 
-export const CompanySearch = ({ 
+export const CompanySearch = ({
   variant = "compact",
   placeholder = "Введите УНП или название компании",
-  onSearchStart
+  onSearchStart,
 }: CompanySearchProps) => {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<CompanyLookupResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [dropdownDirection, setDropdownDirection] = useState<'down' | 'up'>('down');
+  const [dropdownDirection, setDropdownDirection] = useState<"down" | "up">("down");
   const navigate = useNavigate();
   const searchRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  
+
   const MAX_SUGGESTIONS = 5;
 
-  // Определяем направление dropdown (вверх или вниз)
   useEffect(() => {
     if (showSuggestions && dropdownRef.current && searchRef.current) {
       const searchRect = searchRef.current.getBoundingClientRect();
       const dropdownHeight = dropdownRef.current.offsetHeight;
       const spaceBelow = window.innerHeight - searchRect.bottom;
       const spaceAbove = searchRect.top;
-      
-      // Если места снизу недостаточно, но сверху больше места - показываем dropdown вверх
+
       if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
-        setDropdownDirection('up');
+        setDropdownDirection("up");
       } else {
-        setDropdownDirection('down');
+        setDropdownDirection("down");
       }
     }
   }, [showSuggestions, suggestions]);
 
-  // Закрытие подсказок при клике вне компонента
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
@@ -59,7 +55,6 @@ export const CompanySearch = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Автодополнение с debounce
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < 2) {
@@ -73,11 +68,10 @@ export const CompanySearch = ({
     const timer = setTimeout(async () => {
       try {
         const data = await lookupCompanies(trimmed);
-        console.log("Получены подсказки:", data.results.length, data.results);
         setSuggestions(data.results);
         setShowSuggestions(data.results.length > 0);
       } catch (err) {
-        console.error("Ошибка автодополнения:", err);
+        console.error("Autocomplete error:", err);
         setSuggestions([]);
         setShowSuggestions(false);
       } finally {
@@ -91,28 +85,25 @@ export const CompanySearch = ({
     };
   }, [query]);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSearch = (event: React.FormEvent) => {
+    event.preventDefault();
     const trimmed = query.trim();
     if (!trimmed) return;
 
     onSearchStart?.();
 
-    // Если введен полный УНП (9 цифр) - сразу переход
     if (/^\d{9}$/.test(trimmed)) {
       navigate(`/company/${trimmed}`);
       setShowSuggestions(false);
       return;
     }
 
-    // Если есть только одна подсказка - переход к ней
     if (suggestions.length === 1) {
       navigate(`/company/${suggestions[0].unp}`);
       setShowSuggestions(false);
       return;
     }
 
-    // Иначе показываем подсказки
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
@@ -135,33 +126,36 @@ export const CompanySearch = ({
 
   return (
     <div ref={searchRef} className="relative w-full">
-      <form onSubmit={handleSearch} className={isHero ? "max-w-2xl mx-auto" : "w-full"}>
+      <form onSubmit={handleSearch} className={isHero ? "mx-auto max-w-2xl" : "w-full"}>
         <motion.div
           animate={{
             scale: focused && isHero ? 1.015 : 1,
             boxShadow: focused
-              ? "0 18px 60px -28px hsl(var(--primary) / 0.65)"
-              : "0 16px 50px -28px hsl(var(--foreground) / 0.2)",
+              ? "0 30px 80px -36px hsl(var(--primary) / 0.45)"
+              : "0 18px 50px -32px hsl(var(--foreground) / 0.24)",
           }}
           transition={{ duration: 0.25 }}
           className={`relative flex items-center gap-3 overflow-hidden ${
-          isHero 
-            ? "p-2 bg-card rounded-2xl shadow-card border border-border" 
-            : "p-1 bg-card rounded-lg border border-border"
-        }`}>
+            isHero
+              ? "surface-card rounded-[1.7rem] border border-border/80 p-2.5"
+              : "surface-card rounded-[1.35rem] border border-border/80 p-1.5"
+          }`}
+        >
           <motion.div
-            className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
-            animate={{ x: focused ? ["-120%", "680%"] : "-120%" }}
+            className="pointer-events-none absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-transparent via-primary/12 to-transparent"
+            animate={{ x: focused ? ["-120%", "760%"] : "-120%" }}
             transition={{ duration: 1.2, ease: "easeInOut" }}
           />
-          <div className="flex-1 flex items-center gap-3 pl-4">
+
+          <div className="flex flex-1 items-center gap-3 pl-4">
             <motion.span
               animate={{ rotate: loading ? 12 : 0, scale: focused ? 1.08 : 1 }}
               transition={{ duration: 0.2 }}
               className="flex"
             >
-              <Search className={`${isHero ? 'w-5 h-5' : 'w-4 h-4'} text-muted-foreground flex-shrink-0`} />
+              <Search className={`${isHero ? "h-5 w-5" : "h-4 w-4"} flex-shrink-0 text-primary`} />
             </motion.span>
+
             <Input
               type="text"
               placeholder={placeholder}
@@ -169,53 +163,47 @@ export const CompanySearch = ({
               onChange={(e) => setQuery(e.target.value)}
               onFocus={handleInputFocus}
               onBlur={() => setFocused(false)}
-              className={`border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60 ${
-                isHero ? 'text-base sm:text-lg' : 'text-sm'
+              className={`h-auto border-0 bg-transparent px-0 py-0 focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60 ${
+                isHero ? "text-base sm:text-lg" : "text-sm"
               }`}
             />
-            {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+
+            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
-          <Button 
+
+          <Button
             type="submit"
             size={isHero ? "lg" : "default"}
-            className={`gradient-primary text-primary-foreground shadow-soft hover:shadow-glow transition-all ${
-              isHero ? 'px-6 sm:px-8' : 'px-4'
-            }`}
-            asChild={false}
+            className={isHero ? "px-6 sm:px-8" : "px-4"}
           >
             {isHero ? (
               <>
                 <span className="hidden sm:inline">Найти</span>
-                <ArrowRight className="w-5 h-5 sm:ml-2" />
+                <ArrowRight className="h-5 w-5 sm:ml-2" />
               </>
             ) : (
-              <Search className="w-4 h-4" />
+              <Search className="h-4 w-4" />
             )}
           </Button>
         </motion.div>
       </form>
 
-      {/* Dropdown с подсказками */}
       <AnimatePresence>
         {showSuggestions && suggestions.length > 0 && (
           <motion.div
-            initial={{ opacity: 0, y: dropdownDirection === 'down' ? -10 : 10, scale: 0.95 }}
+            initial={{ opacity: 0, y: dropdownDirection === "down" ? -10 : 10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: dropdownDirection === 'down' ? -10 : 10, scale: 0.95 }}
+            exit={{ opacity: 0, y: dropdownDirection === "down" ? -10 : 10, scale: 0.95 }}
             transition={{ duration: 0.2 }}
             ref={dropdownRef}
             style={{ zIndex: 9999 }}
             className={`absolute ${
-              dropdownDirection === 'down' 
-                ? 'top-full mt-2' 
-                : 'bottom-full mb-2'
-            } w-full min-w-full bg-card rounded-lg shadow-xl border border-border ${
-              isHero ? 'max-w-2xl mx-auto left-0 right-0' : ''
+              dropdownDirection === "down" ? "top-full mt-2" : "bottom-full mb-2"
+            } surface-card w-full min-w-full rounded-[1.35rem] border border-border/80 shadow-card ${
+              isHero ? "left-0 right-0 mx-auto max-w-2xl" : ""
             }`}
           >
-            <div 
-              className="overflow-y-auto max-h-[400px] custom-scrollbar"
-            >
+            <div className="custom-scrollbar max-h-[400px] overflow-y-auto">
               {suggestions.slice(0, MAX_SUGGESTIONS).map((item, index) => (
                 <motion.button
                   key={item.unp}
@@ -223,53 +211,58 @@ export const CompanySearch = ({
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.18, delay: index * 0.035 }}
                   onClick={() => handleSelectCompany(item.unp)}
-                  className="w-full px-4 py-3 flex items-center gap-3 hover:bg-accent/50 transition-colors border-b border-border last:border-0 text-left group"
+                  className="group flex w-full items-center gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors hover:bg-foreground/[0.03] last:border-0"
                 >
                   <div className="flex-shrink-0">
-                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                      <Building2 className="w-5 h-5 text-primary" />
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 transition-colors group-hover:bg-primary/18">
+                      <Building2 className="h-5 w-5 text-primary" />
                     </div>
                   </div>
-                  <div className="flex-1 min-w-0 overflow-hidden">
-                    <div 
-                      className="font-medium text-foreground text-sm truncate mb-1"
+
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <div
+                      className="mb-1 truncate text-sm font-medium text-foreground"
                       title={item.full_name_ru || item.short_name_ru || item.name || ""}
                     >
                       {item.full_name_ru || item.short_name_ru || item.name}
                     </div>
+
                     {item.matched_historical_name && item.matched_name && (
                       <div
-                        className="text-xs text-amber-700 truncate mb-1"
+                        className="mb-1 truncate text-xs text-accent"
                         title={`Историческое название: ${item.matched_name}`}
                       >
                         Историческое название: {item.matched_name}
                       </div>
                     )}
-                    <div className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+
+                    <div className="font-mono text-xs whitespace-nowrap text-muted-foreground">
                       УНП: {item.unp}
                     </div>
                   </div>
-                  <div className="flex-shrink-0 ml-2">
-                    <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
+
+                  <div className="ml-2 flex-shrink-0">
+                    <ArrowRight className="h-4 w-4 text-muted-foreground transition-all group-hover:translate-x-1 group-hover:text-primary" />
                   </div>
                 </motion.button>
               ))}
             </div>
+
             {suggestions.length > MAX_SUGGESTIONS && (
-              <div className="px-4 py-2 bg-muted/30 text-xs text-muted-foreground text-center border-t border-border">
-                Показаны первые {MAX_SUGGESTIONS} из {suggestions.length} результатов. Уточните запрос для более точного поиска.
+              <div className="border-t border-border/60 bg-muted/30 px-4 py-2 text-center text-xs text-muted-foreground">
+                Показаны первые {MAX_SUGGESTIONS} из {suggestions.length} результатов. Уточните
+                запрос для более точного поиска.
               </div>
             )}
-            
-            {/* Стрелка направления dropdown */}
-            <div 
+
+            <div
               className={`absolute ${
-                dropdownDirection === 'down'
-                  ? '-top-2 left-4 transform -translate-x-1/2'
-                  : '-bottom-2 left-4 transform -translate-x-1/2 rotate-180'
-              } w-4 h-4 overflow-hidden`}
+                dropdownDirection === "down"
+                  ? "-top-2 left-4 -translate-x-1/2"
+                  : "-bottom-2 left-4 -translate-x-1/2 rotate-180"
+              } h-4 w-4 overflow-hidden`}
             >
-              <div className="w-4 h-4 bg-card border-t border-l border-border transform rotate-45 translate-y-1/2"></div>
+              <div className="h-4 w-4 translate-y-1/2 rotate-45 border-l border-t border-border/80 bg-card" />
             </div>
           </motion.div>
         )}

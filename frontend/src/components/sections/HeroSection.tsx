@@ -1,142 +1,211 @@
 import { motion } from "framer-motion";
-import { Building2, Shield, Zap } from "lucide-react";
+import { Building2, Search, ShieldCheck, Sparkles } from "lucide-react";
 import { CompanySearch } from "@/components/CompanySearch";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { AnimatedHeroBackdrop } from "./AnimatedHeroBackdrop";
 
-export const HeroSection = () => {
+const proof = [
+  { label: "Компаний", value: 1.6, suffix: "M+", decimals: 1 },
+  { label: "Справочников", value: 20, suffix: "+" },
+  { label: "Отклик", value: 120, suffix: "ms" },
+];
 
+const previewRows = [
+  {
+    title: "Профиль компании",
+    caption: "Адрес, статус, даты и история изменений",
+    icon: Building2,
+  },
+  {
+    title: "Поиск по ЕГР",
+    caption: "Мгновенные подсказки по УНП и названию",
+    icon: Search,
+  },
+  {
+    title: "Статус данных",
+    caption: "Синхронизация и целостность выдачи",
+    icon: ShieldCheck,
+  },
+];
+
+const iconBadgeClass =
+  "flex h-10 w-10 items-center justify-center rounded-2xl border border-border/80 bg-background/60 text-primary shadow-[inset_0_1px_0_hsl(var(--card)/0.8)]";
+
+export const HeroSection = () => {
   return (
-    <section className="relative min-h-screen flex items-center justify-center gradient-hero overflow-hidden pt-20">
+    <section className="gradient-hero relative overflow-hidden px-4 pb-14 pt-28 sm:px-6 sm:pb-20 sm:pt-36">
       <AnimatedHeroBackdrop />
 
-      <div className="container mx-auto px-4 sm:px-6 relative z-10">
-        <div className="max-w-4xl mx-auto text-center">
-          {/* Badge */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass shadow-soft mb-8"
-          >
-            <motion.span
-              animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.12, 1] }}
-              transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
-              className="flex"
+      <div className="container relative z-10 mx-auto max-w-6xl">
+        <div className="grid items-center gap-8 lg:grid-cols-[1.02fr_0.98fr] lg:gap-12">
+          <div className="max-w-3xl">
+            <motion.div
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.45 }}
+              className="eyebrow mb-6"
             >
-              <Zap className="w-4 h-4 text-primary" />
-            </motion.span>
-            <span className="text-sm font-medium text-foreground">Данные ЕГР в реальном времени</span>
-          </motion.div>
+              <Sparkles className="h-4 w-4 text-accent" />
+              Минималистичный поиск по данным ЕГР
+            </motion.div>
 
-          {/* Headline */}
-          <motion.h1
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-foreground mb-6 leading-tight text-balance"
-          >
-            Вся информация о компаниях{" "}
-            <span className="text-gradient">Беларуси</span>
-          </motion.h1>
+            <motion.h1
+              initial={{ opacity: 0, y: 26 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.05 }}
+              className="max-w-4xl text-4xl font-extrabold leading-[0.95] text-foreground sm:text-5xl md:text-6xl xl:text-7xl"
+            >
+              Единый сервис
+              <span className="block text-gradient">для поиска компаний Беларуси</span>
+            </motion.h1>
 
-          {/* Subtitle */}
-          <motion.p
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-lg sm:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto text-pretty"
-          >
-            Современный сервис для поиска и проверки компаний по данным Единого государственного регистра Республики Беларусь
-          </motion.p>
+            <motion.p
+              initial={{ opacity: 0, y: 26 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.12 }}
+              className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8"
+            >
+              Ищите по УНП, быстро открывайте карточку компании и переходите к
+              нужным данным без перегруженных таблиц и лишнего визуального шума.
+            </motion.p>
 
-          {/* Search Form */}
+            <motion.div
+              id="hero-search"
+              initial={{ opacity: 0, y: 28 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.2 }}
+              className="mt-7"
+            >
+              <CompanySearch
+                variant="hero"
+                placeholder="Введите УНП или название компании"
+              />
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.28 }}
+              className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted-foreground"
+            >
+              <div className="glass rounded-full px-4 py-2">Поиск по УНП, названию и истории</div>
+              <div className="glass rounded-full px-4 py-2">Актуальные карточки и справочники</div>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.34 }}
+              className="mt-8 flex flex-wrap gap-3"
+            >
+              <a
+                href="#features"
+                className="glass inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold text-foreground hover:-translate-y-0.5 hover:shadow-soft"
+              >
+                Посмотреть возможности
+              </a>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.42 }}
+              className="mt-8 grid gap-3 sm:grid-cols-3"
+            >
+              {proof.map((item) => (
+                <div key={item.label} className="surface-card rounded-[1.5rem] p-4 sm:p-5">
+                  <div className="text-3xl font-extrabold text-foreground">
+                    <span className="text-gradient">
+                      <AnimatedCounter
+                        value={item.value}
+                        suffix={item.suffix}
+                        decimals={item.decimals}
+                      />
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">{item.label}</div>
+                </div>
+              ))}
+            </motion.div>
+          </div>
+
           <motion.div
-            id="hero-search"
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: 28 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="mb-12"
+            transition={{ duration: 0.65, delay: 0.18 }}
+            className="relative max-[420px]:px-0"
           >
-            <CompanySearch 
-              variant="hero"
-              placeholder="Введите УНП или название компании"
-            />
-          </motion.div>
+            <div className="surface-card shadow-glow relative overflow-hidden rounded-[1.8rem] p-4 sm:rounded-[2rem] sm:p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-accent/8" />
+              <div className="relative">
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-4">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                      Live Preview
+                    </div>
+                    <div className="mt-1 max-w-sm text-xl font-semibold leading-tight text-foreground sm:text-2xl">
+                      Поиск и профиль без перегруза
+                    </div>
+                  </div>
+                  <div className="glass rounded-full px-3 py-2 text-xs font-semibold text-foreground">
+                    ЕГР online
+                  </div>
+                </div>
 
-          {/* Stats */}
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.4 }}
-            className="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-6 max-w-xl mx-auto"
-          >
-            <motion.div whileHover={{ y: -4, scale: 1.02 }} className="text-center glass p-4 rounded-xl shadow-soft hover:shadow-glow transition-all duration-300">
-              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1"><AnimatedCounter value={1.6} suffix="M+" decimals={1} /></div>
-              <div className="text-sm text-muted-foreground">Компаний</div>
-            </motion.div>
-            <motion.div whileHover={{ y: -4, scale: 1.02 }} className="text-center glass p-4 rounded-xl shadow-soft hover:shadow-glow transition-all duration-300">
-              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1"><AnimatedCounter value={24} suffix="/7" /></div>
-              <div className="text-sm text-muted-foreground">Доступность</div>
-            </motion.div>
-            <motion.div whileHover={{ y: -4, scale: 1.02 }} className="text-center glass p-4 rounded-xl shadow-soft hover:shadow-glow transition-all duration-300 col-span-2 sm:col-span-1">
-              <div className="text-3xl sm:text-4xl font-bold text-gradient mb-1"><AnimatedCounter value={99.9} suffix="%" decimals={1} /></div>
-              <div className="text-sm text-muted-foreground">Точность</div>
-            </motion.div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-[1.08fr_0.92fr]">
+                  <div className="space-y-3">
+                    {previewRows.map((row, index) => (
+                      <motion.div
+                        key={row.title}
+                        initial={{ opacity: 0, x: -16 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.45, delay: 0.28 + index * 0.08 }}
+                        className="surface-card rounded-[1.25rem] p-4"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={iconBadgeClass}>
+                            <row.icon className="h-4.5 w-4.5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-foreground">{row.title}</div>
+                            <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                              {row.caption}
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="surface-card rounded-[1.25rem] p-4 sm:p-5">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                        Доступность
+                      </div>
+                      <div className="mt-3 text-4xl font-extrabold text-gradient">
+                        <AnimatedCounter value={99.9} suffix="%" decimals={1} />
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-muted-foreground">
+                        Быстрая навигация от поиска к полной карточке компании.
+                      </div>
+                    </div>
+
+                    <div className="surface-card rounded-[1.25rem] p-4 sm:p-5">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                        Search Index
+                      </div>
+                      <div className="mt-2 text-base font-semibold text-foreground">Поиск по всей базе</div>
+                      <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                        Полнотекстовый индекс и аккуратная выдача без лишнего шума.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </motion.div>
         </div>
       </div>
-
-      {/* Floating Cards */}
-      <motion.div
-        initial={{ opacity: 0, x: -50 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.8, delay: 0.6 }}
-        className="hidden lg:block absolute left-10 top-1/3 animate-float"
-      >
-        <div className="glass p-4 rounded-xl shadow-card hover:shadow-glow transition-shadow duration-300">
-          <Building2 className="w-8 h-8 text-primary mb-2" />
-          <p className="text-sm font-medium text-foreground">Реестр ЮЛ и ИП</p>
-        </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, x: 50 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.8, delay: 0.7 }}
-        className="hidden lg:block absolute right-10 bottom-1/3 animate-float"
-        style={{ animationDelay: "1s" }}
-      >
-        <div className="glass p-4 rounded-xl shadow-card hover:shadow-glow transition-shadow duration-300">
-          <Shield className="w-8 h-8 text-accent mb-2" />
-          <p className="text-sm font-medium text-foreground">Безопасный API</p>
-        </div>
-      </motion.div>
-
-      {/* Additional Decorative Elements */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.8, delay: 0.8 }}
-        className="hidden lg:block absolute right-20 top-20 animate-float"
-        style={{ animationDelay: "2s" }}
-      >
-        <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center shadow-glow">
-          <Zap className="w-8 h-8 text-primary-foreground" />
-        </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, scale: 0 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.8, delay: 0.9 }}
-        className="hidden lg:block absolute left-20 bottom-20 animate-float"
-        style={{ animationDelay: "3s" }}
-      >
-        <div className="w-12 h-12 bg-accent/20 rounded-full flex items-center justify-center shadow-soft backdrop-blur-sm">
-          <div className="w-6 h-6 bg-accent rounded-full animate-pulse" />
-        </div>
-      </motion.div>
     </section>
   );
 };

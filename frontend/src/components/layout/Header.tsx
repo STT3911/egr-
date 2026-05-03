@@ -1,8 +1,13 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Menu, X, Moon, Sun } from "lucide-react";
+import { Menu, Moon, Search, Sun, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { CompanySearch } from "@/components/CompanySearch";
+
+const homeLinks = [
+  { label: "Возможности", href: "#features" },
+  { label: "О сервисе", href: "#about" },
+];
 
 export const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -23,6 +28,10 @@ export const Header = () => {
     }
   }, []);
 
+  useEffect(() => {
+    setIsMenuOpen(false);
+  }, [location.pathname]);
+
   const toggleTheme = () => {
     const newTheme = !isDark;
     setIsDark(newTheme);
@@ -36,100 +45,134 @@ export const Header = () => {
   };
 
   return (
-    <motion.header 
+    <motion.header
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5 }}
-      className="fixed top-0 left-0 right-0 z-50 glass"
+      className="fixed inset-x-0 top-4 z-50 px-4 sm:px-6"
     >
-      <div className="container mx-auto px-4 sm:px-6">
-        <div className="flex items-center justify-between gap-4 h-16 sm:h-20">
-          {/* Center Content */}
-          <div className="flex-1 flex justify-center">
-            {isHomePage ? (
-              <Link to="/" className="flex items-center gap-2">
-                <div className="w-8 h-8 sm:w-10 sm:h-10 gradient-primary rounded-lg flex items-center justify-center">
-                  <span className="text-primary-foreground font-bold text-lg sm:text-xl">E</span>
+      <div className="container mx-auto max-w-6xl">
+        <div className="surface-card shadow-card rounded-[1.75rem] px-4 py-3 sm:px-5">
+          <div className="flex items-center gap-3">
+            <Link to="/" className="flex min-w-0 items-center gap-3">
+              <div className="gradient-primary flex h-11 w-11 items-center justify-center rounded-2xl text-lg font-extrabold text-primary-foreground shadow-soft">
+                E
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                  EGR
                 </div>
-                <span className="text-xl sm:text-2xl font-bold text-foreground">ЕГР</span>
-              </Link>
+                <div className="truncate text-base font-semibold text-foreground max-[560px]:hidden">
+                  Реестр компаний Беларуси
+                </div>
+              </div>
+            </Link>
+
+            {isHomePage ? (
+              <nav className="ml-4 hidden items-center gap-2 lg:flex">
+                {homeLinks.map((link) =>
+                  link.href.startsWith("/") ? (
+                    <Link
+                      key={link.label}
+                      to={link.href}
+                      className="rounded-full px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                    >
+                      {link.label}
+                    </Link>
+                  ) : (
+                    <a
+                      key={link.label}
+                      href={link.href}
+                      className="rounded-full px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                    >
+                      {link.label}
+                    </a>
+                  ),
+                )}
+              </nav>
             ) : (
-              <div className="hidden lg:flex flex-1 max-w-md">
+              <div className="mx-2 hidden flex-1 lg:block">
                 <CompanySearch
                   variant="compact"
-                  placeholder="Поиск по УНП или названию..."
+                  placeholder="Поиск по УНП или названию компании"
                 />
               </div>
             )}
-          </div>
 
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-6 flex-shrink-0">
-            {/* Navigation removed as requested */}
-          </nav>
+            <div className="ml-auto flex items-center gap-2">
+              {isHomePage && (
+                <a
+                  href="#hero-search"
+                  className="hidden items-center gap-2 rounded-full border border-border/80 bg-card/72 px-4 py-2 text-sm font-semibold text-foreground hover:-translate-y-0.5 hover:shadow-soft md:inline-flex"
+                >
+                  <Search className="h-4 w-4 text-primary" />
+                  Найти компанию
+                </a>
+              )}
 
-          {/* Theme Toggle & Mobile Menu */}
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg glass hover:bg-primary/10 transition-all duration-300"
-              aria-label="Переключить тему"
-            >
-              {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
-
-            <button
-              className="md:hidden p-2"
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-            >
-              {isMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Menu */}
-        {isMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="md:hidden py-4 border-t border-border space-y-4"
-          >
-            {/* Theme Toggle Mobile */}
-            <div className="flex items-center justify-between px-2">
-              <span className="text-sm text-muted-foreground">Тема</span>
               <button
                 onClick={toggleTheme}
-                className="p-2 rounded-lg glass hover:bg-primary/10 transition-all duration-300"
+                className="glass flex h-11 w-11 items-center justify-center rounded-2xl hover:-translate-y-0.5 hover:shadow-soft"
                 aria-label="Переключить тему"
               >
-                {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              </button>
+
+              <button
+                className="glass flex h-11 w-11 items-center justify-center rounded-2xl lg:hidden"
+                onClick={() => setIsMenuOpen((value) => !value)}
+                aria-label="Открыть меню"
+              >
+                {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </button>
             </div>
-            {/* Mobile Search (only on non-home pages) */}
-            {!isHomePage && (
-              <div className="px-2">
-                <CompanySearch 
+          </div>
+
+          {isMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="surface-divider mt-4 space-y-4 pt-4 lg:hidden"
+            >
+              {isHomePage ? (
+                <div className="flex flex-col gap-2">
+                  {homeLinks.map((link) =>
+                    link.href.startsWith("/") ? (
+                      <Link
+                        key={link.label}
+                        to={link.href}
+                        className="rounded-2xl px-4 py-3 text-sm font-medium text-foreground hover:bg-foreground/5"
+                      >
+                        {link.label}
+                      </Link>
+                    ) : (
+                      <a
+                        key={link.label}
+                        href={link.href}
+                        className="rounded-2xl px-4 py-3 text-sm font-medium text-foreground hover:bg-foreground/5"
+                      >
+                        {link.label}
+                      </a>
+                    ),
+                  )}
+                  <a
+                    href="#hero-search"
+                    className="gradient-primary rounded-2xl px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft"
+                  >
+                    Найти компанию
+                  </a>
+                </div>
+              ) : (
+                <CompanySearch
                   variant="compact"
-                  placeholder="Поиск..."
+                  placeholder="Поиск по УНП или названию компании"
                   onSearchStart={() => setIsMenuOpen(false)}
                 />
-              </div>
-            )}
-            
-            <nav className="flex flex-col gap-4">
-              {!isHomePage && (
-                <Link
-                  to="/"
-                  className="text-muted-foreground hover:text-foreground transition-colors py-2"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  Главная
-                </Link>
               )}
-            </nav>
-          </motion.div>
-        )}
+            </motion.div>
+          )}
+        </div>
       </div>
     </motion.header>
   );

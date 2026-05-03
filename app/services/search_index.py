@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+import socket
+import time
+from urllib.parse import urlparse
 from typing import Any, Iterable
 
 from sqlalchemy import bindparam, text
@@ -13,6 +16,8 @@ from app.core.logger import get_logger
 from app.utils.search_normalizer import normalize_company_name
 
 logger = get_logger("services.search_index")
+
+_LAST_ES_RESOLUTION_WARNING_AT = 0.0
 
 try:
     from elasticsearch import Elasticsearch, helpers
@@ -113,8 +118,37 @@ def _dedupe(values: Iterable[Any]) -> list[str]:
     return result
 
 
+def _is_elasticsearch_host_resolvable() -> bool:
+    if not settings.ELASTICSEARCH_ENABLED:
+        return False
+
+    parsed = urlparse(settings.ELASTICSEARCH_URL)
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    try:
+        socket.getaddrinfo(hostname, parsed.port or 9200, type=socket.SOCK_STREAM)
+        return True
+    except OSError as exc:
+        global _LAST_ES_RESOLUTION_WARNING_AT
+        now = time.monotonic()
+        if now - _LAST_ES_RESOLUTION_WARNING_AT >= 60:
+            logger.warning(
+                "Elasticsearch host %s is not resolvable right now: %s",
+                hostname,
+                exc,
+            )
+            _LAST_ES_RESOLUTION_WARNING_AT = now
+        return False
+
+
 def get_es_client():
-    if not settings.ELASTICSEARCH_ENABLED or Elasticsearch is None:
+    if (
+        not settings.ELASTICSEARCH_ENABLED
+        or Elasticsearch is None
+        or not _is_elasticsearch_host_resolvable()
+    ):
         return None
     return Elasticsearch(
         settings.ELASTICSEARCH_URL,

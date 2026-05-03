@@ -63,7 +63,6 @@ const Company = () => {
     }
   }, []);
 
-  
   useEffect(() => {
     const load = async () => {
       if (!unp) {
@@ -170,7 +169,7 @@ const Company = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background px-4 py-10 relative overflow-hidden" style={{
+    <div className="min-h-screen bg-background px-4 pb-12 pt-28 relative overflow-hidden" style={{
       background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)'
     }}>
 

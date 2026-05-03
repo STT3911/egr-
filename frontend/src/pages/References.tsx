@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
+import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft } from "lucide-react";
 import { listReferenceTypes } from "@/lib/api";
 
 const References = () => {
@@ -14,6 +15,7 @@ const References = () => {
     const load = async () => {
       setLoading(true);
       setError(null);
+
       try {
         const data = await listReferenceTypes();
         setTypes(data);
@@ -23,26 +25,29 @@ const References = () => {
         setLoading(false);
       }
     };
+
     load();
   }, []);
 
   return (
-    <div className="min-h-screen bg-background px-4 py-10">
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* Back to Home Button */}
+    <div className="min-h-screen bg-background px-4 pb-12 pt-28">
+      <Header />
+
+      <div className="mx-auto max-w-5xl space-y-6">
         <div className="flex items-center justify-start">
           <Link to="/">
-            <Button variant="ghost" className="flex items-center gap-2 glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300">
-              <ArrowLeft className="w-4 h-4" />
+            <Button variant="ghost" className="flex items-center gap-2">
+              <ArrowLeft className="h-4 w-4" />
               На главную
             </Button>
           </Link>
         </div>
 
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Справочники ЕГР</h1>
-          <p className="text-muted-foreground mt-2">
-            Выберите справочник для просмотра данных.
+        <div className="space-y-2">
+          <h1 className="text-3xl font-extrabold text-foreground sm:text-4xl">Справочники ЕГР</h1>
+          <p className="max-w-2xl text-base leading-7 text-muted-foreground">
+            Список справочников оформлен в том же визуальном ритме: мягкие карточки,
+            чистая иерархия и быстрый переход к нужным данным.
           </p>
         </div>
 
@@ -54,17 +59,25 @@ const References = () => {
         )}
 
         <div className="grid gap-4 sm:grid-cols-2">
-          {types.map((type) => (
-            <Card key={type}>
+          {types.map((type, index) => (
+            <Card key={type} className="group">
               <CardHeader>
-                <CardTitle className="text-lg">{type}</CardTitle>
+                <div className="flex items-start justify-between gap-4">
+                  <CardTitle className="text-xl">{type}</CardTitle>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    {String(index + 1).padStart(2, "0")}
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex items-center justify-between gap-3">
+                <div className="text-sm text-muted-foreground">
+                  Открыть и посмотреть записи справочника.
+                </div>
                 <Link
                   to={`/references/${encodeURIComponent(type)}`}
-                  className="text-primary hover:underline"
+                  className="text-sm font-semibold text-primary transition-colors group-hover:text-accent"
                 >
-                  Открыть справочник
+                  Открыть
                 </Link>
               </CardContent>
             </Card>

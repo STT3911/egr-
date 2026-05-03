@@ -2,78 +2,65 @@ import { Link } from "react-router-dom";
 
 export const Footer = () => {
   return (
-    <footer className="bg-card border-t border-border py-12 sm:py-16">
-      <div className="container mx-auto px-4 sm:px-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-          {/* Brand */}
-          <div className="col-span-2 md:col-span-1">
-            <Link to="/" className="flex items-center gap-2 mb-4">
-              <div className="w-10 h-10 gradient-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-xl">S</span>
-              </div>
-              <span className="text-2xl font-bold text-foreground">Service</span>
-            </Link>
-            <p className="text-muted-foreground text-sm leading-relaxed">
-              Современный сервис для работы с данными ЕГР Республики Беларусь
-            </p>
-          </div>
+    <footer className="relative overflow-hidden px-4 pb-10 pt-6 sm:px-6 sm:pb-14">
+      <div className="container mx-auto max-w-6xl">
+        <div className="surface-card shadow-card rounded-[2rem] p-8 sm:p-10">
+          <div className="grid gap-10 lg:grid-cols-[1.3fr_0.7fr_0.7fr]">
+            <div className="space-y-5">
+              <Link to="/" className="flex items-center gap-3">
+                <div className="gradient-primary flex h-12 w-12 items-center justify-center rounded-2xl text-lg font-extrabold text-primary-foreground shadow-soft">
+                  E
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                    EGR
+                  </div>
+                  <div className="text-xl font-semibold text-foreground">
+                    Реестр компаний Беларуси
+                  </div>
+                </div>
+              </Link>
 
-          {/* Product */}
-          <div>
-            <h4 className="font-semibold text-foreground mb-4">Продукт</h4>
-            <ul className="space-y-3">
-              <li>
-                <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
+              <p className="max-w-xl text-sm leading-7 text-muted-foreground sm:text-base">
+                Аккуратный и быстрый интерфейс для поиска компаний, проверки карточек
+                и работы со справочниками ЕГР без перегруженного визуального шума.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Навигация
+              </div>
+              <div className="flex flex-col gap-3 text-sm text-foreground">
+                <a href="#features" className="hover:text-primary">
                   Возможности
                 </a>
-              </li>
-            </ul>
+                <a href="#about" className="hover:text-primary">
+                  О сервисе
+                </a>
+                <Link to="/references" className="hover:text-primary">
+                  Справочники
+                </Link>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Фокус
+              </div>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <div>Быстрый поиск по УНП и названию</div>
+                <div>Карточка компании и связанные данные</div>
+                <div>Чистый минималистичный интерфейс</div>
+              </div>
+            </div>
           </div>
 
-          {/* Company */}
-          <div>
-            <h4 className="font-semibold text-foreground mb-4">Компания</h4>
-            <ul className="space-y-3">
-              <li>
-                <a href="#about" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-                  О нас
-                </a>
-              </li>
-              <li>
-                <a href="/contacts" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-                  Контакты
-                </a>
-              </li>
-            </ul>
-          </div>
+          <div className="section-divider my-8" />
 
-          {/* Legal */}
-          <div>
-            <h4 className="font-semibold text-foreground mb-4">Правовая информация</h4>
-            <ul className="space-y-3">
-              <li>
-                <a href="/privacy" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-                  Политика конфиденциальности
-                </a>
-              </li>
-              <li>
-                <a href="/terms" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-                  Условия использования
-                </a>
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        {/* Bottom */}
-        <div className="pt-8 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-muted-foreground text-sm">
-            © {new Date().getFullYear()} Service. Все права защищены.
-          </p>
-          <div className="flex items-center gap-6">
-            <span className="text-muted-foreground text-sm">
-              Республика Беларусь
-            </span>
+          <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <p>© {new Date().getFullYear()} EGR Service. Все права защищены.</p>
+            <p>Сделано с акцентом на скорость, читаемость и спокойный визуальный ритм.</p>
           </div>
         </div>
       </div>

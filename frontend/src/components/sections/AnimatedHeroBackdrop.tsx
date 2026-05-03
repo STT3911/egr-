@@ -18,7 +18,7 @@ export const AnimatedHeroBackdrop = () => {
       <div className="absolute inset-0 registry-vignette" />
 
       <motion.div
-        className="absolute left-1/2 top-1/2 h-[36rem] w-[36rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/10"
+        className="absolute left-1/2 top-1/2 h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/10 sm:h-[32rem] sm:w-[32rem] lg:h-[36rem] lg:w-[36rem]"
         animate={shouldReduceMotion ? undefined : { rotate: 360 }}
         transition={{ duration: 52, ease: "linear", repeat: Infinity }}
       >
@@ -28,12 +28,12 @@ export const AnimatedHeroBackdrop = () => {
       </motion.div>
 
       <motion.div
-        className="absolute left-1/2 top-1/2 h-[25rem] w-[25rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent/15"
+        className="absolute left-1/2 top-1/2 h-[18rem] w-[18rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent/15 sm:h-[22rem] sm:w-[22rem] lg:h-[25rem] lg:w-[25rem]"
         animate={shouldReduceMotion ? undefined : { rotate: -360 }}
         transition={{ duration: 38, ease: "linear", repeat: Infinity }}
       />
 
-      <div className="absolute inset-x-0 top-[18%] mx-auto h-56 max-w-5xl overflow-hidden opacity-70">
+      <div className="absolute inset-x-0 top-[18%] mx-auto hidden h-56 max-w-5xl overflow-hidden opacity-70 md:block">
         {lanes.map((lane) => (
           <motion.div
             key={lane}
@@ -51,7 +51,7 @@ export const AnimatedHeroBackdrop = () => {
       </div>
 
       <motion.div
-        className="absolute inset-y-0 left-1/2 w-px bg-gradient-to-b from-transparent via-primary/40 to-transparent"
+        className="absolute inset-y-0 left-1/2 hidden w-px bg-gradient-to-b from-transparent via-primary/40 to-transparent md:block"
         animate={shouldReduceMotion ? undefined : { x: ["-42vw", "42vw"], opacity: [0, 1, 0] }}
         transition={{ duration: 7, ease: "easeInOut", repeat: Infinity, repeatDelay: 1.2 }}
       />
