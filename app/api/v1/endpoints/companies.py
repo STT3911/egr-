@@ -427,8 +427,26 @@ async def get_company_profile(
     Получить профиль компании или ИП по УНП/PAN
     """
     try:
+        unp = int(identifier)
+        cache_key = f"company_profile:{unp}"
+
+        if not force_refresh and not db_only:
+            aggregator = AggregatorService()
+            try:
+                if aggregator.redis:
+                    cached_raw = aggregator.redis.get(cache_key)
+                    if cached_raw:
+                        import json
+                        logger.info(f"Redis cache hit for company profile {unp}")
+                        return CompanyProfileResponse(**json.loads(cached_raw))
+            except Exception as e:
+                logger.warning(f"Redis read error for {unp}: {e}")
+            finally:
+                aggregator.close()
+
         company_crud = CompanyCRUD(db)
-        cached = company_crud.get_full_dossier(int(identifier))
+        cached = company_crud.get_full_dossier(unp)
+
         if not cached:
             raise HTTPException(
                 status_code=404,
@@ -436,6 +454,23 @@ async def get_company_profile(
             )
 
         if db_only:
+            return CompanyProfileResponse(**cached)
+        if not force_refresh:
+            aggregator = AggregatorService()
+            try:
+                if aggregator.redis:
+                    import json
+                    aggregator.redis.setex(
+                        cache_key,
+                        3600,
+                        json.dumps(cached, default=str)
+                    )
+                    logger.info(f"Saved company profile {unp} to Redis cache")
+            except Exception as e:
+                logger.warning(f"Redis save error for {unp}: {e}")
+            finally:
+                aggregator.close()
+
             return CompanyProfileResponse(**cached)
 
         # Check if mobile API is configured
@@ -459,7 +494,7 @@ async def get_company_profile(
                 return CompanyProfileResponse(**profile)
 
         return CompanyProfileResponse(**cached)
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:

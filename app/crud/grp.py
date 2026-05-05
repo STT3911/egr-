@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple, List
 
 from dateutil.parser import parse as dt_parse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.database.models import GrpTaxpayerData, GrpRawData
 from app.utils.address_formatter import format_grp_address
@@ -80,16 +80,17 @@ class GrpCRUD:
         return self.db.query(GrpRawData).filter(GrpRawData.unp == unp).first()
     
     def get_unparsed_raw_data(self, limit: int = 100) -> List[GrpRawData]:
-        """Получить неспарсенные сырые данные."""
+        """Получить неспарсенные непустые сырые данные."""
         rows = (
             self.db.query(GrpRawData)
             .filter(GrpRawData.parsed == False)
             .filter(GrpRawData.raw_json != None)
-            .order_by(GrpRawData.fetched_at.asc())
-            .limit(max(limit * 5, limit))
+            .filter((GrpRawData.last_error == None) | (GrpRawData.last_error == ""))
+            .order_by(GrpRawData.updated_at.desc())
+            .limit(limit)
             .all()
         )
-        return [row for row in rows if row.raw_json][:limit]
+        return [row for row in rows if row.raw_json]
 
     def upsert_from_api(
         self,
