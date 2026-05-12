@@ -62,8 +62,9 @@ class Settings(BaseSettings):
 
     # Security - API Authentication
     API_KEY: Optional[str] = None
-    PUBLIC_API_TOKEN: str = "changeme-public-token"
+    PUBLIC_API_TOKEN: Optional[str] = None
     ALLOWED_API_KEYS: str = ""  # Comma-separated list of API keys
+    ALLOWED_HOSTS: str = "test.tendex.by,localhost,127.0.0.1"
     
     # Security - Rate Limiting (requests per minute)
     RATE_LIMIT_ENABLED: bool = True
@@ -111,6 +112,13 @@ class Settings(BaseSettings):
         if isinstance(self.CORS_ORIGINS, str):
             return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
         return self.CORS_ORIGINS
+
+    @property
+    def allowed_hosts_list(self) -> List[str]:
+        """Parse ALLOWED_HOSTS string into list."""
+        if isinstance(self.ALLOWED_HOSTS, str):
+            return [host.strip() for host in self.ALLOWED_HOSTS.split(",") if host.strip()]
+        return self.ALLOWED_HOSTS
 
     @field_validator('DATABASE_URL')
     @classmethod

@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.core.logger import get_logger
 from collections import defaultdict
 from datetime import datetime, timedelta
+import hmac
 import threading
 
 logger = get_logger("security")
@@ -21,6 +22,34 @@ def get_allowed_api_keys() -> set:
     return {key.strip() for key in settings.ALLOWED_API_KEYS.split(",") if key.strip()}
 
 
+def _is_public_api_route(request: Request) -> bool:
+    """Allow only intentionally public read endpoints without an API key."""
+    path = request.url.path
+    method = request.method.upper()
+    force_refresh = (request.query_params.get("force_refresh") or "").lower()
+
+    if method != "GET":
+        return False
+
+    if force_refresh in {"1", "true", "yes", "on"}:
+        return False
+
+    if path == "/api/v1/companies/lookup":
+        return True
+
+    company_prefix = "/api/v1/companies/"
+    if path.startswith(company_prefix):
+        suffix = path[len(company_prefix):].strip("/")
+        return bool(suffix.isdigit() and len(suffix) == 9)
+
+    grp_prefix = "/api/v1/grp/"
+    if path.startswith(grp_prefix):
+        suffix = path[len(grp_prefix):].strip("/")
+        return bool(suffix.isdigit() and len(suffix) == 9)
+
+    return False
+
+
 async def verify_api_key(request: Request, api_key: str = Security(api_key_header)) -> str:
     """
     Verify API key from header.
@@ -28,16 +57,8 @@ async def verify_api_key(request: Request, api_key: str = Security(api_key_heade
     """
     path = request.url.path
     
-    # --- НОВЫЙ БЛОК: Разрешаем публичный доступ к поиску И карточкам компаний ---
-    is_public_route = (
-        path.endswith("/lookup") or 
-        path.startswith("/api/v1/companies/") or 
-        path.startswith("/api/v1/grp/")
-    )
-    
-    if is_public_route:
+    if _is_public_api_route(request):
         return "public-access"
-    # ----------------------------------------------------------------------------
 
     # Skip auth in development mode if no keys configured
     if settings.APP_ENV == "development" and not settings.ALLOWED_API_KEYS:
@@ -60,7 +81,7 @@ async def verify_api_key(request: Request, api_key: str = Security(api_key_heade
             detail="API authentication not configured"
         )
     
-    if api_key not in allowed_keys:
+    if not any(hmac.compare_digest(api_key, allowed_key) for allowed_key in allowed_keys):
         logger.warning(f"Invalid API key attempt: {api_key[:8]}...")
         raise HTTPException(
             status_code=HTTP_403_FORBIDDEN,

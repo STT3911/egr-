@@ -9,7 +9,7 @@ services:
       volumes:
         - egr_postgres_data:/var/lib/postgresql/data
       ports:
-        - "5434:5432"
+        - "127.0.0.1:5434:5432"
       networks:
         - egr_default
       healthcheck:
@@ -22,7 +22,7 @@ services:
       image: redis:7-alpine
       container_name: egr_redis
       ports:
-        - "6380:6379"
+        - "127.0.0.1:6380:6379"
       networks:
         - egr_default
       healthcheck:
@@ -114,13 +114,14 @@ services:
         LOG_LEVEL: ${LOG_LEVEL:-INFO}
         API_KEY: ${API_KEY:-}
         ALLOWED_API_KEYS: ${ALLOWED_API_KEYS:-}
-        CORS_ORIGINS: ${CORS_ORIGINS:-*}
+        CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:5174,http://test.tendex.by,https://test.tendex.by}
+        ALLOWED_HOSTS: ${ALLOWED_HOSTS:-test.tendex.by,localhost,127.0.0.1,egr-api}
         SKIP_SQL_INIT: "1"
       volumes:
         - .:/app
         - ./data/egr_json_full:/app/data/egr_json_full
       ports:
-        - "8002:8000"
+        - "127.0.0.1:8002:8000"
       depends_on:
         db:
           condition: service_healthy
@@ -270,7 +271,7 @@ services:
           VITE_API_URL: ""
       container_name: egr_frontend
       ports:
-        - "3000:80"
+        - "127.0.0.1:3000:80"
       networks:
         - egr_default
       restart: unless-stopped
@@ -290,7 +291,7 @@ services:
       environment:
         VITE_API_URL: http://localhost:8002
       ports:
-        - "5173:5173"
+        - "127.0.0.1:5173:5173"
       networks:
         - egr_default
       profiles:
