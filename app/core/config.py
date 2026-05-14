@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     API_KEY: Optional[str] = None
     PUBLIC_API_TOKEN: Optional[str] = None
     ALLOWED_API_KEYS: str = ""  # Comma-separated list of API keys
-    ALLOWED_HOSTS: str = "test.tendex.by,localhost,127.0.0.1"
+    ALLOWED_HOSTS: str = "test.tendex.by,localhost,127.0.0.1,egr-api,egr_api"
     
     # Security - Rate Limiting (requests per minute)
     RATE_LIMIT_ENABLED: bool = True

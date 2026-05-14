@@ -40,7 +40,11 @@ def _is_public_api_route(request: Request) -> bool:
     company_prefix = "/api/v1/companies/"
     if path.startswith(company_prefix):
         suffix = path[len(company_prefix):].strip("/")
-        return bool(suffix.isdigit() and len(suffix) == 9)
+        if suffix.isdigit() and len(suffix) == 9:
+            return True
+        if suffix.endswith("/tax-debt"):
+            unp = suffix.removesuffix("/tax-debt").strip("/")
+            return bool(unp.isdigit() and len(unp) == 9)
 
     grp_prefix = "/api/v1/grp/"
     if path.startswith(grp_prefix):

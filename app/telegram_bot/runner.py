@@ -50,7 +50,10 @@ class EGRApiClient:
         return payload.get("results") or []
 
     async def get_company(self, unp: str) -> dict[str, Any]:
-        response = await self._client.get(f"/api/v1/companies/{unp}")
+        response = await self._client.get(
+            f"/api/v1/companies/{unp}",
+            params={"db_only": "true"},
+        )
         response.raise_for_status()
         return response.json()
 
@@ -193,7 +196,11 @@ class TelegramBot:
                     f"Компания с УНП {unp} не найдена.",
                 )
                 return
-            logger.warning(f"Company request failed: {exc.response.status_code}")
+            logger.warning(
+                "Company request failed: %s %s",
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
             await self.telegram.send_message(chat_id, "Не удалось получить карточку.")
             return
         except httpx.HTTPError as exc:
