@@ -105,6 +105,14 @@ class Settings(BaseSettings):
     SECRET_KEY: Optional[str] = None
     TENDEX_API_URL: Optional[str] = None
     TENDEX_API_KEY: Optional[str] = None
+
+    # Telegram bot
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_API_BASE_URL: str = "http://egr-api:8000"
+    TELEGRAM_API_KEY: Optional[str] = None
+    TELEGRAM_LOOKUP_LIMIT: int = 5
+    TELEGRAM_HTTP_TIMEOUT_SECONDS: float = 10.0
+    TELEGRAM_POLL_TIMEOUT_SECONDS: int = 30
     
     @property
     def cors_origins_list(self) -> List[str]:

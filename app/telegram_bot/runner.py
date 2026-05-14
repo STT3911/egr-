@@ -1,0 +1,266 @@
+"""Long polling Telegram bot for EGR company search."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from typing import Any
+
+import httpx
+
+from app.telegram_bot.formatting import (
+    HELP_TEXT,
+    company_keyboard,
+    format_company_card,
+    format_lookup_message,
+    lookup_keyboard,
+)
+
+logger = logging.getLogger("egr_aggregator.telegram_bot")
+UNP_RE = re.compile(r"^\d{9}$")
+
+
+class EGRApiClient:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        timeout_seconds: float = 10.0,
+    ):
+        headers = {}
+        if api_key:
+            headers["X-API-Key"] = api_key
+
+        self._client = httpx.AsyncClient(
+            base_url=base_url.rstrip("/"),
+            headers=headers,
+            timeout=timeout_seconds,
+        )
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def lookup(self, query: str, limit: int) -> list[dict[str, Any]]:
+        response = await self._client.get(
+            "/api/v1/companies/lookup",
+            params={"q": query, "limit": limit},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("results") or []
+
+    async def get_company(self, unp: str) -> dict[str, Any]:
+        response = await self._client.get(f"/api/v1/companies/{unp}")
+        response.raise_for_status()
+        return response.json()
+
+
+class TelegramApiClient:
+    def __init__(self, token: str, timeout_seconds: float = 10.0):
+        self._base_url = f"https://api.telegram.org/bot{token}"
+        self._client = httpx.AsyncClient(timeout=timeout_seconds)
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def get_updates(self, offset: int | None, timeout: int) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "timeout": timeout,
+            "allowed_updates": ["message", "callback_query"],
+        }
+        if offset is not None:
+            payload["offset"] = offset
+
+        response = await self._client.post(f"{self._base_url}/getUpdates", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Telegram getUpdates failed: {data}")
+        return data.get("result") or []
+
+    async def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text[:4096],
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+
+        response = await self._client.post(f"{self._base_url}/sendMessage", json=payload)
+        response.raise_for_status()
+
+    async def answer_callback_query(self, callback_query_id: str) -> None:
+        response = await self._client.post(
+            f"{self._base_url}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id},
+        )
+        response.raise_for_status()
+
+
+class TelegramBot:
+    def __init__(
+        self,
+        telegram: TelegramApiClient,
+        egr: EGRApiClient,
+        lookup_limit: int = 5,
+    ):
+        self.telegram = telegram
+        self.egr = egr
+        self.lookup_limit = lookup_limit
+
+    async def process_update(self, update: dict[str, Any]) -> None:
+        if "callback_query" in update:
+            await self._handle_callback(update["callback_query"])
+            return
+
+        message = update.get("message")
+        if message:
+            await self._handle_message(message)
+
+    async def _handle_message(self, message: dict[str, Any]) -> None:
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        text = (message.get("text") or "").strip()
+        if chat_id is None:
+            return
+
+        if text in {"/start", "/help"}:
+            await self.telegram.send_message(chat_id, HELP_TEXT)
+            return
+
+        if not text or len(text) < 2:
+            await self.telegram.send_message(chat_id, HELP_TEXT)
+            return
+
+        if UNP_RE.fullmatch(text):
+            await self._send_company_card(chat_id, text)
+            return
+
+        await self._send_lookup(chat_id, text)
+
+    async def _handle_callback(self, callback_query: dict[str, Any]) -> None:
+        callback_id = callback_query.get("id")
+        if callback_id:
+            await self.telegram.answer_callback_query(callback_id)
+
+        data = callback_query.get("data") or ""
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        if chat_id is None:
+            return
+
+        if data.startswith("company:"):
+            unp = data.removeprefix("company:").strip()
+            if UNP_RE.fullmatch(unp):
+                await self._send_company_card(chat_id, unp)
+                return
+
+        await self.telegram.send_message(chat_id, HELP_TEXT)
+
+    async def _send_lookup(self, chat_id: int, query: str) -> None:
+        try:
+            results = await self.egr.lookup(query, self.lookup_limit)
+        except httpx.HTTPStatusError as exc:
+            logger.warning(f"Lookup request failed: {exc.response.status_code}")
+            await self.telegram.send_message(chat_id, "Не удалось выполнить поиск.")
+            return
+        except httpx.HTTPError as exc:
+            logger.warning(f"Lookup request error: {exc}")
+            await self.telegram.send_message(chat_id, "Сервис поиска временно недоступен.")
+            return
+
+        await self.telegram.send_message(
+            chat_id,
+            format_lookup_message(query, results),
+            reply_markup=lookup_keyboard(results),
+        )
+
+    async def _send_company_card(self, chat_id: int, unp: str) -> None:
+        try:
+            company = await self.egr.get_company(unp)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                await self.telegram.send_message(
+                    chat_id,
+                    f"Компания с УНП {unp} не найдена.",
+                )
+                return
+            logger.warning(f"Company request failed: {exc.response.status_code}")
+            await self.telegram.send_message(chat_id, "Не удалось получить карточку.")
+            return
+        except httpx.HTTPError as exc:
+            logger.warning(f"Company request error: {exc}")
+            await self.telegram.send_message(chat_id, "Сервис карточек временно недоступен.")
+            return
+
+        await self.telegram.send_message(
+            chat_id,
+            format_company_card(company),
+            reply_markup=company_keyboard(unp),
+        )
+
+
+async def run_polling() -> None:
+    from app.core.config import settings
+
+    if not settings.TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is required to run the Telegram bot")
+
+    telegram_timeout = max(
+        settings.TELEGRAM_HTTP_TIMEOUT_SECONDS,
+        settings.TELEGRAM_POLL_TIMEOUT_SECONDS + 5,
+    )
+    telegram = TelegramApiClient(
+        settings.TELEGRAM_BOT_TOKEN,
+        timeout_seconds=telegram_timeout,
+    )
+    egr = EGRApiClient(
+        settings.TELEGRAM_API_BASE_URL,
+        api_key=settings.TELEGRAM_API_KEY,
+        timeout_seconds=settings.TELEGRAM_HTTP_TIMEOUT_SECONDS,
+    )
+    bot = TelegramBot(
+        telegram=telegram,
+        egr=egr,
+        lookup_limit=settings.TELEGRAM_LOOKUP_LIMIT,
+    )
+    offset: int | None = None
+
+    logger.info("Telegram bot started")
+    try:
+        while True:
+            try:
+                updates = await telegram.get_updates(
+                    offset=offset,
+                    timeout=settings.TELEGRAM_POLL_TIMEOUT_SECONDS,
+                )
+                for update in updates:
+                    update_id = update.get("update_id")
+                    if isinstance(update_id, int):
+                        offset = update_id + 1
+                    try:
+                        await bot.process_update(update)
+                    except Exception as exc:
+                        logger.exception(f"Failed to process Telegram update: {exc}")
+            except Exception as exc:
+                logger.warning(f"Telegram polling error: {exc}")
+                await asyncio.sleep(5)
+    finally:
+        await telegram.close()
+        await egr.close()
+
+
+def main() -> None:
+    asyncio.run(run_polling())
+
+
+if __name__ == "__main__":
+    main()
