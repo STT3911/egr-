@@ -64,9 +64,11 @@ class TelegramFormattingTests(unittest.TestCase):
 
         self.assertIn("<b>ООО «Рога &amp; Копыта»</b>", card)
         self.assertIn("УНП: <code>500000306</code>", card)
-        self.assertIn("Адрес: Минск", card)
-        self.assertIn("ВЭД: 62010 Разработка ПО", card)
-        self.assertIn("Сайт: https://example.com", card)
+        self.assertIn("<b>Адреса</b>", card)
+        self.assertIn("1. Минск", card)
+        self.assertIn("<b>ВЭД</b>", card)
+        self.assertIn("1. 62010 Разработка ПО", card)
+        self.assertIn("сайт: https://example.com", card)
 
     def test_format_lookup_message_includes_historical_match(self):
         message = format_lookup_message(

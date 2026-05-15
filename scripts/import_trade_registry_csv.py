@@ -241,12 +241,48 @@ def upsert_batch(db, payloads: list[dict[str, Any]]) -> None:
     db.execute(stmt)
 
 
+class CsvReportWriter:
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.handle = None
+        self.writer = None
+        self.fieldnames = None
+
+    def write(self, row: dict[str, Any]) -> None:
+        if self.path is None:
+            return
+        if self.writer is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.fieldnames = list(row.keys())
+            self.handle = self.path.open("w", encoding="utf-8-sig", newline="")
+            self.writer = csv.DictWriter(self.handle, fieldnames=self.fieldnames, extrasaction="ignore")
+            self.writer.writeheader()
+        self.writer.writerow(row)
+
+    def close(self) -> None:
+        if self.handle is not None:
+            self.handle.close()
+            self.handle = None
+
+
+def dedupe_batch_by_registry_key(payloads: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    deduped_by_key: dict[tuple[int, str], dict[str, Any]] = {}
+    duplicates = 0
+    for payload in payloads:
+        key = (int(payload["unp"]), str(payload["registration_number"]))
+        if key in deduped_by_key:
+            duplicates += 1
+        deduped_by_key[key] = payload
+    return list(deduped_by_key.values()), duplicates
+
+
 def import_csv(
     csv_path: Path,
     batch_size: int,
     dry_run: bool,
     source_date: date | None,
     encoding: str | None = None,
+    missing_output: Path | None = None,
 ) -> dict[str, int | str | None]:
     from app.core.database import SessionLocal
 
@@ -256,9 +292,11 @@ def import_csv(
         "invalid": 0,
         "matched": 0,
         "missing_unp_in_db": 0,
+        "duplicate_registry_keys": 0,
         "written": 0,
     }
     db = SessionLocal()
+    missing_writer = CsvReportWriter(missing_output)
     try:
         resolved_encoding = encoding or detect_csv_encoding(csv_path)
         stats["encoding"] = resolved_encoding
@@ -270,10 +308,20 @@ def import_csv(
                 company_id = company_ids.get(payload["unp"])
                 if company_id is None:
                     stats["missing_unp_in_db"] += 1
+                    missing_writer.write(
+                        {
+                            "__parsed_unp": payload["unp"],
+                            "__registration_number": payload["registration_number"],
+                            **payload["raw_json"],
+                        }
+                    )
                     continue
                 stats["matched"] += 1
                 payload["company_id"] = company_id
                 write_payloads.append(payload)
+
+            write_payloads, duplicates = dedupe_batch_by_registry_key(write_payloads)
+            stats["duplicate_registry_keys"] += duplicates
 
             if dry_run or not write_payloads:
                 return
@@ -306,6 +354,7 @@ def import_csv(
         db.rollback()
         raise
     finally:
+        missing_writer.close()
         db.close()
 
 
@@ -315,6 +364,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=1000)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--encoding", default=None, help="CSV encoding; auto-detected when omitted")
+    parser.add_argument("--missing-output", type=Path, default=None, help="Write rows with UNPs missing in DB to CSV")
     parser.add_argument("--source-date", type=parse_date, default=None)
     args = parser.parse_args()
 
@@ -324,7 +374,14 @@ def main() -> None:
         parser.error("--batch-size must be greater than zero")
 
     source_date = args.source_date or infer_source_date(args.csv_path)
-    stats = import_csv(args.csv_path, args.batch_size, args.dry_run, source_date, args.encoding)
+    stats = import_csv(
+        args.csv_path,
+        args.batch_size,
+        args.dry_run,
+        source_date,
+        args.encoding,
+        args.missing_output,
+    )
     print(json.dumps({**stats, "source_date": source_date.isoformat() if source_date else None}, ensure_ascii=False, indent=2))
 
 

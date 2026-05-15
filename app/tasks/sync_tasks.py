@@ -1550,7 +1550,7 @@ def load_companies_from_json(self, auto_process: bool = True):
                                 for item in ijson.items(fh, ijson_path):
                                     if not isinstance(item, dict):
                                         continue
-                                    unp = item.get("ngrn") or item.get("vunp")
+                                    unp = item.get("unp") or item.get("ngrn") or item.get("vunp")
                                     if not unp:
                                         continue
                                     raw_data = item if any(k in item for k in ["base_info", "names", "addresses", "ved"]) else {"base_info": item}
@@ -1580,7 +1580,7 @@ def load_companies_from_json(self, auto_process: bool = True):
                                     for item in payload:
                                         if not isinstance(item, dict):
                                             continue
-                                        unp = item.get("ngrn") or item.get("vunp")
+                                        unp = item.get("unp") or item.get("ngrn") or item.get("vunp")
                                         if not unp:
                                             continue
                                         raw_data = item if any(k in item for k in ["base_info", "names", "addresses", "ved"]) else {"base_info": item}
@@ -1612,7 +1612,7 @@ def load_companies_from_json(self, auto_process: bool = True):
                     for item in payload:
                         if not isinstance(item, dict):
                             continue
-                        unp = item.get("ngrn") or item.get("vunp")
+                        unp = item.get("unp") or item.get("ngrn") or item.get("vunp")
                         if not unp:
                             continue
                         raw_data = item if any(k in item for k in ["base_info", "names", "addresses", "ved"]) else {"base_info": item}
@@ -1636,7 +1636,7 @@ def load_companies_from_json(self, auto_process: bool = True):
                             for item in payload:
                                 if not isinstance(item, dict):
                                     continue
-                                unp = item.get("ngrn") or item.get("vunp")
+                                unp = item.get("unp") or item.get("ngrn") or item.get("vunp")
                                 if not unp:
                                     continue
                                 raw_data = item if any(k in item for k in ["base_info", "names", "addresses", "ved"]) else {"base_info": item}
