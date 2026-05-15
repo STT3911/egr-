@@ -1,5 +1,5 @@
 # EGR Service - test.tendex.by (HTTPS)
-# Requires ssl/fullchain.pem and ssl/privkey.pem (e.g. via ssl-copy or scripts/enable-ssl.sh).
+# Requires ssl/fullchain.pem and ssl/privkey.pem (e.g. via ssl-copy service).
 # Rate limiting (http context): first line of defence vs DDoS and parsers.
 limit_req_zone $binary_remote_addr zone=api_general:10m rate=60r/m;
 limit_req_zone $binary_remote_addr zone=api_lookup:10m rate=10r/m;
