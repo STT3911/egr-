@@ -171,6 +171,76 @@ class Company(Base):
     events = relationship("CompanyEvent", back_populates="company", cascade="all, delete-orphan")
     gias_accreditation = relationship("GiasAccreditedCustomer", back_populates="company", uselist=False)
     gias_locked_suppliers = relationship("LockedSupplier", back_populates="company")
+    trade_registry_records = relationship("TradeRegistryRecord", back_populates="company")
+
+
+class TradeRegistryRecord(Base):
+    """Rows from the Belarus trade registry, linked only to existing EGR companies."""
+    __tablename__ = "trade_registry_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    unp = Column(BigInteger, nullable=False, index=True)
+
+    legal_name = Column(Text, nullable=True)
+    legal_address = Column(Text, nullable=True)
+    object_type = Column(Text, nullable=True)
+    object_name = Column(Text, nullable=True)
+    internet_shop_domain = Column(Text, nullable=True)
+    trade_network_name = Column(Text, nullable=True)
+
+    object_region = Column(Text, nullable=True)
+    object_district = Column(Text, nullable=True)
+    object_locality = Column(Text, nullable=True)
+    object_street = Column(Text, nullable=True)
+    object_building = Column(Text, nullable=True)
+    object_office = Column(Text, nullable=True)
+    object_contacts = Column(Text, nullable=True)
+
+    format_type = Column(Text, nullable=True)
+    location_type = Column(Text, nullable=True)
+    assortment_type = Column(Text, nullable=True)
+    is_firm = Column(String(32), nullable=True)
+    trade_object_type = Column(Text, nullable=True)
+    trade_area = Column(String(64), nullable=True)
+
+    retail_trade = Column(String(32), nullable=True)
+    wholesale_trade = Column(String(32), nullable=True)
+    retail_without_object_form = Column(Text, nullable=True)
+    wholesale_without_object = Column(String(32), nullable=True)
+    goods_classes = Column(Text, nullable=True)
+    goods_groups = Column(Text, nullable=True)
+    goods_subgroups = Column(Text, nullable=True)
+
+    catering_format_type = Column(Text, nullable=True)
+    seats_count = Column(Integer, nullable=True)
+    public_seats_count = Column(Integer, nullable=True)
+    shopping_center_specializations = Column(Text, nullable=True)
+    shopping_center_trade_objects_count = Column(Integer, nullable=True)
+    shopping_center_catering_objects_count = Column(Integer, nullable=True)
+    shopping_center_trade_area = Column(String(64), nullable=True)
+    market_type = Column(Text, nullable=True)
+    market_specialization = Column(Text, nullable=True)
+    market_places_count = Column(Integer, nullable=True)
+    market_trade_objects_count = Column(Integer, nullable=True)
+
+    registration_number = Column(String(64), nullable=False, index=True)
+    inclusion_date = Column(Date, nullable=True)
+    source_date = Column(Date, nullable=True, index=True)
+    source_file = Column(Text, nullable=True)
+    raw_json = Column(JSONB, nullable=False)
+    sync_hash = Column(String(64), nullable=False)
+
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("unp", "registration_number", name="uq_trade_registry_records_unp_registration_number"),
+    )
+
+    company = relationship("Company", back_populates="trade_registry_records")
 
 
 class CompanyPlaceLocation(Base):
@@ -752,4 +822,3 @@ class LockedSupplierHistory(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     supplier = relationship("LockedSupplier", back_populates="history")
-

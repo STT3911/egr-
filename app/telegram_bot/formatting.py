@@ -4,6 +4,8 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+TELEGRAM_MESSAGE_LIMIT = 3900
+
 
 HELP_TEXT = (
     "Напишите УНП или часть названия компании.\n\n"
@@ -24,6 +26,39 @@ def _truncate(text: str, max_length: int) -> str:
     if len(text) <= max_length:
         return text
     return text[: max_length - 1].rstrip() + "…"
+
+
+def _format_period(item: dict[str, Any]) -> str | None:
+    valid_from = _clean(item.get("valid_from"))
+    valid_to = _clean(item.get("valid_to"))
+    if valid_from and valid_to:
+        return f"{valid_from} - {valid_to}"
+    if valid_from:
+        return f"с {valid_from}"
+    if valid_to:
+        return f"до {valid_to}"
+    return None
+
+
+def _append_limited(lines: list[str], line: str, *, limit: int = TELEGRAM_MESSAGE_LIMIT) -> bool:
+    candidate = "\n".join([*lines, line])
+    if len(candidate) <= limit:
+        lines.append(line)
+        return True
+    if lines and lines[-1] != "…":
+        lines.append("…")
+    return False
+
+
+def _append_section(lines: list[str], title: str, section_lines: list[str]) -> None:
+    if not section_lines:
+        return
+    _append_limited(lines, "")
+    if not _append_limited(lines, f"<b>{escape(title)}</b>"):
+        return
+    for line in section_lines:
+        if not _append_limited(lines, line):
+            return
 
 
 def company_display_name(company: dict[str, Any]) -> str:
@@ -96,37 +131,129 @@ def format_company_card(company: dict[str, Any]) -> str:
     if liquidation_date:
         lines.append(f"Дата ликвидации: {escape(liquidation_date)}")
 
-    address = _clean(company.get("place_location_address"))
-    if not address:
-        for item in company.get("addresses") or []:
-            address = _clean(item.get("full_address"))
-            if address:
-                break
-    if address:
-        lines.append(f"Адрес: {escape(address)}")
+    short_name = _clean(company.get("current_short_name_ru"))
+    if short_name and short_name != name:
+        lines.append(f"Краткое название: {escape(short_name)}")
 
-    for item in company.get("ved") or []:
+    name_by = _clean(company.get("current_name_by"))
+    if name_by:
+        lines.append(f"Название BY: {escape(name_by)}")
+
+    address = _clean(company.get("place_location_address"))
+    if address:
+        lines.append(f"Адрес местонахождения: {escape(address)}")
+
+    name_lines = []
+    for index, item in enumerate(company.get("names") or [], start=1):
+        values = []
+        full_name = _clean(item.get("full_name_ru"))
+        short = _clean(item.get("short_name_ru"))
+        by = _clean(item.get("full_name_by"))
+        period = _format_period(item)
+        if full_name:
+            values.append(escape(full_name))
+        if short and short != full_name:
+            values.append(f"кратко: {escape(short)}")
+        if by:
+            values.append(f"BY: {escape(by)}")
+        if period:
+            values.append(escape(period))
+        if values:
+            name_lines.append(f"{index}. " + "; ".join(values))
+    _append_section(lines, "Названия", name_lines)
+
+    address_lines = []
+    for index, item in enumerate(company.get("addresses") or [], start=1):
+        parts = []
+        postal_code = _clean(item.get("postal_code"))
+        region = _clean(item.get("region"))
+        district = _clean(item.get("district"))
+        full_address = _clean(item.get("full_address"))
+        period = _format_period(item)
+        if postal_code:
+            parts.append(escape(postal_code))
+        if region:
+            parts.append(escape(region))
+        if district:
+            parts.append(escape(district))
+        if full_address:
+            parts.append(escape(full_address))
+        if period:
+            parts.append(escape(period))
+        if parts:
+            address_lines.append(f"{index}. " + "; ".join(parts))
+    _append_section(lines, "Адреса", address_lines)
+
+    ved_lines = []
+    for index, item in enumerate(company.get("ved") or [], start=1):
         ved_code = _clean(item.get("ved_code"))
         ved_name = _clean(item.get("ved_name"))
+        period = _format_period(item)
         if ved_code or ved_name:
             value = " ".join(part for part in [ved_code, ved_name] if part)
-            lines.append(f"ВЭД: {escape(value)}")
-            break
+            if period:
+                value = f"{value}; {period}"
+            ved_lines.append(f"{index}. {escape(value)}")
+    _append_section(lines, "ВЭД", ved_lines)
 
     contact_lines = []
-    for item in company.get("contacts") or []:
+    for index, item in enumerate(company.get("contacts") or [], start=1):
+        parts = []
         email = _clean(item.get("email"))
         website = _clean(item.get("website"))
         phone = _clean(item.get("phone"))
+        fax = _clean(item.get("fax"))
         if email:
-            contact_lines.append(f"Email: {escape(email)}")
+            parts.append(f"Email: {escape(email)}")
         if website:
-            contact_lines.append(f"Сайт: {escape(website)}")
+            parts.append(f"сайт: {escape(website)}")
         if phone:
-            contact_lines.append(f"Телефон: {escape(phone)}")
-        if contact_lines:
-            break
-    lines.extend(contact_lines)
+            parts.append(f"телефон: {escape(phone)}")
+        if fax:
+            parts.append(f"факс: {escape(fax)}")
+        if parts:
+            contact_lines.append(f"{index}. " + "; ".join(parts))
+    _append_section(lines, "Контакты", contact_lines)
+
+    accreditation = company.get("gias_accreditation") or {}
+    accreditation_lines = []
+    for label, key in [
+        ("Статус", "state"),
+        ("Наименование", "summary"),
+        ("Телефон", "phone"),
+        ("Email", "email"),
+        ("Сайт", "web_site"),
+        ("Город", "city_name"),
+        ("Адрес", "placements_address"),
+        ("Обновлено", "dt_update"),
+        ("Действует с", "dt_from"),
+        ("Действует до", "dt_to"),
+    ]:
+        value = _clean(accreditation.get(key))
+        if value:
+            accreditation_lines.append(f"{label}: {escape(value)}")
+    _append_section(lines, "ГИАС аккредитация", accreditation_lines)
+
+    locked_supplier_lines = []
+    for index, item in enumerate(company.get("gias_locked_suppliers") or [], start=1):
+        parts = []
+        for label, key in [
+            ("Статус", "state"),
+            ("Наименование", "name"),
+            ("Место", "location"),
+            ("Реестр", "reg_number"),
+            ("Включен", "add_date"),
+            ("Исключен", "del_date"),
+            ("Основание включения", "base_incl_text"),
+            ("Основание исключения", "base_excl_text"),
+            ("Автор", "author_initials"),
+        ]:
+            value = _clean(item.get(key))
+            if value:
+                parts.append(f"{label}: {escape(_truncate(value, 220))}")
+        if parts:
+            locked_supplier_lines.append(f"{index}. " + "; ".join(parts))
+    _append_section(lines, "ГИАС недобросовестные поставщики", locked_supplier_lines)
 
     return "\n".join(lines)
 
