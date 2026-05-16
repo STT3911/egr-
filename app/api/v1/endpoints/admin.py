@@ -22,8 +22,10 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.logger import get_logger
 
 router = APIRouter()
+logger = get_logger("api.admin")
 
 ADMIN_COOKIE_NAME = "egr_admin_session"
 MAX_IMPORT_ROWS = 5000
@@ -234,10 +236,13 @@ def _append_export_sheet(
         sheet.column_dimensions[column[0].column_letter].width = min(max(max_length + 2, 12), 60)
 
 
-def _fetch_rows(db: Session, sql: str, unps: list[str]) -> list[dict]:
+def _fetch_rows(db: Session, sql: str, unps: list[str], label: str = "query") -> list[dict]:
     if not unps:
         return []
+    started_at = time.perf_counter()
     rows = db.execute(text(sql), {"unps": [int(unp) for unp in unps]}).mappings().all()
+    elapsed = time.perf_counter() - started_at
+    logger.info("Admin export %s: %s rows in %.3fs", label, len(rows), elapsed)
     return [dict(row) for row in rows]
 
 
@@ -251,39 +256,6 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         """
         WITH requested(unp) AS (
             SELECT unnest(CAST(:unps AS bigint[]))
-        ),
-        current_names AS (
-            SELECT DISTINCT ON (company_id)
-                company_id,
-                full_name_ru,
-                short_name_ru,
-                full_name_by
-            FROM egr_company_names_history
-            ORDER BY company_id, (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
-        ),
-        current_addresses AS (
-            SELECT DISTINCT ON (company_id)
-                company_id,
-                full_address
-            FROM egr_company_addresses_history
-            ORDER BY company_id, (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
-        ),
-        current_contacts AS (
-            SELECT DISTINCT ON (company_id)
-                company_id,
-                email,
-                phone,
-                website
-            FROM egr_company_contacts_history
-            ORDER BY company_id, (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
-        ),
-        current_ved AS (
-            SELECT
-                company_id,
-                string_agg(concat_ws(' ', ved_code, ved_name), '; ' ORDER BY ved_code) AS ved
-            FROM egr_company_ved_history
-            WHERE valid_to IS NULL
-            GROUP BY company_id
         )
         SELECT
             r.unp,
@@ -306,15 +278,36 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
             cv.ved AS current_ved,
             cc.email,
             cc.phone,
-            cc.website,
-            pl.raw_json AS place_location_raw
+            cc.website
         FROM requested r
         LEFT JOIN egr_companies c ON c.unp = r.unp
-        LEFT JOIN current_names n ON n.company_id = c.id
-        LEFT JOIN current_addresses a ON a.company_id = c.id
+        LEFT JOIN LATERAL (
+            SELECT full_name_ru, short_name_ru, full_name_by
+            FROM egr_company_names_history
+            WHERE company_id = c.id
+            ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+            LIMIT 1
+        ) n ON true
+        LEFT JOIN LATERAL (
+            SELECT full_address
+            FROM egr_company_addresses_history
+            WHERE company_id = c.id
+            ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+            LIMIT 1
+        ) a ON true
         LEFT JOIN egr_company_place_locations pl ON pl.unp = c.unp
-        LEFT JOIN current_contacts cc ON cc.company_id = c.id
-        LEFT JOIN current_ved cv ON cv.company_id = c.id
+        LEFT JOIN LATERAL (
+            SELECT email, phone, website
+            FROM egr_company_contacts_history
+            WHERE company_id = c.id
+            ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+            LIMIT 1
+        ) cc ON true
+        LEFT JOIN LATERAL (
+            SELECT string_agg(concat_ws(' ', ved_code, ved_name), '; ' ORDER BY ved_code) AS ved
+            FROM egr_company_ved_history
+            WHERE company_id = c.id AND valid_to IS NULL
+        ) cv ON true
         LEFT JOIN ref_statuses rs ON rs.id = c.current_status_code
         LEFT JOIN ref_creation_methods cm ON cm.id = c.creation_method_id
         LEFT JOIN ref_authorities ca ON ca.id = c.creation_authority_id
@@ -325,6 +318,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         ORDER BY array_position(CAST(:unps AS bigint[]), r.unp)
         """,
         unps,
+        "Summary",
     )
 
     export["Names"] = _fetch_rows(db, """
@@ -333,7 +327,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         JOIN egr_companies c ON c.id = n.company_id
         WHERE c.unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY c.unp, n.valid_from DESC NULLS LAST, n.valid_to DESC NULLS LAST
-    """, unps)
+    """, unps, "Names")
 
     export["Addresses"] = _fetch_rows(db, """
         SELECT c.unp, a.full_address, a.postal_code, a.region, a.district, a.valid_from, a.valid_to
@@ -341,7 +335,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         JOIN egr_companies c ON c.id = a.company_id
         WHERE c.unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY c.unp, a.valid_from DESC NULLS LAST, a.valid_to DESC NULLS LAST
-    """, unps)
+    """, unps, "Addresses")
 
     export["VED"] = _fetch_rows(db, """
         SELECT c.unp, v.ved_code, v.ved_name, v.valid_from, v.valid_to
@@ -349,7 +343,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         JOIN egr_companies c ON c.id = v.company_id
         WHERE c.unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY c.unp, v.valid_from DESC NULLS LAST, v.ved_code
-    """, unps)
+    """, unps, "VED")
 
     export["Contacts"] = _fetch_rows(db, """
         SELECT c.unp, ct.email, ct.website, ct.phone, ct.valid_from, ct.valid_to
@@ -357,7 +351,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         JOIN egr_companies c ON c.id = ct.company_id
         WHERE c.unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY c.unp, ct.valid_from DESC NULLS LAST, ct.valid_to DESC NULLS LAST
-    """, unps)
+    """, unps, "Contacts")
 
     export["Events"] = _fetch_rows(db, """
         SELECT
@@ -382,7 +376,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         LEFT JOIN ref_foundations rf ON rf.id = e.foundation_id
         WHERE c.unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY c.unp, e.event_date DESC NULLS LAST, e.created_at DESC NULLS LAST
-    """, unps)
+    """, unps, "Events")
 
     export["GRP"] = _fetch_rows(db, """
         SELECT unp, full_name, short_name, registration_date, inspectorate_code, inspectorate_name,
@@ -390,14 +384,14 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         FROM grp_taxpayer_data
         WHERE unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY unp
-    """, unps)
+    """, unps, "GRP")
 
     export["Tax Debt"] = _fetch_rows(db, """
         SELECT debtor_unp AS unp, imns_code, imns_name, debt_date, repayment_date, slice_date
         FROM nalog_debt_records
         WHERE debtor_unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY debtor_unp, slice_date DESC, imns_code
-    """, unps)
+    """, unps, "Tax Debt")
 
     export["GIAS Accreditation"] = _fetch_rows(db, """
         SELECT unp, name, uid_customer, customer_id, summary, state, dt_update, dt_from, dt_to,
@@ -407,7 +401,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         FROM gias_accredited_customers
         WHERE unp IN (SELECT unnest(CAST(:unps AS bigint[]))::text)
         ORDER BY unp
-    """, unps)
+    """, unps, "GIAS Accreditation")
 
     export["Locked Suppliers"] = _fetch_rows(db, """
         SELECT
@@ -427,7 +421,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         LEFT JOIN locked_supplier_reasons be ON be.id = ls.base_excl_id
         WHERE ls.provider_unp IN (SELECT unnest(CAST(:unps AS bigint[]))::text)
         ORDER BY ls.provider_unp, ls.add_date DESC NULLS LAST
-    """, unps)
+    """, unps, "Locked Suppliers")
 
     export["Trade Registry"] = _fetch_rows(db, """
         SELECT
@@ -439,14 +433,7 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         FROM trade_registry_records
         WHERE unp = ANY(CAST(:unps AS bigint[]))
         ORDER BY unp, source_date DESC NULLS LAST, registration_number
-    """, unps)
-
-    export["Raw EGR"] = _fetch_rows(db, """
-        SELECT unp, data, base_info, addresses, ved, names, processed_at, last_error
-        FROM egr_raw_company_data
-        WHERE unp = ANY(CAST(:unps AS bigint[]))
-        ORDER BY unp
-    """, unps)
+    """, unps, "Trade Registry")
 
     return export
 
@@ -478,7 +465,6 @@ def _build_result_workbook(unps: list[str], company_rows: dict[str, list[dict]])
             ("email", "Email"),
             ("phone", "Телефон"),
             ("website", "Сайт"),
-            ("place_location_raw", "Сырой адрес Mobile API"),
         ],
         "Names": [
             ("unp", "УНП"),
@@ -612,16 +598,6 @@ def _build_result_workbook(unps: list[str], company_rows: dict[str, list[dict]])
             ("inclusion_date", "Дата включения"),
             ("source_date", "Дата источника"),
             ("source_file", "Файл источника"),
-        ],
-        "Raw EGR": [
-            ("unp", "УНП"),
-            ("data", "Сырой JSON"),
-            ("base_info", "Базовая информация"),
-            ("addresses", "Адреса JSON"),
-            ("ved", "ВЭД JSON"),
-            ("names", "Названия JSON"),
-            ("processed_at", "Дата обработки"),
-            ("last_error", "Последняя ошибка"),
         ],
     }
 

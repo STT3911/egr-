@@ -154,11 +154,26 @@ def lookup_companies(
                         c.unp,
                         n.full_name_ru,
                         n.short_name_ru,
-                        n.full_name_by
+                        n.full_name_by,
+                        COALESCE(pl.address, a.full_address) AS address,
+                        rs.name AS status
                     FROM egr_companies c
-                    LEFT JOIN egr_company_names_history n
-                        ON n.company_id = c.id
-                       AND n.valid_to IS NULL
+                    LEFT JOIN LATERAL (
+                        SELECT full_name_ru, short_name_ru, full_name_by
+                        FROM egr_company_names_history
+                        WHERE company_id = c.id
+                        ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+                        LIMIT 1
+                    ) n ON true
+                    LEFT JOIN LATERAL (
+                        SELECT full_address
+                        FROM egr_company_addresses_history
+                        WHERE company_id = c.id
+                        ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+                        LIMIT 1
+                    ) a ON true
+                    LEFT JOIN egr_company_place_locations pl ON pl.unp = c.unp
+                    LEFT JOIN ref_statuses rs ON rs.id = c.current_status_code
                     WHERE c.unp = :unp_exact
                     LIMIT 1
                 """)
