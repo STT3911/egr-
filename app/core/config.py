@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     PUBLIC_API_TOKEN: Optional[str] = None
     ALLOWED_API_KEYS: str = ""  # Comma-separated list of API keys
     ALLOWED_HOSTS: str = "test.tendex.by,localhost,127.0.0.1,egr-api,egr_api"
+
+    # Admin panel authentication
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: Optional[str] = None
+    ADMIN_PASSWORD_HASH: Optional[str] = None
+    ADMIN_SESSION_TTL_HOURS: int = 12
+    ADMIN_COOKIE_SECURE: Optional[bool] = None
     
     # Security - Rate Limiting (requests per minute)
     RATE_LIMIT_ENABLED: bool = True

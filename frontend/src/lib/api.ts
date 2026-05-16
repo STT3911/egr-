@@ -94,6 +94,13 @@ const request = async <T>(path: string, init?: RequestInit) => {
   return response.json() as Promise<T>;
 };
 
+const adminRequest = async <T>(path: string, init?: RequestInit) => {
+  return request<T>(path, {
+    ...init,
+    credentials: "include",
+  });
+};
+
 export type GrpTaxpayerData = {
   unp: number;
   full_name?: string;
@@ -131,6 +138,26 @@ export type CompanyLookupResponse = {
   query: string;
   count: number;
   results: CompanyLookupResult[];
+};
+
+export type AdminCompanyItem = {
+  unp: number;
+  name?: string;
+  short_name?: string;
+  address?: string;
+  status?: string;
+  registration_date?: string;
+};
+
+export type AdminCompaniesResponse = {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AdminCompanyItem[];
+};
+
+export type AdminSession = {
+  username: string;
 };
 
 export const lookupCompanies = async (query: string) => {
@@ -199,4 +226,67 @@ export const searchReference = async (type: string, query: string) => {
   return request<ReferenceItem[]>(
     `/api/v1/references/${encodeURIComponent(type)}/search?${qs}`
   );
+};
+
+export const adminLogin = async (username: string, password: string) => {
+  return adminRequest<AdminSession>("/api/v1/admin/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+};
+
+export const adminLogout = async () => {
+  return adminRequest<{ ok: boolean }>("/api/v1/admin/logout", {
+    method: "POST",
+  });
+};
+
+export const getAdminSession = async () => {
+  return adminRequest<AdminSession>("/api/v1/admin/me");
+};
+
+export const getAdminCompanies = async (query = "", offset = 0, limit = 25) => {
+  const qs = toQuery({ q: query, offset, limit });
+  return adminRequest<AdminCompaniesResponse>(`/api/v1/admin/companies?${qs}`);
+};
+
+const getFilenameFromDisposition = (disposition: string | null) => {
+  if (!disposition) {
+    return "company-fill-result.xlsx";
+  }
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1].replace(/"/g, ""));
+  }
+
+  const asciiMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] || "company-fill-result.xlsx";
+};
+
+export const fillCompanyFile = async (file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/fill-company-file`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(data.detail || data.message || "File processing failed");
+  }
+
+  const contentType = response.headers.get("Content-Type") || "";
+  if (!contentType.includes("spreadsheetml.sheet")) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || "Server did not return an Excel file");
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: getFilenameFromDisposition(response.headers.get("Content-Disposition")),
+  };
 };

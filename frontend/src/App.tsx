@@ -10,6 +10,7 @@ import References from "./pages/References";
 import ReferenceDetail from "./pages/ReferenceDetail";
 import CompanyRawData from "./pages/CompanyRawData";
 import CompanyCompare from "./pages/CompanyCompare";
+import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -56,6 +57,7 @@ const App = () => (
           <Route path="/company/:unp/compare" element={<CompanyCompare />} />
           <Route path="/references" element={<References />} />
           <Route path="/references/:type" element={<ReferenceDetail />} />
+          <Route path="/admin" element={<Admin />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
