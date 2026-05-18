@@ -243,6 +243,51 @@ class TradeRegistryRecord(Base):
     company = relationship("Company", back_populates="trade_registry_records")
 
 
+class TradeRegistryImportRun(Base):
+    """Admin-uploaded trade registry CSV import run."""
+    __tablename__ = "trade_registry_import_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    status = Column(String(32), nullable=False, default="queued", index=True)
+    original_filename = Column(Text, nullable=False)
+    stored_path = Column(Text, nullable=False)
+    source_date = Column(Date, nullable=True, index=True)
+    stats_json = Column(JSONB, nullable=False, default=dict)
+    error = Column(Text, nullable=True)
+    celery_task_id = Column(String(255), nullable=True)
+    created_by = Column(String(255), nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    staged_rows = relationship("TradeRegistryImportStage", back_populates="run", cascade="all, delete-orphan")
+
+
+class TradeRegistryImportStage(Base):
+    """Parsed rows staged before replacing live trade registry rows."""
+    __tablename__ = "trade_registry_import_stage"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("trade_registry_import_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    unp = Column(BigInteger, nullable=False, index=True)
+    registration_number = Column(String(64), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    sync_hash = Column(String(64), nullable=False)
+    payload_json = Column(JSONB, nullable=False)
+
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "unp", "registration_number", name="uq_trade_registry_import_stage_run_unp_reg"),
+    )
+
+    run = relationship("TradeRegistryImportRun", back_populates="staged_rows")
+    company = relationship("Company")
+
+
 class CompanyPlaceLocation(Base):
     """
     placeLocation из Mobile API: https://egr.gov.by/egrmobile/api/v1/extracts/placeLocation?pan={unp}

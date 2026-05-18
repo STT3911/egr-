@@ -8,11 +8,12 @@ celery_app = Celery(
     "egr_aggregator",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.tasks.sync_tasks"]
+    include=["app.tasks.sync_tasks", "app.tasks.trade_registry_tasks"]
 )
 
 # Импортируем модуль с задачами для регистрации
 from app.tasks import sync_tasks
+from app.tasks import trade_registry_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {

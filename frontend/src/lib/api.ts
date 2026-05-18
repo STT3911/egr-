@@ -160,6 +160,42 @@ export type AdminSession = {
   username: string;
 };
 
+export type TradeRegistryImportStats = {
+  rows?: number;
+  valid?: number;
+  invalid?: number;
+  matched?: number;
+  missing_unp_in_db?: number;
+  egr_checked?: number;
+  egr_saved?: number;
+  egr_not_found?: number;
+  egr_errors?: number;
+  duplicate_registry_keys?: number;
+  deleted_old_records?: number;
+  written?: number;
+  encoding?: string | null;
+  source_date?: string | null;
+};
+
+export type TradeRegistryImportRun = {
+  id: string;
+  status: "queued" | "running" | "success" | "failed" | string;
+  original_filename: string;
+  source_date?: string | null;
+  stats: TradeRegistryImportStats;
+  error?: string | null;
+  celery_task_id?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type TradeRegistryImportsResponse = {
+  items: TradeRegistryImportRun[];
+};
+
 export const lookupCompanies = async (query: string) => {
   const qs = toQuery({ q: query });
   return request<CompanyLookupResponse>(`/api/v1/companies/lookup?${qs}`);
@@ -289,4 +325,31 @@ export const fillCompanyFile = async (file: File) => {
     blob: await response.blob(),
     filename: getFilenameFromDisposition(response.headers.get("Content-Disposition")),
   };
+};
+
+export const createTradeRegistryImport = async (file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/trade-registry/imports`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(data.detail || data.message || "Trade registry import failed");
+  }
+
+  return response.json() as Promise<TradeRegistryImportRun>;
+};
+
+export const listTradeRegistryImports = async (limit = 10) => {
+  const qs = toQuery({ limit });
+  return adminRequest<TradeRegistryImportsResponse>(`/api/v1/admin/trade-registry/imports?${qs}`);
+};
+
+export const getTradeRegistryImport = async (id: string) => {
+  return adminRequest<TradeRegistryImportRun>(`/api/v1/admin/trade-registry/imports/${encodeURIComponent(id)}`);
 };

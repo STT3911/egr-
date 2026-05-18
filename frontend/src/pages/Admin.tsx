@@ -2,10 +2,12 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Building2,
+  Database,
   Download,
   FileSpreadsheet,
   Loader2,
   LogOut,
+  RefreshCw,
   Search,
   Shield,
   Upload,
@@ -25,10 +27,13 @@ import {
 } from "@/components/ui/table";
 import {
   AdminCompanyItem,
+  TradeRegistryImportRun,
   adminLogin,
   adminLogout,
+  createTradeRegistryImport,
   fillCompanyFile,
   getAdminSession,
+  listTradeRegistryImports,
   lookupCompanies,
 } from "@/lib/api";
 
@@ -52,6 +57,11 @@ const Admin = () => {
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileMessage, setFileMessage] = useState<string | null>(null);
 
+  const [tradeRegistryFile, setTradeRegistryFile] = useState<File | null>(null);
+  const [tradeRegistryRuns, setTradeRegistryRuns] = useState<TradeRegistryImportRun[]>([]);
+  const [tradeRegistryLoading, setTradeRegistryLoading] = useState(false);
+  const [tradeRegistryError, setTradeRegistryError] = useState<string | null>(null);
+
   useEffect(() => {
     const loadSession = async () => {
       try {
@@ -66,6 +76,31 @@ const Admin = () => {
 
     loadSession();
   }, []);
+
+  const loadTradeRegistryRuns = async () => {
+    try {
+      const data = await listTradeRegistryImports(5);
+      setTradeRegistryRuns(data.items);
+      setTradeRegistryError(null);
+    } catch (err) {
+      setTradeRegistryError(err instanceof Error ? err.message : "Не удалось загрузить статусы импортов");
+    }
+  };
+
+  useEffect(() => {
+    if (!sessionUser) {
+      return;
+    }
+    loadTradeRegistryRuns();
+  }, [sessionUser]);
+
+  useEffect(() => {
+    if (!sessionUser || !tradeRegistryRuns.some((run) => run.status === "queued" || run.status === "running")) {
+      return;
+    }
+    const timer = window.setInterval(loadTradeRegistryRuns, 5000);
+    return () => window.clearInterval(timer);
+  }, [sessionUser, tradeRegistryRuns]);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -147,6 +182,40 @@ const Admin = () => {
     } finally {
       setFileLoading(false);
     }
+  };
+
+  const handleTradeRegistryImport = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!tradeRegistryFile) {
+      setTradeRegistryError("Выберите CSV торгового реестра");
+      return;
+    }
+
+    setTradeRegistryLoading(true);
+    setTradeRegistryError(null);
+    try {
+      const run = await createTradeRegistryImport(tradeRegistryFile);
+      setTradeRegistryRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 5));
+      setTradeRegistryFile(null);
+    } catch (err) {
+      setTradeRegistryError(err instanceof Error ? err.message : "Не удалось запустить импорт");
+    } finally {
+      setTradeRegistryLoading(false);
+    }
+  };
+
+  const statusLabel = (status: string) => {
+    if (status === "success") return "Готово";
+    if (status === "failed") return "Ошибка";
+    if (status === "running") return "Импорт";
+    if (status === "queued") return "В очереди";
+    return status;
+  };
+
+  const statusVariant = (status: string): "secondary" | "destructive" | "outline" => {
+    if (status === "success") return "secondary";
+    if (status === "failed") return "destructive";
+    return "outline";
   };
 
   if (sessionLoading) {
@@ -313,54 +382,128 @@ const Admin = () => {
             </CardContent>
           </Card>
 
-          <Card className="h-fit border-border/80 shadow-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <FileSpreadsheet className="h-5 w-5 text-primary" />
-                Файл по УНП
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleFillFile} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="company-file">CSV или Excel</Label>
-                  <Input
-                    id="company-file"
-                    type="file"
-                    accept=".csv,.xlsx"
-                    onChange={(event) => {
-                      setSelectedFile(event.target.files?.[0] || null);
-                      setFileError(null);
-                      setFileMessage(null);
-                    }}
-                  />
-                </div>
-
-                {selectedFile && (
-                  <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-sm">
-                    <FileSpreadsheet className="h-4 w-4 text-primary" />
-                    <span className="min-w-0 truncate">{selectedFile.name}</span>
+          <div className="space-y-6">
+            <Card className="h-fit border-border/80 shadow-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <FileSpreadsheet className="h-5 w-5 text-primary" />
+                  Файл по УНП
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleFillFile} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="company-file">CSV или Excel</Label>
+                    <Input
+                      id="company-file"
+                      type="file"
+                      accept=".csv,.xlsx"
+                      onChange={(event) => {
+                        setSelectedFile(event.target.files?.[0] || null);
+                        setFileError(null);
+                        setFileMessage(null);
+                      }}
+                    />
                   </div>
-                )}
 
-                {fileError && <p className="text-sm text-destructive">{fileError}</p>}
-                {fileMessage && <p className="text-sm text-primary">{fileMessage}</p>}
+                  {selectedFile && (
+                    <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-sm">
+                      <FileSpreadsheet className="h-4 w-4 text-primary" />
+                      <span className="min-w-0 truncate">{selectedFile.name}</span>
+                    </div>
+                  )}
 
-                <Button type="submit" className="w-full" disabled={fileLoading}>
-                  {fileLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                  Заполнить и скачать
-                </Button>
-              </form>
+                  {fileError && <p className="text-sm text-destructive">{fileError}</p>}
+                  {fileMessage && <p className="text-sm text-primary">{fileMessage}</p>}
 
-              <div className="mt-5 rounded-lg border border-border/70 bg-muted/35 p-3 text-sm text-muted-foreground">
-                <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
-                  <Download className="h-4 w-4 text-primary" />
-                  Результат
+                  <Button type="submit" className="w-full" disabled={fileLoading}>
+                    {fileLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                    Заполнить и скачать
+                  </Button>
+                </form>
+
+                <div className="mt-5 rounded-lg border border-border/70 bg-muted/35 p-3 text-sm text-muted-foreground">
+                  <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
+                    <Download className="h-4 w-4 text-primary" />
+                    Результат
+                  </div>
+                  <p>На выходе будет Excel-книга с листами по основным данным, историям и связанным реестрам.</p>
                 </div>
-                <p>На выходе будет Excel-книга с листами по основным данным, историям и связанным реестрам.</p>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+
+            <Card className="h-fit border-border/80 shadow-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <Database className="h-5 w-5 text-primary" />
+                  Торговый реестр МАРТ
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <form onSubmit={handleTradeRegistryImport} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="trade-registry-file">CSV торгового реестра</Label>
+                    <Input
+                      id="trade-registry-file"
+                      type="file"
+                      accept=".csv"
+                      onChange={(event) => {
+                        setTradeRegistryFile(event.target.files?.[0] || null);
+                        setTradeRegistryError(null);
+                      }}
+                    />
+                  </div>
+
+                  {tradeRegistryFile && (
+                    <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-sm">
+                      <Database className="h-4 w-4 text-primary" />
+                      <span className="min-w-0 truncate">{tradeRegistryFile.name}</span>
+                    </div>
+                  )}
+
+                  {tradeRegistryError && <p className="text-sm text-destructive">{tradeRegistryError}</p>}
+
+                  <div className="flex gap-2">
+                    <Button type="submit" className="min-w-0 flex-1" disabled={tradeRegistryLoading}>
+                      {tradeRegistryLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                      Загрузить
+                    </Button>
+                    <Button type="button" variant="outline" size="icon" onClick={loadTradeRegistryRuns} aria-label="Обновить статусы">
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </form>
+
+                <div className="space-y-3">
+                  {tradeRegistryRuns.map((run) => (
+                    <div key={run.id} className="rounded-lg border border-border/70 bg-muted/35 p-3 text-sm">
+                      <div className="mb-2 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-foreground">{run.original_filename}</div>
+                          <div className="text-xs text-muted-foreground">{run.source_date || "Дата не определена"}</div>
+                        </div>
+                        <Badge variant={statusVariant(run.status)}>{statusLabel(run.status)}</Badge>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span>Строк: {run.stats.rows ?? 0}</span>
+                        <span>Записано: {run.stats.written ?? 0}</span>
+                        <span>Компаний: {run.stats.matched ?? 0}</span>
+                        <span>Из EGR: {run.stats.egr_saved ?? 0}</span>
+                        <span>Пропущено: {run.stats.missing_unp_in_db ?? 0}</span>
+                        <span>Дублей: {run.stats.duplicate_registry_keys ?? 0}</span>
+                      </div>
+                      {run.error && <p className="mt-2 text-xs text-destructive">{run.error}</p>}
+                    </div>
+                  ))}
+                  {tradeRegistryRuns.length === 0 && (
+                    <div className="rounded-lg border border-border/70 bg-muted/35 p-3 text-sm text-muted-foreground">
+                      Импортов торгового реестра пока нет.
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </section>
       </div>
     </div>

@@ -10,7 +10,9 @@ import io
 import json
 import re
 import time
+import uuid
 from datetime import date, datetime
+from pathlib import Path
 from typing import Iterable
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
@@ -23,12 +25,15 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.logger import get_logger
+from app.database.models import TradeRegistryImportRun
+from app.services.trade_registry_import import empty_trade_registry_stats, infer_source_date
 
 router = APIRouter()
 logger = get_logger("api.admin")
 
 ADMIN_COOKIE_NAME = "egr_admin_session"
 MAX_IMPORT_ROWS = 5000
+TRADE_REGISTRY_UPLOAD_DIR = Path("data/imports/trade_registry/uploads")
 
 
 def _session_secret() -> str:
@@ -77,6 +82,42 @@ def _read_session(token: str | None) -> dict:
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Admin session expired")
 
     return payload
+
+
+def _iso_datetime(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _serialize_trade_registry_import(run: TradeRegistryImportRun) -> dict:
+    return {
+        "id": str(run.id),
+        "status": run.status,
+        "original_filename": run.original_filename,
+        "source_date": run.source_date.isoformat() if run.source_date else None,
+        "stats": run.stats_json or {},
+        "error": run.error,
+        "celery_task_id": run.celery_task_id,
+        "created_by": run.created_by,
+        "created_at": _iso_datetime(run.created_at),
+        "started_at": _iso_datetime(run.started_at),
+        "finished_at": _iso_datetime(run.finished_at),
+        "updated_at": _iso_datetime(run.updated_at),
+    }
+
+
+def _safe_upload_name(filename: str | None) -> str:
+    name = Path(filename or "").name.strip()
+    return name or "trade_registry.csv"
+
+
+async def _save_uploaded_file(file: UploadFile, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("wb") as handle:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            handle.write(chunk)
 
 
 def require_admin(request: Request) -> dict:
@@ -727,6 +768,87 @@ async def list_companies(
             for row in rows
         ],
     }
+
+
+@router.post("/trade-registry/imports")
+async def create_trade_registry_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_admin),
+):
+    filename = _safe_upload_name(file.filename)
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+
+    run_id = uuid.uuid4()
+    stored_path = TRADE_REGISTRY_UPLOAD_DIR / f"{run_id}_{filename}"
+    source_date = infer_source_date(Path(filename)) or date.today()
+
+    try:
+        await _save_uploaded_file(file, stored_path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {exc}") from exc
+
+    stats = empty_trade_registry_stats()
+    stats["source_date"] = source_date.isoformat()
+    run = TradeRegistryImportRun(
+        id=run_id,
+        status="queued",
+        original_filename=filename,
+        stored_path=str(stored_path),
+        source_date=source_date,
+        stats_json=stats,
+        created_by=session.get("sub"),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    try:
+        from app.tasks.trade_registry_tasks import import_trade_registry_csv_task
+
+        async_result = import_trade_registry_csv_task.delay(str(run.id))
+        run.celery_task_id = async_result.id
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+    except Exception as exc:
+        run.status = "failed"
+        run.error = f"Failed to queue Celery task: {exc}"
+        run.finished_at = datetime.utcnow()
+        db.add(run)
+        db.commit()
+        raise HTTPException(status_code=503, detail=run.error) from exc
+
+    return _serialize_trade_registry_import(run)
+
+
+@router.get("/trade-registry/imports")
+async def list_trade_registry_imports(
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_admin),
+):
+    safe_limit = max(1, min(limit, 50))
+    runs = (
+        db.query(TradeRegistryImportRun)
+        .order_by(TradeRegistryImportRun.created_at.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    return {"items": [_serialize_trade_registry_import(run) for run in runs]}
+
+
+@router.get("/trade-registry/imports/{run_id}")
+async def get_trade_registry_import(
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_admin),
+):
+    run = db.get(TradeRegistryImportRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Trade registry import was not found")
+    return _serialize_trade_registry_import(run)
 
 
 @router.post("/fill-company-file")
