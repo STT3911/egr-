@@ -1,13 +1,12 @@
 -- Скрипт для проверки состояния индексов
 SELECT 
-    schemaname,
-    tablename,
-    indexname,
-    pg_size_pretty(pg_relation_size(indexname::regclass)) as size,
-    idx_scan as scans,
-    idx_tup_read as tuples_read,
-    idx_tup_fetch as tuples_fetched
-FROM pg_stat_user_indexes 
-JOIN pg_indexes USING (indexname)
-WHERE schemaname = 'public'
-ORDER BY tablename, indexname;
+    s.schemaname,
+    s.relname AS tablename,
+    s.indexrelname AS indexname,
+    pg_size_pretty(pg_relation_size(s.indexrelid)) AS size,
+    s.idx_scan AS scans,
+    s.idx_tup_read AS tuples_read,
+    s.idx_tup_fetch AS tuples_fetched
+FROM pg_stat_user_indexes s
+WHERE s.schemaname = 'public'
+ORDER BY s.relname, s.indexrelname;

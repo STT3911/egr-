@@ -8,4 +8,4 @@ SELECT
     round((idx_tup_read::numeric / NULLIF(idx_scan, 0)), 2) as avg_tuples_per_scan
 FROM pg_stat_user_indexes 
 WHERE schemaname = 'public'
-ORDER BY idx_scan DES
+ORDER BY idx_scan DESC;
