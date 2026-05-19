@@ -172,6 +172,7 @@ class Company(Base):
     gias_accreditation = relationship("GiasAccreditedCustomer", back_populates="company", uselist=False)
     gias_locked_suppliers = relationship("LockedSupplier", back_populates="company")
     trade_registry_records = relationship("TradeRegistryRecord", back_populates="company")
+    pvt_resident = relationship("PVTResidentRecord", back_populates="company", uselist=False)
 
 
 class TradeRegistryRecord(Base):
@@ -286,6 +287,27 @@ class TradeRegistryImportStage(Base):
 
     run = relationship("TradeRegistryImportRun", back_populates="staged_rows")
     company = relationship("Company")
+
+
+class PVTResidentRecord(Base):
+    """Hi-Tech Park resident record parsed from park.by and linked to an EGR company."""
+    __tablename__ = "pvt_resident_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    unp = Column(BigInteger, nullable=False, unique=True, index=True)
+    name = Column(Text, nullable=True)
+    profile_url = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    source_url = Column(Text, nullable=True)
+    raw_json = Column(JSONB, nullable=False)
+
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    company = relationship("Company", back_populates="pvt_resident")
 
 
 class CompanyPlaceLocation(Base):

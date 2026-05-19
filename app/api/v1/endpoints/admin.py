@@ -851,6 +851,44 @@ async def get_trade_registry_import(
     return _serialize_trade_registry_import(run)
 
 
+@router.post("/pvt-residents/sync")
+async def queue_pvt_residents_sync(
+    limit: int | None = None,
+    offset: int = 0,
+    batch_size: int = 100,
+    delay: float = 0.2,
+    only_missing: bool = False,
+    session: dict = Depends(require_admin),
+):
+    if limit is not None and limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be greater than zero")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be greater than or equal to zero")
+    if batch_size < 1:
+        raise HTTPException(status_code=400, detail="batch_size must be greater than zero")
+    if delay < 0:
+        raise HTTPException(status_code=400, detail="delay must be greater than or equal to zero")
+
+    from app.tasks.park_tasks import sync_pvt_residents_task
+
+    task = sync_pvt_residents_task.delay(
+        limit=limit,
+        offset=offset,
+        batch_size=batch_size,
+        delay=delay,
+        only_missing=only_missing,
+    )
+    return {
+        "queued": True,
+        "task_id": task.id,
+        "limit": limit,
+        "offset": offset,
+        "batch_size": batch_size,
+        "delay": delay,
+        "only_missing": only_missing,
+    }
+
+
 @router.post("/fill-company-file")
 async def fill_company_file(
     file: UploadFile = File(...),
