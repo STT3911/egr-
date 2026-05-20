@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     GRP_PROCESS_LIMIT: int = 500
     GRP_PROCESS_SCHEDULE_SECONDS: int = 60
 
+    # PVT/HTP residents sync from park.by. Disabled by default; enable when Celery Beat should run it.
+    PVT_SCHEDULE_ENABLED: bool = False
+    PVT_SYNC_LIMIT: Optional[int] = 500
+    PVT_SYNC_BATCH_SIZE: int = 100
+    PVT_SYNC_DELAY_SECONDS: float = 0.2
+    PVT_SYNC_TIMEOUT_SECONDS: float = 30.0
+    PVT_SYNC_ONLY_MISSING: bool = True
+    PVT_SYNC_SCHEDULE_SECONDS: int = 86400
+
     # GIAS Directory: ежедневная синхронизация реестров
     GIAS_SYNC_ENABLED: bool = True
 

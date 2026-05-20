@@ -295,9 +295,10 @@ def sync_pvt_residents(
 ) -> dict[str, int]:
     from app.database.models import Company, PVTResidentRecord
 
-    query = db.query(Company.id, Company.unp).order_by(Company.unp).offset(offset)
+    query = db.query(Company.id, Company.unp)
     if only_missing:
         query = query.outerjoin(PVTResidentRecord, PVTResidentRecord.company_id == Company.id).filter(PVTResidentRecord.id.is_(None))
+    query = query.order_by(Company.unp).offset(offset)
     if limit is not None:
         query = query.limit(limit)
 

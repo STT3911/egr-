@@ -86,6 +86,19 @@ if settings.GRP_SCHEDULE_ENABLED:
         "args": (settings.GRP_PROCESS_LIMIT,),
     }
 
+if settings.PVT_SCHEDULE_ENABLED:
+    _beat_schedule["pvt-residents-sync"] = {
+        "task": "app.tasks.park_tasks.sync_pvt_residents",
+        "schedule": timedelta(seconds=settings.PVT_SYNC_SCHEDULE_SECONDS),
+        "kwargs": {
+            "limit": settings.PVT_SYNC_LIMIT,
+            "batch_size": settings.PVT_SYNC_BATCH_SIZE,
+            "delay": settings.PVT_SYNC_DELAY_SECONDS,
+            "timeout": settings.PVT_SYNC_TIMEOUT_SECONDS,
+            "only_missing": settings.PVT_SYNC_ONLY_MISSING,
+        },
+    }
+
 # Ежемесячный экспорт GRP в JSON — всегда в расписании
 _beat_schedule["grp-monthly-export"] = {
     "task": "app.tasks.sync_tasks.grp_monthly_export",
