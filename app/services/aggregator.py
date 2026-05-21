@@ -153,7 +153,7 @@ class AggregatorService:
         """Get company profile with optional cache"""
         if identifier.isdigit() and len(identifier) == 9:
             unp = int(identifier)
-            cache_key = f"company_profile:{unp}"
+            cache_key = f"company_profile_v2:{unp}"
 
             # 1. Проверяем Redis (быстрее всего — 5-10мс)
             if use_cache:

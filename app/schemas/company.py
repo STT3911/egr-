@@ -64,6 +64,43 @@ class CompanyGiasLockedSupplierSchema(BaseModel):
     author_initials: Optional[str] = None
 
 
+class CompanyPVTResidentSchema(BaseModel):
+    name: Optional[str] = None
+    profile_url: Optional[str] = None
+    description: Optional[str] = None
+    source_url: Optional[str] = None
+    last_seen_at: Optional[str] = None
+
+
+class CompanyTradeRegistryRecordSchema(BaseModel):
+    registration_number: Optional[str] = None
+    legal_name: Optional[str] = None
+    legal_address: Optional[str] = None
+    object_type: Optional[str] = None
+    object_name: Optional[str] = None
+    internet_shop_domain: Optional[str] = None
+    trade_network_name: Optional[str] = None
+    object_region: Optional[str] = None
+    object_district: Optional[str] = None
+    object_locality: Optional[str] = None
+    object_street: Optional[str] = None
+    object_building: Optional[str] = None
+    object_office: Optional[str] = None
+    object_contacts: Optional[str] = None
+    format_type: Optional[str] = None
+    location_type: Optional[str] = None
+    assortment_type: Optional[str] = None
+    trade_object_type: Optional[str] = None
+    trade_area: Optional[str] = None
+    retail_trade: Optional[str] = None
+    wholesale_trade: Optional[str] = None
+    goods_groups: Optional[str] = None
+    inclusion_date: Optional[str] = None
+    source_date: Optional[str] = None
+    source_file: Optional[str] = None
+    last_seen_at: Optional[str] = None
+
+
 class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
@@ -81,6 +118,8 @@ class CompanyProfileResponse(BaseModel):
     contacts: List[CompanyContactSchema] = []
     gias_accreditation: Optional[CompanyGiasAccreditationSchema] = None
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
+    pvt_resident: Optional[CompanyPVTResidentSchema] = None
+    trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
 
     class Config:
         from_attributes = True
@@ -102,7 +141,6 @@ class CompanyLookupResponse(BaseModel):
     query: str
     count: int
     results: List[CompanyLookupItem] = []
-
 
 
 

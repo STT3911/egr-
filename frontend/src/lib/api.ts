@@ -51,6 +51,41 @@ export type CompanyProfile = {
     phone?: string;
     fax?: string;
   }[];
+  pvt_resident?: {
+    name?: string;
+    profile_url?: string;
+    description?: string;
+    source_url?: string;
+    last_seen_at?: string;
+  } | null;
+  trade_registry_records?: {
+    registration_number?: string;
+    legal_name?: string;
+    legal_address?: string;
+    object_type?: string;
+    object_name?: string;
+    internet_shop_domain?: string;
+    trade_network_name?: string;
+    object_region?: string;
+    object_district?: string;
+    object_locality?: string;
+    object_street?: string;
+    object_building?: string;
+    object_office?: string;
+    object_contacts?: string;
+    format_type?: string;
+    location_type?: string;
+    assortment_type?: string;
+    trade_object_type?: string;
+    trade_area?: string;
+    retail_trade?: string;
+    wholesale_trade?: string;
+    goods_groups?: string;
+    inclusion_date?: string;
+    source_date?: string;
+    source_file?: string;
+    last_seen_at?: string;
+  }[];
 };
 
 export type ReferenceItem = {

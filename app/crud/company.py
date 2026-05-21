@@ -233,6 +233,8 @@ class CompanyCRUD:
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.author),
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.base_incl),
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.base_excl),
+                selectinload(Company.trade_registry_records),
+                selectinload(Company.pvt_resident),
             )
             .filter(Company.unp == unp)
             .first()
@@ -315,6 +317,56 @@ class CompanyCRUD:
             )
         ]
 
+        pvt_resident = None
+        if company.pvt_resident:
+            pvt = company.pvt_resident
+            pvt_resident = {
+                "name": pvt.name,
+                "profile_url": pvt.profile_url,
+                "description": pvt.description,
+                "source_url": pvt.source_url,
+                "last_seen_at": pvt.last_seen_at.isoformat() if pvt.last_seen_at else None,
+            }
+
+        trade_registry_records = [
+            {
+                "registration_number": item.registration_number,
+                "legal_name": item.legal_name,
+                "legal_address": item.legal_address,
+                "object_type": item.object_type,
+                "object_name": item.object_name,
+                "internet_shop_domain": item.internet_shop_domain,
+                "trade_network_name": item.trade_network_name,
+                "object_region": item.object_region,
+                "object_district": item.object_district,
+                "object_locality": item.object_locality,
+                "object_street": item.object_street,
+                "object_building": item.object_building,
+                "object_office": item.object_office,
+                "object_contacts": item.object_contacts,
+                "format_type": item.format_type,
+                "location_type": item.location_type,
+                "assortment_type": item.assortment_type,
+                "trade_object_type": item.trade_object_type,
+                "trade_area": item.trade_area,
+                "retail_trade": item.retail_trade,
+                "wholesale_trade": item.wholesale_trade,
+                "goods_groups": item.goods_groups,
+                "inclusion_date": item.inclusion_date.isoformat() if item.inclusion_date else None,
+                "source_date": item.source_date.isoformat() if item.source_date else None,
+                "source_file": item.source_file,
+                "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            }
+            for item in sorted(
+                company.trade_registry_records,
+                key=lambda row: (
+                    row.object_type or "",
+                    row.object_name or "",
+                    row.registration_number or "",
+                ),
+            )
+        ]
+
         return {
             "unp": company.unp,
             "current_status_code": company.current_status_code,
@@ -325,6 +377,8 @@ class CompanyCRUD:
             "place_location_address": place_location_address,
             "gias_accreditation": gias_accreditation,
             "gias_locked_suppliers": gias_locked_suppliers,
+            "pvt_resident": pvt_resident,
+            "trade_registry_records": trade_registry_records,
             "names": [
                 {
                     "full_name_ru": n.full_name_ru,
@@ -378,5 +432,3 @@ class CompanyCRUD:
         )
         self.db.add(sync_log)
         self.db.commit()
-
-

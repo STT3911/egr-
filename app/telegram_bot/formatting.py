@@ -40,6 +40,19 @@ def _format_period(item: dict[str, Any]) -> str | None:
     return None
 
 
+def _format_trade_address(item: dict[str, Any]) -> str | None:
+    parts = [
+        _clean(item.get("object_region")),
+        _clean(item.get("object_district")),
+        _clean(item.get("object_locality")),
+        _clean(item.get("object_street")),
+        _clean(item.get("object_building")),
+        _clean(item.get("object_office")),
+    ]
+    value = ", ".join(part for part in parts if part)
+    return value or None
+
+
 def _append_limited(lines: list[str], line: str, *, limit: int = TELEGRAM_MESSAGE_LIMIT) -> bool:
     candidate = "\n".join([*lines, line])
     if len(candidate) <= limit:
@@ -214,6 +227,50 @@ def format_company_card(company: dict[str, Any]) -> str:
         if parts:
             contact_lines.append(f"{index}. " + "; ".join(parts))
     _append_section(lines, "Контакты", contact_lines)
+
+    pvt = company.get("pvt_resident") or {}
+    pvt_lines = []
+    pvt_name = _clean(pvt.get("name"))
+    pvt_description = _clean(pvt.get("description"))
+    pvt_profile_url = _clean(pvt.get("profile_url"))
+    if pvt_name:
+        pvt_lines.append(f"Наименование: {escape(pvt_name)}")
+    if pvt_description:
+        pvt_lines.append(f"Описание: {escape(_truncate(pvt_description, 500))}")
+    if pvt_profile_url:
+        pvt_lines.append(f'<a href="{escape(pvt_profile_url)}">Профиль на park.by</a>')
+    _append_section(lines, "Резидент ПВТ", pvt_lines)
+
+    trade_records = company.get("trade_registry_records") or []
+    trade_lines = []
+    if trade_records:
+        trade_lines.append(f"Записей: {len(trade_records)}")
+    for index, item in enumerate(trade_records[:5], start=1):
+        parts = []
+        title = (
+            _clean(item.get("object_name"))
+            or _clean(item.get("internet_shop_domain"))
+            or _clean(item.get("trade_network_name"))
+            or _clean(item.get("object_type"))
+            or f"Запись {index}"
+        )
+        parts.append(escape(_truncate(title, 180)))
+        registration_number = _clean(item.get("registration_number"))
+        if registration_number:
+            parts.append(f"№ {escape(registration_number)}")
+        object_type = _clean(item.get("object_type"))
+        if object_type and object_type != title:
+            parts.append(f"тип: {escape(_truncate(object_type, 120))}")
+        address = _format_trade_address(item)
+        if address:
+            parts.append(f"адрес: {escape(_truncate(address, 180))}")
+        inclusion_date = _clean(item.get("inclusion_date"))
+        if inclusion_date:
+            parts.append(f"включено: {escape(inclusion_date)}")
+        trade_lines.append(f"{index}. " + "; ".join(parts))
+    if len(trade_records) > 5:
+        trade_lines.append(f"Показаны первые 5 из {len(trade_records)}")
+    _append_section(lines, "Торговый реестр МАРТ", trade_lines)
 
     accreditation = company.get("gias_accreditation") or {}
     accreditation_lines = []

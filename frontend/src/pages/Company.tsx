@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import { ArrowLeft, Building2, CalendarDays, Database, FileText, Moon, Sun } from "lucide-react";
+import { ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Moon, Store, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -31,6 +31,8 @@ const cardReveal = {
   hidden: { opacity: 0, y: 18 },
   visible: { opacity: 1, y: 0 },
 };
+
+type TradeRegistryRecord = NonNullable<CompanyProfile["trade_registry_records"]>[number];
 
 const Company = () => {
   const { unp } = useParams();
@@ -166,6 +168,17 @@ const Company = () => {
       month: "2-digit",
       year: "numeric",
     }).format(d);
+  };
+
+  const formatTradeAddress = (record: TradeRegistryRecord) => {
+    return [
+      record.object_region,
+      record.object_district,
+      record.object_locality,
+      record.object_street,
+      record.object_building,
+      record.object_office,
+    ].filter(Boolean).join(", ");
   };
 
   return (
@@ -693,6 +706,148 @@ const Company = () => {
               )}
             </CardContent>
           </Card>
+
+          {profile.pvt_resident && (
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--accent) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                  Резидент ПВТ
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                <div className="glass p-3 sm:p-4 rounded-lg space-y-3">
+                  <div>
+                    <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Наименование</span>
+                    <p className="text-foreground font-semibold text-sm sm:text-base">
+                      {profile.pvt_resident.name || profile.current_short_name_ru || profile.current_name_ru || "—"}
+                    </p>
+                  </div>
+                  {profile.pvt_resident.description && (
+                    <div>
+                      <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Описание</span>
+                      <p className="text-foreground text-sm sm:text-base leading-relaxed">
+                        {profile.pvt_resident.description}
+                      </p>
+                    </div>
+                  )}
+                  {profile.pvt_resident.profile_url && (
+                    <a
+                      href={profile.pvt_resident.profile_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-primary hover:text-primary/80 font-semibold underline decoration-primary/30 hover:decoration-primary transition-all duration-300 text-sm"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Профиль на park.by
+                    </a>
+                  )}
+                  {profile.pvt_resident.last_seen_at && (
+                    <div className="text-xs text-muted-foreground">
+                      Обновлено (UTC): {formatUpdatedAtUTC(profile.pvt_resident.last_seen_at)}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {profile.trade_registry_records && profile.trade_registry_records.length > 0 && (
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(var(--accent) / 0.1) 0%, hsl(var(--primary) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <Store className="w-5 h-5 text-accent" />
+                  Торговый реестр МАРТ
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                <div className="text-sm text-muted-foreground">
+                  Записей: {profile.trade_registry_records.length}
+                </div>
+                {profile.trade_registry_records.map((record, idx) => {
+                  const address = formatTradeAddress(record);
+                  const title = record.object_name || record.internet_shop_domain || record.trade_network_name || record.object_type || `Запись ${idx + 1}`;
+                  return (
+                    <div key={`${record.registration_number}-${idx}`} className="glass p-3 sm:p-4 rounded-lg hover:bg-accent/5 transition-all duration-300 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                        <div>
+                          <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Объект</span>
+                          <p className="text-foreground font-semibold text-sm sm:text-base leading-relaxed">{title}</p>
+                        </div>
+                        {record.registration_number && (
+                          <span className="font-mono text-xs glass px-2 py-1 rounded bg-accent/10 text-accent font-semibold w-fit">
+                            № {record.registration_number}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                        {record.object_type && (
+                          <div>
+                            <span className="text-muted-foreground block">Тип</span>
+                            <span className="text-foreground font-medium">{record.object_type}</span>
+                          </div>
+                        )}
+                        {record.format_type && (
+                          <div>
+                            <span className="text-muted-foreground block">Формат</span>
+                            <span className="text-foreground font-medium">{record.format_type}</span>
+                          </div>
+                        )}
+                        {record.trade_object_type && (
+                          <div>
+                            <span className="text-muted-foreground block">Вид объекта</span>
+                            <span className="text-foreground font-medium">{record.trade_object_type}</span>
+                          </div>
+                        )}
+                        {record.trade_area && (
+                          <div>
+                            <span className="text-muted-foreground block">Торговая площадь</span>
+                            <span className="text-foreground font-medium">{record.trade_area}</span>
+                          </div>
+                        )}
+                        {record.inclusion_date && (
+                          <div>
+                            <span className="text-muted-foreground block">Дата включения</span>
+                            <span className="text-foreground font-medium">{formatDate(record.inclusion_date)}</span>
+                          </div>
+                        )}
+                        {record.source_date && (
+                          <div>
+                            <span className="text-muted-foreground block">Срез МАРТ</span>
+                            <span className="text-foreground font-medium">{formatDate(record.source_date)}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {address && (
+                        <div className="text-sm">
+                          <span className="text-muted-foreground block">Адрес объекта</span>
+                          <span className="text-foreground font-medium">{address}</span>
+                        </div>
+                      )}
+                      {record.internet_shop_domain && (
+                        <div className="text-sm">
+                          <span className="text-muted-foreground block">Интернет-магазин</span>
+                          <span className="text-foreground font-medium break-all">{record.internet_shop_domain}</span>
+                        </div>
+                      )}
+                      {record.goods_groups && (
+                        <div className="text-sm">
+                          <span className="text-muted-foreground block">Группы товаров</span>
+                          <span className="text-foreground font-medium">{record.goods_groups}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-destructive/20">
             <CardHeader
