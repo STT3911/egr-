@@ -58,6 +58,18 @@ export type CompanyProfile = {
     source_url?: string;
     last_seen_at?: string;
   } | null;
+  bankrot_cases?: {
+    case_id: number;
+    number?: string;
+    start_date?: string;
+    end_date?: string;
+    status?: number;
+    procedure_type?: number;
+    court?: string;
+    judge?: string;
+    manager_name?: string;
+    updated_at?: string;
+  }[];
   trade_registry_records?: {
     registration_number?: string;
     legal_name?: string;

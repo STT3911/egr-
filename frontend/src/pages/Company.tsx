@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import { ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Moon, Store, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Moon, Store, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -840,6 +840,81 @@ const Company = () => {
                         <div className="text-sm">
                           <span className="text-muted-foreground block">Группы товаров</span>
                           <span className="text-foreground font-medium">{record.goods_groups}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Банкротство */}
+          {profile.bankrot_cases && profile.bankrot_cases.length > 0 && (
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-orange-500/30">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(25 95% 53% / 0.12) 0%, hsl(var(--destructive) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <AlertTriangle className="w-5 h-5 text-orange-500" />
+                  Банкротство
+                  <span className="ml-auto text-sm font-normal text-muted-foreground">
+                    {profile.bankrot_cases.length} {profile.bankrot_cases.length === 1 ? "дело" : profile.bankrot_cases.length < 5 ? "дела" : "дел"}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                {profile.bankrot_cases.map((c) => {
+                  const isActive = !c.end_date;
+                  return (
+                    <div key={c.case_id} className={`glass p-3 sm:p-4 rounded-lg transition-all duration-300 border-l-4 space-y-3 ${
+                      isActive ? "border-orange-500/60 hover:bg-orange-500/5" : "border-border/50 hover:bg-muted/30"
+                    }`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {c.number && (
+                            <span className="font-mono text-xs glass px-2 py-1 rounded bg-orange-500/10 text-orange-600 dark:text-orange-400 font-semibold">
+                              № {c.number}
+                            </span>
+                          )}
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            isActive
+                              ? "bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                              : "bg-muted text-muted-foreground"
+                          }`}>
+                            {isActive ? "● Активное" : "✓ Завершено"}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {c.start_date && <span>с {formatDate(c.start_date)}</span>}
+                          {c.end_date && <span> по {formatDate(c.end_date)}</span>}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                        {c.court && (
+                          <div>
+                            <span className="text-xs text-muted-foreground block">Суд</span>
+                            <span className="text-foreground font-medium">{c.court}</span>
+                          </div>
+                        )}
+                        {c.judge && (
+                          <div>
+                            <span className="text-xs text-muted-foreground block">Судья</span>
+                            <span className="text-foreground font-medium">{c.judge}</span>
+                          </div>
+                        )}
+                        {c.manager_name && (
+                          <div className="sm:col-span-2">
+                            <span className="text-xs text-muted-foreground block">Управляющий</span>
+                            <span className="text-foreground font-medium">{c.manager_name}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {c.updated_at && (
+                        <div className="text-xs text-muted-foreground">
+                          Обновлено: {formatUpdatedAtUTC(c.updated_at)}
                         </div>
                       )}
                     </div>
