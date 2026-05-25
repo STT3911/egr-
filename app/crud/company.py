@@ -16,6 +16,8 @@ from app.database.models import (
     CompanyPlaceLocation,
     GiasAccreditedCustomer,
     LockedSupplier,
+    PVTResidentRecord,
+    TradeRegistryRecord,
 )
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
@@ -234,8 +236,6 @@ class CompanyCRUD:
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.author),
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.base_incl),
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.base_excl),
-                selectinload(Company.trade_registry_records),
-                selectinload(Company.pvt_resident),
             )
             .filter(Company.unp == unp)
             .first()
@@ -319,8 +319,13 @@ class CompanyCRUD:
         ]
 
         pvt_resident = None
-        if company.pvt_resident:
-            pvt = company.pvt_resident
+        pvt = (
+            self.db.query(PVTResidentRecord)
+            .filter(PVTResidentRecord.unp == unp)
+            .order_by(PVTResidentRecord.last_seen_at.desc())
+            .first()
+        )
+        if pvt:
             pvt_resident = {
                 "name": pvt.name,
                 "profile_url": pvt.profile_url,
@@ -328,6 +333,17 @@ class CompanyCRUD:
                 "source_url": pvt.source_url,
                 "last_seen_at": pvt.last_seen_at.isoformat() if pvt.last_seen_at else None,
             }
+
+        trade_registry_rows = (
+            self.db.query(TradeRegistryRecord)
+            .filter(TradeRegistryRecord.unp == unp)
+            .order_by(
+                TradeRegistryRecord.object_type.asc().nullsfirst(),
+                TradeRegistryRecord.object_name.asc().nullsfirst(),
+                TradeRegistryRecord.registration_number.asc(),
+            )
+            .all()
+        )
 
         trade_registry_records = [
             {
@@ -358,14 +374,7 @@ class CompanyCRUD:
                 "source_file": item.source_file,
                 "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
             }
-            for item in sorted(
-                company.trade_registry_records,
-                key=lambda row: (
-                    row.object_type or "",
-                    row.object_name or "",
-                    row.registration_number or "",
-                ),
-            )
+            for item in trade_registry_rows
         ]
 
         # Дела о банкротстве — мягкая связь по УНП
