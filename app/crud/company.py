@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.models import (
+    BankrotCase,
     Company,
     CompanyNameHistory,
     CompanyAddressHistory,
@@ -367,6 +368,29 @@ class CompanyCRUD:
             )
         ]
 
+        # Дела о банкротстве — мягкая связь по УНП
+        bankrot_rows = (
+            self.db.query(BankrotCase)
+            .filter(BankrotCase.debtor_unp == unp)
+            .order_by(BankrotCase.start_date.desc().nullslast())
+            .all()
+        )
+        bankrot_cases = [
+            {
+                "case_id":        row.case_id,
+                "number":         row.number,
+                "start_date":     row.start_date.isoformat() if row.start_date else None,
+                "end_date":       row.end_date.isoformat()   if row.end_date   else None,
+                "status":         row.status,
+                "procedure_type": row.procedure_type,
+                "court":          row.court,
+                "judge":          row.judge,
+                "manager_name":   row.manager_name,
+                "updated_at":     row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in bankrot_rows
+        ]
+
         return {
             "unp": company.unp,
             "current_status_code": company.current_status_code,
@@ -379,6 +403,7 @@ class CompanyCRUD:
             "gias_locked_suppliers": gias_locked_suppliers,
             "pvt_resident": pvt_resident,
             "trade_registry_records": trade_registry_records,
+            "bankrot_cases": bankrot_cases,
             "names": [
                 {
                     "full_name_ru": n.full_name_ru,

@@ -101,6 +101,20 @@ class CompanyTradeRegistryRecordSchema(BaseModel):
     last_seen_at: Optional[str] = None
 
 
+class BankrotCaseSchema(BaseModel):
+    """Краткая карточка дела о банкротстве для профиля компании."""
+    case_id: int
+    number: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    status: Optional[int] = None
+    procedure_type: Optional[int] = None
+    court: Optional[str] = None
+    judge: Optional[str] = None
+    manager_name: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
@@ -120,6 +134,7 @@ class CompanyProfileResponse(BaseModel):
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
+    bankrot_cases: List[BankrotCaseSchema] = []
 
     class Config:
         from_attributes = True

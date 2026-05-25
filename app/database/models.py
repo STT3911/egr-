@@ -889,3 +889,121 @@ class LockedSupplierHistory(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     supplier = relationship("LockedSupplier", back_populates="history")
+
+
+# ---------------------------------------------------------------------------
+# Bankrot.gov.by — дела о банкротстве
+# ---------------------------------------------------------------------------
+
+class BankrotCase(Base):
+    """
+    Дело о банкротстве из реестра bankrot.gov.by.
+
+    Основные поля вынесены в отдельные колонки.
+    Полные сырые ответы API сохраняются в JSONB:
+      - list_data     — ответ из POST /v1/cases (элемент пагинированного списка)
+      - detail_data   — ответ из GET  /v1/cases/{id}
+      - judgements_group — ответ из GET /v1/cases/{id}/judgements/group
+
+    Связь с EGR: debtor_unp → egr_companies.unp (мягкая, без FK,
+    потому что компании может не быть в ЕГР).
+    """
+    __tablename__ = "bankrot_cases"
+
+    # PK = case_id из API (integer)
+    case_id = Column(Integer, primary_key=True, index=True)
+
+    # Связь с организацией (мягкая — без FK, UNP может отсутствовать)
+    debtor_unp = Column(BigInteger, nullable=True, index=True)
+
+    # Основные поля дела
+    number = Column(Text, nullable=True)           # номер дела, напр. "155НБ2682"
+    start_date = Column(Date, nullable=True, index=True)
+    end_date = Column(Date, nullable=True)
+    status = Column(Integer, nullable=True, index=True)   # 0=closed, 1=active
+    procedure_type = Column(Integer, nullable=True)       # 1=protective, 4=liquidation, …
+    court = Column(Text, nullable=True)
+    judge = Column(Text, nullable=True)
+
+    # Управляющий
+    manager_id = Column(Integer, nullable=True, index=True)
+    manager_name = Column(Text, nullable=True)
+
+    # Последнее судебное решение
+    last_judgment_id = Column(BigInteger, nullable=True)
+
+    # Сырые ответы API (JSONB — вся глубина без потерь)
+    list_data = Column(JSONB, nullable=True)
+    detail_data = Column(JSONB, nullable=True)
+    judgements_group = Column(JSONB, nullable=True)
+
+    # Ошибки при загрузке detail/judgements (не прерывают синхронизацию)
+    fetch_error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class BankrotCaseHistory(Base):
+    """
+    История изменений дел о банкротстве.
+
+    Заполняется автоматически PostgreSQL-триггером trg_bankrot_cases_history:
+    перед каждым UPDATE в bankrot_cases старая строка копируется сюда.
+    Таблица только для чтения со стороны приложения.
+    """
+    __tablename__ = "bankrot_cases_history"
+
+    history_id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Ссылка на дело (без FK — строка в bankrot_cases могла быть удалена)
+    case_id = Column(Integer, nullable=False, index=True)
+
+    # Снимок всех полей на момент изменения
+    debtor_unp       = Column(BigInteger, nullable=True)
+    number           = Column(Text, nullable=True)
+    start_date       = Column(Date, nullable=True)
+    end_date         = Column(Date, nullable=True)
+    status           = Column(Integer, nullable=True)
+    procedure_type   = Column(Integer, nullable=True)
+    court            = Column(Text, nullable=True)
+    judge            = Column(Text, nullable=True)
+    manager_id       = Column(Integer, nullable=True)
+    manager_name     = Column(Text, nullable=True)
+    last_judgment_id = Column(BigInteger, nullable=True)
+    list_data        = Column(JSONB, nullable=True)
+    detail_data      = Column(JSONB, nullable=True)
+    judgements_group = Column(JSONB, nullable=True)
+    fetch_error      = Column(Text, nullable=True)
+
+    # Временны́е метки оригинальной строки
+    case_created_at  = Column(DateTime, nullable=True)
+    case_updated_at  = Column(DateTime, nullable=True)
+
+    # Когда этот снимок был сохранён (заполняет триггер через server_default)
+    recorded_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+
+
+class BankrotSyncRun(Base):
+    """
+    Журнал запусков синхронизации bankrot.gov.by.
+    Позволяет отслеживать прогресс и возобновлять после сбоя.
+    """
+    __tablename__ = "bankrot_sync_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    status = Column(String(32), nullable=False, default="running", index=True)
+
+    started_at = Column(DateTime, nullable=False, server_default=func.now())
+    finished_at = Column(DateTime, nullable=True)
+
+    total_cases = Column(Integer, nullable=False, default=0)
+    processed_cases = Column(Integer, nullable=False, default=0)
+    failed_cases = Column(Integer, nullable=False, default=0)
+
+    # Последняя успешно обработанная страница (для возобновления)
+    last_page = Column(Integer, nullable=False, default=0)
+
+    output_file = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    stats_json = Column(JSONB, nullable=True)

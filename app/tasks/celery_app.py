@@ -8,13 +8,19 @@ celery_app = Celery(
     "egr_aggregator",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.tasks.sync_tasks", "app.tasks.trade_registry_tasks", "app.tasks.park_tasks"]
+    include=[
+        "app.tasks.sync_tasks",
+        "app.tasks.trade_registry_tasks",
+        "app.tasks.park_tasks",
+        "app.tasks.bankrot_tasks",
+    ],
 )
 
 # Импортируем модуль с задачами для регистрации
 from app.tasks import sync_tasks
 from app.tasks import trade_registry_tasks
 from app.tasks import park_tasks
+from app.tasks import bankrot_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {
@@ -108,6 +114,14 @@ _beat_schedule["grp-monthly-export"] = {
 
 if not settings.GIAS_SYNC_ENABLED:
     _beat_schedule.pop("gias-sync-directory-registries", None)
+
+# Bankrot.gov.by в расписании только если BANKROT_SCHEDULE_ENABLED=true
+if settings.BANKROT_SCHEDULE_ENABLED:
+    _beat_schedule["bankrot-sync-cases"] = {
+        "task": "app.tasks.bankrot_tasks.sync_bankrot_cases",
+        "schedule": timedelta(seconds=settings.BANKROT_SCHEDULE_SECONDS),
+        "kwargs": {},
+    }
 
 celery_app.conf.update(
     task_serializer='json',

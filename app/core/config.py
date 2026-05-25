@@ -122,6 +122,20 @@ class Settings(BaseSettings):
     TENDEX_API_URL: Optional[str] = None
     TENDEX_API_KEY: Optional[str] = None
 
+    # Bankrot.gov.by — синхронизация дел о банкротстве
+    BANKROT_API_URL: str = "https://api.bankrot.gov.by/v1"
+    BANKROT_API_TOKEN: Optional[str] = None          # Bearer token (обязателен для работы API)
+    BANKROT_PAGE_SIZE: int = 100                      # кол-во кейсов на страницу
+    BANKROT_PAGE_DELAY_SECONDS: float = 0.5          # пауза между страницами
+    BANKROT_DETAIL_DELAY_SECONDS: float = 0.2        # пауза между detail/judgements запросами
+    BANKROT_MAX_RETRIES: int = 3                      # попыток при ошибке
+    BANKROT_RETRY_DELAY_SECONDS: float = 2.0         # базовая задержка между попытками
+    BANKROT_TIMEOUT_SECONDS: float = 30.0            # таймаут HTTP запроса
+    BANKROT_OUTPUT_DIR: str = "data/bankrot"         # куда сохранять JSON-выгрузку
+    BANKROT_SAVE_EVERY: int = 50                     # промежуточный flush каждые N кейсов
+    BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу
+    BANKROT_SCHEDULE_SECONDS: int = 86400            # интервал периодической задачи (сек)
+
     # Telegram bot
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_API_BASE_URL: str = "http://egr-api:8000"
