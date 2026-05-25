@@ -855,6 +855,7 @@ async def get_trade_registry_import(
 async def queue_pvt_residents_sync(
     limit: int | None = None,
     offset: int = 0,
+    start_unp: int | None = None,
     batch_size: int = 100,
     delay: float = 0.2,
     only_missing: bool = False,
@@ -864,6 +865,8 @@ async def queue_pvt_residents_sync(
         raise HTTPException(status_code=400, detail="limit must be greater than zero")
     if offset < 0:
         raise HTTPException(status_code=400, detail="offset must be greater than or equal to zero")
+    if start_unp is not None and start_unp < 1:
+        raise HTTPException(status_code=400, detail="start_unp must be greater than zero")
     if batch_size < 1:
         raise HTTPException(status_code=400, detail="batch_size must be greater than zero")
     if delay < 0:
@@ -874,6 +877,7 @@ async def queue_pvt_residents_sync(
     task = sync_pvt_residents_task.delay(
         limit=limit,
         offset=offset,
+        start_unp=start_unp,
         batch_size=batch_size,
         delay=delay,
         only_missing=only_missing,
@@ -883,6 +887,7 @@ async def queue_pvt_residents_sync(
         "task_id": task.id,
         "limit": limit,
         "offset": offset,
+        "start_unp": start_unp,
         "batch_size": batch_size,
         "delay": delay,
         "only_missing": only_missing,

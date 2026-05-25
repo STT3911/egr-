@@ -287,6 +287,7 @@ def sync_pvt_residents(
     db: Any,
     limit: int | None = None,
     offset: int = 0,
+    start_unp: int | None = None,
     batch_size: int = 100,
     delay: float = 0.2,
     timeout: float = 30.0,
@@ -299,7 +300,7 @@ def sync_pvt_residents(
     session = requests.Session()
     pending = 0
     remaining = limit
-    last_unp: int | None = None
+    last_unp: int | None = start_unp - 1 if start_unp is not None else None
     offset_applied = False
 
     while remaining is None or remaining > 0:
