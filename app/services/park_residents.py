@@ -295,37 +295,56 @@ def sync_pvt_residents(
 ) -> dict[str, int]:
     from app.database.models import Company, PVTResidentRecord
 
-    query = db.query(Company.id, Company.unp)
-    if only_missing:
-        query = query.outerjoin(PVTResidentRecord, PVTResidentRecord.company_id == Company.id).filter(PVTResidentRecord.id.is_(None))
-    query = query.order_by(Company.unp).offset(offset)
-    if limit is not None:
-        query = query.limit(limit)
-
     stats = {"checked": 0, "found": 0, "not_found": 0, "invalid": 0, "error": 0, "saved": 0}
     session = requests.Session()
     pending = 0
-    for company_id, unp in query.yield_per(batch_size):
-        try:
-            result = fetch_resident(str(unp), session=session, timeout=timeout, proxy=proxy)
-            stats["checked"] += 1
-            stats[result.status] = stats.get(result.status, 0) + 1
-            if result.status == "found":
-                upsert_resident_record(db, company_id, result)
-                stats["saved"] += 1
-                pending += 1
-            if pending >= batch_size:
-                db.commit()
+    remaining = limit
+    last_unp: int | None = None
+    offset_applied = False
+
+    while remaining is None or remaining > 0:
+        page_size = batch_size if remaining is None else min(batch_size, remaining)
+        query = db.query(Company.id, Company.unp)
+        if only_missing:
+            query = query.outerjoin(PVTResidentRecord, PVTResidentRecord.company_id == Company.id).filter(PVTResidentRecord.id.is_(None))
+        if last_unp is not None:
+            query = query.filter(Company.unp > last_unp)
+        query = query.order_by(Company.unp)
+        if offset and not offset_applied:
+            query = query.offset(offset)
+            offset_applied = True
+
+        rows = query.limit(page_size).all()
+        if not rows:
+            break
+
+        for company_id, unp in rows:
+            last_unp = int(unp)
+            try:
+                result = fetch_resident(str(unp), session=session, timeout=timeout, proxy=proxy)
+                stats["checked"] += 1
+                stats[result.status] = stats.get(result.status, 0) + 1
+                if result.status == "found":
+                    upsert_resident_record(db, company_id, result)
+                    stats["saved"] += 1
+                    pending += 1
+                if pending >= batch_size:
+                    db.commit()
+                    pending = 0
+                logger.info("PVT resident check unp=%s status=%s", unp, result.status)
+            except Exception as exc:
+                db.rollback()
                 pending = 0
-            logger.info("PVT resident check unp=%s status=%s", unp, result.status)
-        except Exception as exc:
-            db.rollback()
-            pending = 0
-            stats["checked"] += 1
-            stats["error"] += 1
-            logger.warning("PVT resident check failed unp=%s error=%s", unp, exc)
-        if delay > 0:
-            time.sleep(delay)
+                stats["checked"] += 1
+                stats["error"] += 1
+                logger.warning("PVT resident check failed unp=%s error=%s", unp, exc)
+            if delay > 0:
+                time.sleep(delay)
+
+        if remaining is not None:
+            remaining -= len(rows)
+        if len(rows) < page_size:
+            break
 
     if pending:
         db.commit()
