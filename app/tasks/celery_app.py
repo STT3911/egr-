@@ -130,4 +130,32 @@ celery_app.conf.update(
     timezone="Europe/Minsk",
     enable_utc=True,
     beat_schedule=_beat_schedule,
+    broker_connection_retry_on_startup=True,
+
+    # ------------------------------------------------------------------
+    # Маршрутизация задач по очередям
+    #
+    # celery  — быстрые/частые задачи (search index, process_raw, daily)
+    # heavy   — долгие задачи (historical, gias, bankrot, pvt, egr_fetch)
+    #
+    # Цель: быстрые задачи никогда не ждут пока закончится GIAS/historical
+    # ------------------------------------------------------------------
+    task_routes={
+        # ── Heavy queue ────────────────────────────────────────────────
+        "app.tasks.sync_tasks.auto_fetch_historical_data":    {"queue": "heavy"},
+        "app.tasks.sync_tasks.sync_gias_directory_registries": {"queue": "heavy"},
+        "app.tasks.sync_tasks.egr_fetch_raw":                 {"queue": "heavy"},
+        "app.tasks.sync_tasks.egr_fetch_raw_one":             {"queue": "heavy"},
+        "app.tasks.sync_tasks.grp_fetch_raw":                 {"queue": "heavy"},
+        "app.tasks.sync_tasks.grp_monthly_export":            {"queue": "heavy"},
+        "app.tasks.sync_tasks.reprocess_failed_rows":         {"queue": "heavy"},
+        "app.tasks.sync_tasks.reindex_elasticsearch":         {"queue": "heavy"},
+        "app.tasks.sync_tasks.enrich_missing_raw":            {"queue": "heavy"},
+        "app.tasks.bankrot_tasks.sync_bankrot_cases":         {"queue": "heavy"},
+        "app.tasks.park_tasks.sync_pvt_residents":            {"queue": "heavy"},
+        # ── Default (celery) queue — всё остальное ────────────────────
+        # process_search_index_queue, grp_process_raw, egr_process_raw,
+        # sync_daily_changes, load_companies_from_json,
+        # update_reference_tables, egr_sync_place_locations, ...
+    },
 )
