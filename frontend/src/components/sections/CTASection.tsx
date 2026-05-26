@@ -2,8 +2,18 @@ import { motion } from "framer-motion";
 import { Search, Sparkles } from "lucide-react";
 
 export const CTASection = () => {
-  const handleScrollToTop = () => {
-    window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+  const handleScrollToSearch = () => {
+    const el = document.getElementById("hero-search");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Focus the search input after scroll
+      setTimeout(() => {
+        const input = el.querySelector("input");
+        input?.focus();
+      }, 400);
+    } else {
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    }
   };
 
   return (
@@ -38,7 +48,7 @@ export const CTASection = () => {
           <div className="mt-8 flex items-center justify-center">
             <button
               type="button"
-              onClick={handleScrollToTop}
+              onClick={handleScrollToSearch}
               className="gradient-primary inline-flex items-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-semibold text-primary-foreground shadow-soft hover:-translate-y-0.5 hover:shadow-glow"
             >
               <Search className="h-4 w-4" />

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,7 +75,6 @@ const CompanySkeleton = () => (
 
 const Company = () => {
   const { unp } = useParams();
-  const containerRef = useRef<HTMLDivElement>(null);
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -444,7 +443,9 @@ const Company = () => {
                     if (rawValue === undefined || rawValue === null || rawValue === "") {
                       return null;
                     }
-                    const value = typeof rawValue === "string" ? rawValue : String(rawValue);
+                    const dateKeys = new Set(["registration_date", "liquidation_date"]);
+                    const raw = typeof rawValue === "string" ? rawValue : String(rawValue);
+                    const value = dateKeys.has(key) ? formatDate(raw) : raw;
                     return (
                       <div key={key} className="glass p-3 sm:p-4 rounded-lg hover:bg-primary/5 dark:hover:bg-primary/10 transition-all duration-300">
                         <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">{label}</span>
@@ -502,8 +503,8 @@ const Company = () => {
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${!name.valid_to ? 'bg-green-500 animate-pulse' : 'bg-primary/60 dark:bg-primary/80'}`}></div>
                           <span>
-                            {name.valid_from && `С ${name.valid_from}`}
-                            {name.valid_to && ` по ${name.valid_to}`}
+                            {name.valid_from && `С ${formatDate(name.valid_from)}`}
+                            {name.valid_to && ` по ${formatDate(name.valid_to)}`}
                           </span>
                         </div>
                       </div>
@@ -555,8 +556,8 @@ const Company = () => {
                       <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${!addr.valid_to ? 'bg-green-500 animate-pulse' : 'bg-accent/60 dark:bg-accent/80'}`}></div>
                         <span>
-                          {addr.valid_from && `С ${addr.valid_from}`}
-                          {addr.valid_to && ` по ${addr.valid_to}`}
+                          {addr.valid_from && `С ${formatDate(addr.valid_from)}`}
+                          {addr.valid_to && ` по ${formatDate(addr.valid_to)}`}
                         </span>
                       </div>
                     </div>
@@ -621,8 +622,8 @@ const Company = () => {
                       <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full ${!v.valid_to ? 'bg-green-500 animate-pulse' : 'bg-secondary/60 dark:bg-secondary/80'}`}></div>
                         <span>
-                          {v.valid_from && `С ${v.valid_from}`}
-                          {v.valid_to && ` по ${v.valid_to}`}
+                          {v.valid_from && `С ${formatDate(v.valid_from)}`}
+                          {v.valid_to && ` по ${formatDate(v.valid_to)}`}
                         </span>
                       </div>
                     </div>
