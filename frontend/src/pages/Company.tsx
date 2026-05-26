@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Moon, Store, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Globe, Mail, Moon, Phone, Store, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -564,20 +564,27 @@ const Company = () => {
                 {profile.contacts.map((contact, idx) => (
                   <div key={idx} className="glass p-3 sm:p-4 rounded-lg hover:bg-accent/5 transition-all duration-300 space-y-2 sm:space-y-3">
                     {contact.phone && (
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                        <span className="text-xs sm:text-sm text-muted-foreground font-medium">📞 Телефон:</span>
+                      <div className="flex items-center gap-3">
+                        <Phone className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                         <p className="text-foreground font-semibold text-sm sm:text-base break-all">{contact.phone}</p>
                       </div>
                     )}
+                    {contact.fax && (
+                      <div className="flex items-center gap-3">
+                        <Phone className="w-4 h-4 text-muted-foreground flex-shrink-0 opacity-60" />
+                        <span className="text-xs text-muted-foreground mr-1">Факс:</span>
+                        <p className="text-foreground font-semibold text-sm sm:text-base break-all">{contact.fax}</p>
+                      </div>
+                    )}
                     {contact.email && (
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                        <span className="text-xs sm:text-sm text-muted-foreground font-medium">✉️ Email:</span>
+                      <div className="flex items-center gap-3">
+                        <Mail className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                         <p className="text-foreground font-semibold text-sm sm:text-base break-all">{contact.email}</p>
                       </div>
                     )}
                     {contact.website && (
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                        <span className="text-xs sm:text-sm text-muted-foreground font-medium">🌐 Сайт:</span>
+                      <div className="flex items-center gap-3">
+                        <Globe className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                         <a
                           href={contact.website}
                           target="_blank"
