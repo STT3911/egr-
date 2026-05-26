@@ -45,6 +45,8 @@
 
   <body>
     <div id="root"></div>
+    <!-- Disable browser scroll restoration before React mounts to prevent mid-page load -->
+    <script>if ("scrollRestoration" in history) { history.scrollRestoration = "manual"; } window.scrollTo(0, 0);</script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

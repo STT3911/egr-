@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Index from "./pages/Index";
 import Company from "./pages/Company";
@@ -17,13 +17,18 @@ const queryClient = new QueryClient();
 
 const ScrollToTop = () => {
   const location = useLocation();
+  const prevPathnameRef = useRef<string>("");
 
   useLayoutEffect(() => {
     if ("scrollRestoration" in window.history) {
       window.history.scrollRestoration = "manual";
     }
 
-    if (location.hash) {
+    const pathnameChanged = location.pathname !== prevPathnameRef.current;
+    prevPathnameRef.current = location.pathname;
+
+    // Only keep current scroll position when it's a same-page hash navigation
+    if (location.hash && !pathnameChanged) {
       return;
     }
 
