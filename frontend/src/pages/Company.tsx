@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { motion } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
+import { motion, useScroll, useSpring } from "framer-motion";
+import { AlertTriangle, ArrowLeft, Building2, CalendarDays, ChevronUp, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -29,13 +29,53 @@ const fieldLabels: Record<string, string> = {
 
 const cardReveal = {
   hidden: { opacity: 0, y: 18 },
-  visible: { opacity: 1, y: 0 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
 };
+
+// Wrapper for staggered card sections
+const SectionCard = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
+  <motion.div variants={cardReveal} className={className}>
+    {children}
+  </motion.div>
+);
 
 type TradeRegistryRecord = NonNullable<CompanyProfile["trade_registry_records"]>[number];
 
+// Skeleton block helper
+const Skeleton = ({ className = "" }: { className?: string }) => (
+  <div className={`animate-skeleton ${className}`} />
+);
+
+const CompanySkeleton = () => (
+  <div className="space-y-6">
+    <div className="relative overflow-hidden rounded-2xl border border-primary/10 bg-card/60 p-5 sm:p-6">
+      <Skeleton className="h-5 w-32 mb-4" />
+      <Skeleton className="h-8 w-48 mb-2" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="rounded-xl border border-border/50 bg-background/60 p-3">
+            <Skeleton className="h-4 w-4 mb-2" />
+            <Skeleton className="h-3 w-12 mb-1" />
+            <Skeleton className="h-5 w-16" />
+          </div>
+        ))}
+      </div>
+    </div>
+    <div className="rounded-2xl border border-border/50 bg-card/60 p-5 sm:p-6 space-y-3">
+      <Skeleton className="h-6 w-40 mb-4" />
+      {[...Array(4)].map((_, i) => (
+        <div key={i} className="rounded-lg p-3 border border-border/30">
+          <Skeleton className="h-3 w-20 mb-2" />
+          <Skeleton className="h-5 w-full max-w-sm" />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 const Company = () => {
   const { unp } = useParams();
+  const containerRef = useRef<HTMLDivElement>(null);
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +87,10 @@ const Company = () => {
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 200, damping: 30 });
 
   const handleItemClick = (itemId: string) => {
     setActiveItem(activeItem === itemId ? null : itemId);
@@ -130,6 +174,12 @@ const Company = () => {
     loadTaxDebt();
   }, [unp]);
 
+  useEffect(() => {
+    const onScroll = () => setShowScrollTop(window.scrollY > 400);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   const toggleTheme = () => {
     const newTheme = !isDark;
     setIsDark(newTheme);
@@ -203,6 +253,28 @@ const Company = () => {
     <div className="min-h-screen bg-background px-4 pb-12 pt-28 relative overflow-hidden" style={{
       background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)'
     }}>
+
+      {/* Scroll progress bar */}
+      <motion.div
+        className="fixed top-0 left-0 right-0 h-[2px] z-[60] origin-left"
+        style={{
+          scaleX,
+          background: 'linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))',
+        }}
+      />
+
+      {/* Scroll to top button */}
+      <motion.button
+        initial={false}
+        animate={{ opacity: showScrollTop ? 1 : 0, y: showScrollTop ? 0 : 12 }}
+        transition={{ duration: 0.2 }}
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        className="fixed bottom-6 right-6 z-50 w-11 h-11 rounded-full glass shadow-card hover:shadow-glow transition-all duration-300 flex items-center justify-center pointer-events-auto"
+        style={{ pointerEvents: showScrollTop ? "auto" : "none" }}
+        aria-label="Наверх"
+      >
+        <ChevronUp className="w-5 h-5" />
+      </motion.button>
 
       {/* Floating Theme Toggle */}
       <button
@@ -280,7 +352,7 @@ const Company = () => {
           )}
         </div>
 
-        {loading && <p className="text-muted-foreground">Загрузка...</p>}
+        {loading && <CompanySkeleton />}
         {profile && (
           <motion.div
             variants={cardReveal}
@@ -349,40 +421,44 @@ const Company = () => {
         {profile && (
           <motion.div
             variants={{
-              visible: { transition: { staggerChildren: 0.08 } },
+              hidden: {},
+              visible: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
             }}
             initial="hidden"
             animate="visible"
             className="space-y-6"
           >
-            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
-              <CardHeader className="rounded-t-lg" style={{
-                background: 'linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--accent) / 0.1) 100%)'
-              }}>
-                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
-                  <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
-                  Основные данные
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
-                {Object.entries(fieldLabels).map(([key, label]) => {
-                  const rawValue = (profile as Record<string, unknown>)[key];
-                  if (rawValue === undefined || rawValue === null || rawValue === "") {
-                    return null;
-                  }
-                  const value = typeof rawValue === "string" ? rawValue : String(rawValue);
-                  return (
-                    <div key={key} className="glass p-3 sm:p-4 rounded-lg hover:bg-primary/5 dark:hover:bg-primary/10 transition-all duration-300">
-                      <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">{label}</span>
-                      <span className="text-foreground font-semibold text-sm sm:text-base leading-relaxed">{value}</span>
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
+            <SectionCard>
+              <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
+                <CardHeader className="rounded-t-lg" style={{
+                  background: 'linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--accent) / 0.1) 100%)'
+                }}>
+                  <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                    Основные данные
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                  {Object.entries(fieldLabels).map(([key, label]) => {
+                    const rawValue = (profile as Record<string, unknown>)[key];
+                    if (rawValue === undefined || rawValue === null || rawValue === "") {
+                      return null;
+                    }
+                    const value = typeof rawValue === "string" ? rawValue : String(rawValue);
+                    return (
+                      <div key={key} className="glass p-3 sm:p-4 rounded-lg hover:bg-primary/5 dark:hover:bg-primary/10 transition-all duration-300">
+                        <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">{label}</span>
+                        <span className="text-foreground font-semibold text-sm sm:text-base leading-relaxed">{value}</span>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            </SectionCard>
 
           {/* История названий */}
           {profile.names && profile.names.length > 0 && (
+            <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--accent) / 0.1) 0%, hsl(var(--primary) / 0.1) 100%)'
@@ -437,10 +513,12 @@ const Company = () => {
                 })}
               </CardContent>
             </Card>
+            </SectionCard>
           )}
 
           {/* История адресов */}
           {profile.addresses && profile.addresses.length > 0 && (
+            <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-secondary/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--secondary) / 0.1) 0%, hsl(var(--primary) / 0.1) 100%)'
@@ -501,10 +579,12 @@ const Company = () => {
                 </div>
               </CardContent>
             </Card>
+            </SectionCard>
           )}
 
           {/* История ВЭД */}
           {profile.ved && profile.ved.length > 0 && (
+            <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--secondary) / 0.1) 100%)'
@@ -565,10 +645,12 @@ const Company = () => {
                 </div>
               </CardContent>
             </Card>
+            </SectionCard>
           )}
 
           {/* Контактная информация */}
           {profile.contacts && profile.contacts.length > 0 && (
+            <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--accent) / 0.1) 0%, hsl(var(--secondary) / 0.1) 100%)'
@@ -617,9 +699,11 @@ const Company = () => {
 
               </CardContent>
             </Card>
+            </SectionCard>
           )}
 
           {/* Примечание о реорганизованных органах */}
+          <SectionCard>
           <div className="glass p-3 sm:p-4 rounded-lg border-l-4 border-amber-500/50 text-xs sm:text-sm text-muted-foreground">
             <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400 mb-1">
               <Info className="w-3.5 h-3.5 flex-shrink-0" />
@@ -628,8 +712,10 @@ const Company = () => {
             Органы, отмеченные как «Реорганизованный орган», — это устаревшие регистрирующие органы (исполкомы, министерства),
             которые были реорганизованы или ликвидированы. Актуальные названия этих органов недоступны в данных ЕГР.
           </div>
+          </SectionCard>
 
           {/* Данные налоговой (GRP) */}
+          <SectionCard>
           <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/15">
             <CardHeader className="rounded-t-lg" style={{
               background: 'linear-gradient(90deg, hsl(var(--primary) / 0.08) 0%, hsl(var(--secondary) / 0.08) 100%)'
@@ -720,8 +806,10 @@ const Company = () => {
               )}
             </CardContent>
           </Card>
+          </SectionCard>
 
           {profile.pvt_resident && (
+            <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--primary) / 0.1) 0%, hsl(var(--accent) / 0.08) 100%)'
@@ -766,9 +854,11 @@ const Company = () => {
                 </div>
               </CardContent>
             </Card>
+            </SectionCard>
           )}
 
           {profile.trade_registry_records && profile.trade_registry_records.length > 0 && (
+            <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--accent) / 0.1) 0%, hsl(var(--primary) / 0.08) 100%)'
@@ -861,10 +951,12 @@ const Company = () => {
                 })}
               </CardContent>
             </Card>
+            </SectionCard>
           )}
 
           {/* Банкротство */}
           {profile.bankrot_cases && profile.bankrot_cases.length > 0 && (
+            <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-orange-500/30">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(25 95% 53% / 0.12) 0%, hsl(var(--destructive) / 0.08) 100%)'
@@ -936,8 +1028,10 @@ const Company = () => {
                 })}
               </CardContent>
             </Card>
+            </SectionCard>
           )}
 
+          <SectionCard>
           <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-destructive/20">
             <CardHeader
               className="rounded-t-lg"
@@ -1008,6 +1102,7 @@ const Company = () => {
               )}
             </CardContent>
           </Card>
+          </SectionCard>
           </motion.div>
         )}
       </motion.div>

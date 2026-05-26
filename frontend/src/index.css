@@ -245,6 +245,33 @@
     animation: shimmer 2s linear infinite;
   }
 
+  .animate-skeleton {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted) / 0.6) 25%,
+      hsl(var(--muted) / 1) 50%,
+      hsl(var(--muted) / 0.6) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-sweep 1.6s ease-in-out infinite;
+    border-radius: calc(var(--radius) - 4px);
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .scroll-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 2px;
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)));
+    z-index: 100;
+    transform-origin: left;
+    transition: width 0.1s linear;
+  }
+
   .motion-safe-subtle {
     transform: translateZ(0);
     will-change: transform, opacity;
@@ -320,6 +347,26 @@
   100% {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes skeleton-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 
