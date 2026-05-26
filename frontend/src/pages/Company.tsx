@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Globe, Mail, Moon, Phone, Store, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -181,6 +181,24 @@ const Company = () => {
     ].filter(Boolean).join(", ");
   };
 
+  // Даты из bankrot могут быть 0001-01-01 — скрываем такие
+  const formatBankrotDate = (value?: string) => {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime()) || d.getFullYear() < 1900) return null;
+    return formatDate(value);
+  };
+
+  // Цвет индикатора статуса компании
+  const statusIndicatorClass = (() => {
+    const name = (profile?.current_status_name || "").toLowerCase();
+    if (name.includes("ликвид") || name.includes("исключ") || name.includes("прекращ"))
+      return "bg-red-500 shadow-[0_0_18px_hsl(0_72%_51%/0.5)]";
+    if (name.includes("реорган") || name.includes("приостанов") || name.includes("процесс"))
+      return "bg-yellow-500 shadow-[0_0_18px_hsl(45_93%_47%/0.5)]";
+    return "bg-green-500 shadow-[0_0_18px_hsl(142_76%_36%/0.7)]";
+  })();
+
   return (
     <div className="min-h-screen bg-background px-4 pb-12 pt-28 relative overflow-hidden" style={{
       background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)'
@@ -235,7 +253,7 @@ const Company = () => {
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground leading-tight">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground leading-tight break-words">
               {profile?.current_name_ru || profile?.current_short_name_ru || "Профиль компании"}
             </h1>
             {unp && (
@@ -287,7 +305,7 @@ const Company = () => {
                   <div>
                     <div className="text-sm text-muted-foreground">Текущий статус</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <span className="inline-flex h-2.5 w-2.5 rounded-full bg-green-500 shadow-[0_0_18px_hsl(142_76%_36%/0.7)]" />
+                      <span className={`inline-flex h-2.5 w-2.5 rounded-full ${statusIndicatorClass}`} />
                       <span className="text-lg font-semibold text-foreground">
                         {profile.current_status_name || "Статус не указан"}
                       </span>
@@ -403,7 +421,7 @@ const Company = () => {
                         </div>
                       )}
                       <div className={`transition-all duration-300 text-xs text-muted-foreground px-2 py-1 inline-block mt-2 ${
-                        activeItem === itemId || (typeof window !== 'undefined' && window.innerWidth >= 768) ? 'opacity-100 animate-fade-in-up' : 'opacity-0 group-hover:opacity-100 group-hover:animate-fade-in-up'
+                        activeItem === itemId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                       }`}>
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${!name.valid_to ? 'bg-green-500 animate-pulse' : 'bg-primary/60 dark:bg-primary/80'}`}></div>
@@ -454,7 +472,7 @@ const Company = () => {
                       </p>
                     )}
                     <div className={`transition-all duration-300 text-xs text-muted-foreground px-2 py-1 inline-block ${
-                      activeItem === itemId || (typeof window !== 'undefined' && window.innerWidth >= 768) ? 'opacity-100 animate-fade-in-up' : 'opacity-0 group-hover:opacity-100 group-hover:animate-fade-in-up'
+                      activeItem === itemId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                     }`}>
                       <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${!addr.valid_to ? 'bg-green-500 animate-pulse' : 'bg-accent/60 dark:bg-accent/80'}`}></div>
@@ -518,7 +536,7 @@ const Company = () => {
                       <span className="text-foreground font-medium flex-1 text-sm sm:text-base">{v.ved_name}</span>
                     </div>
                     <div className={`transition-all duration-300 text-xs text-muted-foreground px-2 py-1 inline-block mt-2 ${
-                      activeItem === itemId || (typeof window !== 'undefined' && window.innerWidth >= 768) ? 'opacity-100 animate-fade-in-up' : 'opacity-0 group-hover:opacity-100 group-hover:animate-fade-in-up'
+                      activeItem === itemId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                     }`}>
                       <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full ${!v.valid_to ? 'bg-green-500 animate-pulse' : 'bg-secondary/60 dark:bg-secondary/80'}`}></div>
@@ -571,8 +589,7 @@ const Company = () => {
                     )}
                     {contact.fax && (
                       <div className="flex items-center gap-3">
-                        <Phone className="w-4 h-4 text-muted-foreground flex-shrink-0 opacity-60" />
-                        <span className="text-xs text-muted-foreground mr-1">Факс:</span>
+                        <Printer className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                         <p className="text-foreground font-semibold text-sm sm:text-base break-all">{contact.fax}</p>
                       </div>
                     )}
@@ -598,27 +615,17 @@ const Company = () => {
                   </div>
                 ))}
 
-                {/* Legend */}
-                <div className="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-border/50">
-                  <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                      <span>Действует сейчас</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-primary/60 dark:bg-primary/80"></div>
-                      <span>Архивная запись</span>
-                    </div>
-                  </div>
-                </div>
               </CardContent>
             </Card>
           )}
 
           {/* Примечание о реорганизованных органах */}
           <div className="glass p-3 sm:p-4 rounded-lg border-l-4 border-amber-500/50 text-xs sm:text-sm text-muted-foreground">
-            <span className="font-medium text-amber-600 dark:text-amber-400">ℹ️ Примечание:</span>{" "}
-            Органы, отмеченные как «Реорганизованный орган», — это устаревшие регистрирующие органы (исполкомы, министерства), 
+            <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400 mb-1">
+              <Info className="w-3.5 h-3.5 flex-shrink-0" />
+              Примечание:
+            </span>{" "}
+            Органы, отмеченные как «Реорганизованный орган», — это устаревшие регистрирующие органы (исполкомы, министерства),
             которые были реорганизованы или ликвидированы. Актуальные названия этих органов недоступны в данных ЕГР.
           </div>
 
@@ -893,8 +900,8 @@ const Company = () => {
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {c.start_date && <span>с {formatDate(c.start_date)}</span>}
-                          {c.end_date && <span> по {formatDate(c.end_date)}</span>}
+                          {formatBankrotDate(c.start_date) && <span>с {formatBankrotDate(c.start_date)}</span>}
+                          {formatBankrotDate(c.end_date) && <span> по {formatBankrotDate(c.end_date)}</span>}
                         </div>
                       </div>
 
