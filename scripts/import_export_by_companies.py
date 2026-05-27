@@ -33,8 +33,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report-path",
         type=Path,
-        default=Path("data/expo/export_by_import_report.json"),
+        default=Path("/tmp/export_by_import_report.json"),
         help="Where to write ambiguous/not_found rows with candidates",
+    )
+    parser.add_argument(
+        "--unmatched-output",
+        type=Path,
+        default=Path("/tmp/export_by_unmatched.json"),
+        help="Where to write only ambiguous/not_found/invalid rows as a JSON array",
     )
     parser.add_argument("--no-report", action="store_true", help="Do not write an import report")
     parser.add_argument("--progress-every", type=int, default=500, help="Print progress every N processed rows")
@@ -68,6 +74,7 @@ def main() -> int:
             use_fuzzy=args.fuzzy and not args.no_fuzzy,
             country=None if args.all_countries else args.country,
             report_path=None if args.no_report else args.report_path,
+            unmatched_output=None if args.no_report else args.unmatched_output,
             progress=print_progress,
             progress_every=args.progress_every,
             limit=args.limit,

@@ -12,8 +12,11 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database.models import ExportByCompanyRecord
+from app.core.logger import get_logger
 from app.utils.search_normalizer import normalize_company_name
 
+
+logger = get_logger("export_by_import")
 
 MATCHED = "matched"
 AMBIGUOUS = "ambiguous"
@@ -253,6 +256,7 @@ def import_export_by_json(
     use_fuzzy: bool = False,
     country: str | None = "Беларусь",
     report_path: Path | None = None,
+    unmatched_output: Path | None = None,
     progress: Callable[[int, dict[str, int]], None] | None = None,
     progress_every: int = 500,
     limit: int | None = None,
@@ -299,11 +303,14 @@ def import_export_by_json(
                 {
                     "export_by_id": source_row.get("id"),
                     "name": source_row.get("name"),
+                    "logo": source_row.get("logo"),
+                    "description": source_row.get("description"),
                     "country": source_row.get("country"),
                     "normalized_name": normalized,
                     "match_status": match.status,
                     "match_method": match.method,
                     "candidates": match.candidate_json,
+                    "raw_json": source_row,
                 }
             )
         if not dry_run:
@@ -321,10 +328,25 @@ def import_export_by_json(
     elif pending:
         db.commit()
     if report_path:
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_payload = {"stats": stats, "rows": report_rows}
-        report_path.write_text(
-            json.dumps(report_payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        try:
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_payload = {"stats": stats, "rows": report_rows}
+            report_path.write_text(
+                json.dumps(report_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Failed to write export.by import report to %s: %s", report_path, exc)
+            stats["report_write_error"] = 1
+    if unmatched_output:
+        try:
+            unmatched_output.parent.mkdir(parents=True, exist_ok=True)
+            unmatched_output.write_text(
+                json.dumps(report_rows, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            stats["unmatched_output"] = str(unmatched_output)
+        except OSError as exc:
+            logger.warning("Failed to write export.by unmatched rows to %s: %s", unmatched_output, exc)
+            stats["unmatched_write_error"] = 1
     return stats
