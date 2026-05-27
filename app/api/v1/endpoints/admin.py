@@ -859,6 +859,7 @@ async def queue_pvt_residents_sync(
     batch_size: int = 100,
     delay: float = 0.2,
     only_missing: bool = False,
+    resume: bool = True,
     session: dict = Depends(require_admin),
 ):
     if limit is not None and limit < 1:
@@ -881,6 +882,7 @@ async def queue_pvt_residents_sync(
         batch_size=batch_size,
         delay=delay,
         only_missing=only_missing,
+        resume=resume,
     )
     return {
         "queued": True,
@@ -891,6 +893,7 @@ async def queue_pvt_residents_sync(
         "batch_size": batch_size,
         "delay": delay,
         "only_missing": only_missing,
+        "resume": resume,
     }
 
 

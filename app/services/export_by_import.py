@@ -250,11 +250,12 @@ def import_export_by_json(
     json_path: Path,
     batch_size: int = 500,
     dry_run: bool = False,
-    use_fuzzy: bool = True,
+    use_fuzzy: bool = False,
     country: str | None = "Беларусь",
     report_path: Path | None = None,
     progress: Callable[[int, dict[str, int]], None] | None = None,
     progress_every: int = 500,
+    limit: int | None = None,
 ) -> dict[str, int]:
     rows = json.loads(json_path.read_text(encoding="utf-8-sig"))
     if not isinstance(rows, list):
@@ -275,6 +276,8 @@ def import_export_by_json(
     pg_trgm_available = _has_pg_trgm(db) if use_fuzzy else False
     pending = 0
     for source_row in rows:
+        if limit is not None and stats["processed"] >= limit:
+            break
         stats["total"] += 1
         if not isinstance(source_row, dict) or source_row.get("id") is None:
             stats["invalid_row"] += 1

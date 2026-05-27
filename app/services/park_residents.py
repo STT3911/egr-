@@ -21,6 +21,7 @@ from app.core.logger import get_logger
 logger = get_logger("park_residents")
 
 BASE_URL = "https://www.park.by/residents/"
+PVT_LAST_CHECKED_UNP_KEY = "pvt_residents_last_checked_unp"
 
 DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -240,6 +241,40 @@ def upsert_resident_record(db: Any, company_id: Any, result: ParkResidentResult)
     db.execute(stmt)
 
 
+def get_last_checked_unp(db: Any) -> int | None:
+    from app.database.models import SystemState
+
+    state = db.query(SystemState).filter(SystemState.key == PVT_LAST_CHECKED_UNP_KEY).first()
+    if not state or not state.value:
+        return None
+    try:
+        return int(state.value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid PVT cursor value: %s", state.value)
+        return None
+
+
+def set_last_checked_unp(db: Any, unp: int | None) -> None:
+    from app.database.models import SystemState
+
+    value = "" if unp is None else str(int(unp))
+    state = db.query(SystemState).filter(SystemState.key == PVT_LAST_CHECKED_UNP_KEY).first()
+    if state:
+        state.value = value
+    else:
+        db.add(SystemState(key=PVT_LAST_CHECKED_UNP_KEY, value=value))
+
+
+def commit_pvt_cursor(db: Any, unp: int | None) -> None:
+    try:
+        set_last_checked_unp(db, unp)
+        db.commit()
+    except Exception:
+        db.rollback()
+        set_last_checked_unp(db, unp)
+        db.commit()
+
+
 def iter_unps_from_csv(path: Path, limit: int | None = None) -> list[str]:
     unps: list[str] = []
     seen: set[str] = set()
@@ -293,14 +328,18 @@ def sync_pvt_residents(
     timeout: float = 30.0,
     only_missing: bool = False,
     proxy: str | None = None,
+    resume: bool = True,
 ) -> dict[str, int]:
     from app.database.models import Company, PVTResidentRecord
 
-    stats = {"checked": 0, "found": 0, "not_found": 0, "invalid": 0, "error": 0, "saved": 0}
+    stats = {"checked": 0, "found": 0, "not_found": 0, "invalid": 0, "error": 0, "saved": 0, "start_unp": 0, "last_unp": 0, "cursor_reset": 0}
     session = requests.Session()
     pending = 0
+    checked_since_commit = 0
     remaining = limit
-    last_unp: int | None = start_unp - 1 if start_unp is not None else None
+    cursor_unp = get_last_checked_unp(db) if resume and start_unp is None and offset == 0 else None
+    last_unp: int | None = start_unp - 1 if start_unp is not None else cursor_unp
+    stats["start_unp"] = int(last_unp or 0) + 1
     offset_applied = False
 
     while remaining is None or remaining > 0:
@@ -324,18 +363,21 @@ def sync_pvt_residents(
             try:
                 result = fetch_resident(str(unp), session=session, timeout=timeout, proxy=proxy)
                 stats["checked"] += 1
+                checked_since_commit += 1
                 stats[result.status] = stats.get(result.status, 0) + 1
                 if result.status == "found":
                     upsert_resident_record(db, company_id, result)
                     stats["saved"] += 1
                     pending += 1
-                if pending >= batch_size:
-                    db.commit()
+                if checked_since_commit >= batch_size:
+                    commit_pvt_cursor(db, last_unp)
                     pending = 0
+                    checked_since_commit = 0
                 logger.info("PVT resident check unp=%s status=%s", unp, result.status)
             except Exception as exc:
-                db.rollback()
+                commit_pvt_cursor(db, last_unp)
                 pending = 0
+                checked_since_commit = 0
                 stats["checked"] += 1
                 stats["error"] += 1
                 logger.warning("PVT resident check failed unp=%s error=%s", unp, exc)
@@ -347,6 +389,13 @@ def sync_pvt_residents(
         if len(rows) < page_size:
             break
 
-    if pending:
-        db.commit()
+    if pending or checked_since_commit:
+        commit_pvt_cursor(db, last_unp)
+    stats["last_unp"] = int(last_unp or 0)
+
+    if last_unp is not None:
+        has_more = db.query(Company.id).filter(Company.unp > last_unp).first() is not None
+        if not has_more and resume and start_unp is None and offset == 0:
+            commit_pvt_cursor(db, None)
+            stats["cursor_reset"] = 1
     return stats

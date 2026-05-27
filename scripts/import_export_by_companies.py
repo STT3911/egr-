@@ -21,7 +21,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("json_path", type=Path, help="Path to export.by JSON array")
     parser.add_argument("--batch-size", type=int, default=500, help="Commit every N saved rows")
     parser.add_argument("--dry-run", action="store_true", help="Only calculate match stats, do not write rows")
-    parser.add_argument("--no-fuzzy", action="store_true", help="Disable trigram fallback; use exact normalized names only")
+    parser.add_argument("--fuzzy", action="store_true", help="Enable slow trigram fallback for unresolved exact matches")
+    parser.add_argument("--no-fuzzy", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--limit", type=int, default=None, help="Process only first N accepted rows")
     parser.add_argument(
         "--country",
         default="Беларусь",
@@ -63,11 +65,12 @@ def main() -> int:
             args.json_path,
             batch_size=args.batch_size,
             dry_run=args.dry_run,
-            use_fuzzy=not args.no_fuzzy,
+            use_fuzzy=args.fuzzy and not args.no_fuzzy,
             country=None if args.all_countries else args.country,
             report_path=None if args.no_report else args.report_path,
             progress=print_progress,
             progress_every=args.progress_every,
+            limit=args.limit,
         )
         print(json.dumps(stats, ensure_ascii=False, indent=2))
         return 0

@@ -21,6 +21,7 @@ def sync_pvt_residents_task(
     timeout: float = 30.0,
     only_missing: bool = False,
     proxy: str | None = None,
+    resume: bool = True,
 ) -> dict[str, int]:
     db = SessionLocal()
     try:
@@ -34,6 +35,7 @@ def sync_pvt_residents_task(
             timeout=timeout,
             only_missing=only_missing,
             proxy=proxy,
+            resume=resume,
         )
         logger.info("PVT residents sync finished: %s", stats)
         return stats
