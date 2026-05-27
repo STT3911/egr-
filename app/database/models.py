@@ -1,5 +1,5 @@
 """Database models"""
-from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, UniqueConstraint, Float
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -173,6 +173,7 @@ class Company(Base):
     gias_locked_suppliers = relationship("LockedSupplier", back_populates="company")
     trade_registry_records = relationship("TradeRegistryRecord", back_populates="company")
     pvt_resident = relationship("PVTResidentRecord", back_populates="company", uselist=False)
+    export_by_records = relationship("ExportByCompanyRecord", back_populates="company")
 
 
 class TradeRegistryRecord(Base):
@@ -308,6 +309,37 @@ class PVTResidentRecord(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     company = relationship("Company", back_populates="pvt_resident")
+
+
+class ExportByCompanyRecord(Base):
+    """Company card parsed from export.by and linked to an EGR company when a name match is reliable."""
+    __tablename__ = "export_by_company_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    export_by_id = Column(BigInteger, nullable=False, unique=True, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="SET NULL"), nullable=True, index=True)
+    unp = Column(BigInteger, nullable=True, index=True)
+
+    name = Column(Text, nullable=False)
+    normalized_name = Column(Text, nullable=True, index=True)
+    logo = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    country = Column(String(255), nullable=True)
+    is_favorite = Column(Boolean, nullable=False, default=False)
+
+    match_status = Column(String(32), nullable=False, default="not_found", index=True)
+    match_method = Column(String(32), nullable=True)
+    match_score = Column(Float, nullable=True)
+    matched_name = Column(Text, nullable=True)
+    candidate_unps = Column(JSONB, nullable=False, default=list)
+    raw_json = Column(JSONB, nullable=False)
+
+    first_seen_at = Column(DateTime, server_default=func.now(), nullable=False)
+    last_seen_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    company = relationship("Company", back_populates="export_by_records")
 
 
 class CompanyPlaceLocation(Base):
