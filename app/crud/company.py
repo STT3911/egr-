@@ -18,7 +18,6 @@ from app.database.models import (
     LockedSupplier,
     PVTResidentRecord,
     TradeRegistryRecord,
-    ExportByCompanyRecord,
 )
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
@@ -335,27 +334,6 @@ class CompanyCRUD:
                 "last_seen_at": pvt.last_seen_at.isoformat() if pvt.last_seen_at else None,
             }
 
-        export_by_rows = (
-            self.db.query(ExportByCompanyRecord)
-            .filter(ExportByCompanyRecord.unp == unp)
-            .order_by(ExportByCompanyRecord.name.asc(), ExportByCompanyRecord.export_by_id.asc())
-            .all()
-        )
-        export_by_records = [
-            {
-                "export_by_id": row.export_by_id,
-                "name": row.name,
-                "logo": row.logo,
-                "description": row.description,
-                "country": row.country,
-                "match_method": row.match_method,
-                "match_score": row.match_score,
-                "matched_name": row.matched_name,
-                "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
-            }
-            for row in export_by_rows
-        ]
-
         trade_registry_rows = (
             self.db.query(TradeRegistryRecord)
             .filter(TradeRegistryRecord.unp == unp)
@@ -433,7 +411,6 @@ class CompanyCRUD:
             "gias_accreditation": gias_accreditation,
             "gias_locked_suppliers": gias_locked_suppliers,
             "pvt_resident": pvt_resident,
-            "export_by_records": export_by_records,
             "trade_registry_records": trade_registry_records,
             "bankrot_cases": bankrot_cases,
             "names": [

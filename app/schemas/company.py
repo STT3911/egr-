@@ -72,18 +72,6 @@ class CompanyPVTResidentSchema(BaseModel):
     last_seen_at: Optional[str] = None
 
 
-class CompanyExportByRecordSchema(BaseModel):
-    export_by_id: int
-    name: Optional[str] = None
-    logo: Optional[str] = None
-    description: Optional[str] = None
-    country: Optional[str] = None
-    match_method: Optional[str] = None
-    match_score: Optional[float] = None
-    matched_name: Optional[str] = None
-    last_seen_at: Optional[str] = None
-
-
 class CompanyTradeRegistryRecordSchema(BaseModel):
     registration_number: Optional[str] = None
     legal_name: Optional[str] = None
@@ -145,7 +133,6 @@ class CompanyProfileResponse(BaseModel):
     gias_accreditation: Optional[CompanyGiasAccreditationSchema] = None
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
-    export_by_records: List[CompanyExportByRecordSchema] = []
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
     bankrot_cases: List[BankrotCaseSchema] = []
 
@@ -169,6 +156,5 @@ class CompanyLookupResponse(BaseModel):
     query: str
     count: int
     results: List[CompanyLookupItem] = []
-
 
 
