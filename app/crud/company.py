@@ -326,11 +326,18 @@ class CompanyCRUD:
             .first()
         )
         if pvt:
+            pvt_raw = pvt.raw_json or {}
             pvt_resident = {
                 "name": pvt.name,
                 "profile_url": pvt.profile_url,
-                "description": pvt.description,
+                "description": pvt.description or pvt_raw.get("list_description"),
                 "source_url": pvt.source_url,
+                "city": pvt_raw.get("city"),
+                "legal_address": pvt_raw.get("legal_address"),
+                "phone": pvt_raw.get("phone"),
+                "website": pvt_raw.get("website"),
+                "activity_directions": pvt_raw.get("activity_directions") or [],
+                "list_description": pvt_raw.get("list_description"),
                 "last_seen_at": pvt.last_seen_at.isoformat() if pvt.last_seen_at else None,
             }
 

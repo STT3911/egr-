@@ -69,6 +69,12 @@ class CompanyPVTResidentSchema(BaseModel):
     profile_url: Optional[str] = None
     description: Optional[str] = None
     source_url: Optional[str] = None
+    city: Optional[str] = None
+    legal_address: Optional[str] = None
+    phone: Optional[str] = None
+    website: Optional[str] = None
+    activity_directions: List[str] = []
+    list_description: Optional[str] = None
     last_seen_at: Optional[str] = None
 
 
@@ -156,5 +162,4 @@ class CompanyLookupResponse(BaseModel):
     query: str
     count: int
     results: List[CompanyLookupItem] = []
-
 

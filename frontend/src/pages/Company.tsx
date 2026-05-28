@@ -836,6 +836,49 @@ const Company = () => {
                       </p>
                     </div>
                   )}
+                  {profile.pvt_resident.city && (
+                    <div>
+                      <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Город</span>
+                      <p className="text-foreground text-sm sm:text-base">{profile.pvt_resident.city}</p>
+                    </div>
+                  )}
+                  {profile.pvt_resident.legal_address && (
+                    <div>
+                      <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Юридический адрес</span>
+                      <p className="text-foreground text-sm sm:text-base">{profile.pvt_resident.legal_address}</p>
+                    </div>
+                  )}
+                  {profile.pvt_resident.phone && (
+                    <div>
+                      <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Телефон</span>
+                      <p className="text-foreground text-sm sm:text-base">{profile.pvt_resident.phone}</p>
+                    </div>
+                  )}
+                  {profile.pvt_resident.website && (
+                    <div>
+                      <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Сайт</span>
+                      <a
+                        href={profile.pvt_resident.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:text-primary/80 font-semibold underline decoration-primary/30 hover:decoration-primary transition-all duration-300 text-sm break-all"
+                      >
+                        {profile.pvt_resident.website}
+                      </a>
+                    </div>
+                  )}
+                  {profile.pvt_resident.activity_directions && profile.pvt_resident.activity_directions.length > 0 && (
+                    <div>
+                      <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Направления деятельности</span>
+                      <div className="flex flex-wrap gap-2">
+                        {profile.pvt_resident.activity_directions.map((direction, index) => (
+                          <span key={`${direction}-${index}`} className="px-2 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium">
+                            {direction}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {profile.pvt_resident.profile_url && (
                     <a
                       href={profile.pvt_resident.profile_url}

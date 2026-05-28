@@ -56,6 +56,12 @@ export type CompanyProfile = {
     profile_url?: string;
     description?: string;
     source_url?: string;
+    city?: string;
+    legal_address?: string;
+    phone?: string;
+    website?: string;
+    activity_directions?: string[];
+    list_description?: string;
     last_seen_at?: string;
   } | null;
   bankrot_cases?: {
