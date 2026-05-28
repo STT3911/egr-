@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
-from app.services.park_residents import sync_pvt_residents
+
+from app.services.park_residents import sync_pvt_residents, sync_pvt_residents_from_catalog
 from app.tasks.celery_app import celery_app
 
 logger = get_logger("tasks.park")
@@ -22,21 +25,37 @@ def sync_pvt_residents_task(
     only_missing: bool = False,
     proxy: str | None = None,
     resume: bool = True,
+    source: str = "catalog",
+    output: str | None = None,
+    letters: str | None = None,
+    prefixes: str | None = None,
 ) -> dict[str, int]:
     db = SessionLocal()
     try:
-        stats = sync_pvt_residents(
-            db,
-            limit=limit,
-            offset=offset,
-            start_unp=start_unp,
-            batch_size=batch_size,
-            delay=delay,
-            timeout=timeout,
-            only_missing=only_missing,
-            proxy=proxy,
-            resume=resume,
-        )
+        if source == "catalog":
+            stats = sync_pvt_residents_from_catalog(
+                db,
+                output=Path(output) if output else None,
+                letters=list(prefixes or letters) if (prefixes or letters) else None,
+                limit=limit,
+                batch_size=batch_size,
+                delay=delay,
+                timeout=timeout,
+                proxy=proxy,
+            )
+        else:
+            stats = sync_pvt_residents(
+                db,
+                limit=limit,
+                offset=offset,
+                start_unp=start_unp,
+                batch_size=batch_size,
+                delay=delay,
+                timeout=timeout,
+                only_missing=only_missing,
+                proxy=proxy,
+                resume=resume,
+            )
         logger.info("PVT residents sync finished: %s", stats)
         return stats
     finally:

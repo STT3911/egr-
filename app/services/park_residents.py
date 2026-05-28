@@ -22,6 +22,7 @@ logger = get_logger("park_residents")
 
 BASE_URL = "https://www.park.by/residents/"
 PVT_LAST_CHECKED_UNP_KEY = "pvt_residents_last_checked_unp"
+DEFAULT_CATALOG_PREFIXES = "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЭЮЯ123456789"
 
 DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -47,6 +48,14 @@ class ParkResidentResult:
     raw_text: str | None = None
     http_status: int | None = None
     error: str | None = None
+    city: str | None = None
+    legal_address: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    activity_directions: list[str] | None = None
+    list_letter: str | None = None
+    list_page: int | None = None
+    list_description: str | None = None
 
 
 class _NewsItemParser(HTMLParser):
@@ -316,6 +325,307 @@ def write_results(path: Path, rows: list[ParkResidentResult]) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow(asdict(row))
+
+
+def _strip_tags(value: str) -> str:
+    value = re.sub(r"<script\b.*?</script>", " ", value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r"<style\b.*?</style>", " ", value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r"<br\s*/?>", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"</p\s*>", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"<[^>]+>", " ", value)
+    return clean_text(value) or ""
+
+
+def _extract_first(pattern: str, html_text: str, flags: int = re.IGNORECASE | re.DOTALL) -> str | None:
+    match = re.search(pattern, html_text, flags)
+    if not match:
+        return None
+    for group in match.groups():
+        if group:
+            return clean_text(_strip_tags(group))
+    return None
+
+
+def catalog_url(letter: str | None = None, page: int = 1) -> str:
+    params: dict[str, Any] = {}
+    if letter:
+        params["first"] = letter
+    if page > 1:
+        params["PAGEN_1"] = page
+    query = urlencode(params)
+    return f"{BASE_URL}?{query}" if query else BASE_URL
+
+
+def parse_catalog_items(html_text: str, letter: str | None = None, page: int | None = None) -> list[dict[str, Any]]:
+    parser = _NewsItemParser()
+    parser.feed(html_text)
+    items: list[dict[str, Any]] = []
+    for item in parser.items:
+        links = item.get("links") or []
+        first_link = links[0] if links else {}
+        href = first_link.get("href")
+        name = clean_text(first_link.get("text"))
+        if not href or not name:
+            continue
+        texts = [text for text in item.get("texts", []) if text and text != name]
+        items.append(
+            {
+                "name": name,
+                "profile_url": urljoin(BASE_URL, href),
+                "profile_path": href,
+                "list_description": clean_text(" ".join(texts)),
+                "list_letter": letter,
+                "list_page": page,
+            }
+        )
+    return items
+
+
+def has_next_catalog_page(html_text: str) -> bool:
+    return 'id="ajax_next_page"' in html_text or "id='ajax_next_page'" in html_text
+
+
+def parse_resident_detail_html(
+    html_text: str,
+    url: str | None = None,
+    list_item: dict[str, Any] | None = None,
+    http_status: int | None = None,
+) -> ParkResidentResult:
+    list_item = list_item or {}
+    name = _extract_first(r"<h1[^>]*>(.*?)</h1>", html_text) or clean_text(list_item.get("name"))
+    unp = clean_unp(_extract_first(r"УНП\s*:\s*([^<]+)", html_text))
+    city = _extract_first(r"Город:\s*(?:<[^>]+>)*\s*(.*?)(?:</div>|<div)", html_text)
+    legal_address = _extract_first(r"Юридический адрес:\s*(.*?)(?:</div>|<div)", html_text)
+    phone = _extract_first(r"Контактный телефон:\s*(.*?)(?:</div>|<div)", html_text)
+    website = _extract_first(
+        r"Веб-сайт:\s*(?:<a[^>]*href=[\"']([^\"']+)[\"'][^>]*>.*?</a>|(.*?))(?:</div>|<div)",
+        html_text,
+    )
+    if not website:
+        website = _extract_first(r"Веб-сайт:\s*(.*?)(?:</div>|<div)", html_text)
+
+    direction_html = None
+    direction_match = re.search(r"Направления деятельности:\s*<ul>(.*?)</ul>", html_text, re.IGNORECASE | re.DOTALL)
+    if direction_match:
+        direction_html = direction_match.group(1)
+    directions = []
+    if direction_html:
+        directions = [
+            value
+            for value in (
+                clean_text(_strip_tags(item))
+                for item in re.findall(r"<li[^>]*>(.*?)</li>", direction_html, re.IGNORECASE | re.DOTALL)
+            )
+            if value
+        ]
+
+    description = _extract_first(r'<div class="left-colum white_bgr">\s*(.*?)(?:<div class="block-unde">)', html_text)
+    if description and name:
+        description = clean_text(description.replace(name, "", 1))
+
+    return ParkResidentResult(
+        unp=unp or "",
+        status="found" if unp else "invalid",
+        name=name,
+        profile_url=url or clean_text(list_item.get("profile_url")),
+        description=description or clean_text(list_item.get("list_description")),
+        source_url=url,
+        http_status=http_status,
+        error=None if unp else "UNP not found on detail page",
+        city=city,
+        legal_address=legal_address,
+        phone=phone,
+        website=website,
+        activity_directions=directions or None,
+        list_letter=clean_text(list_item.get("list_letter")),
+        list_page=list_item.get("list_page") if isinstance(list_item.get("list_page"), int) else None,
+        list_description=clean_text(list_item.get("list_description")),
+    )
+
+
+def fetch_catalog_snapshot(
+    output: Path | None = None,
+    letters: Iterable[str] | None = None,
+    delay: float = 0.2,
+    timeout: float = 30.0,
+    proxy: str | None = None,
+    limit: int | None = None,
+) -> list[ParkResidentResult]:
+    letters = list(letters or DEFAULT_CATALOG_PREFIXES)
+    session = requests.Session()
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    results: list[ParkResidentResult] = []
+    seen_urls: set[str] = set()
+
+    for letter in letters:
+        page = 1
+        while True:
+            page_url = catalog_url(letter, page)
+            response = session.get(page_url, headers=DEFAULT_HEADERS, timeout=timeout, proxies=proxies)
+            response.raise_for_status()
+            items = parse_catalog_items(response.text, letter=letter, page=page)
+            logger.info("PVT catalog letter=%s page=%s items=%s", letter, page, len(items))
+            if not items:
+                break
+
+            for item in items:
+                profile_url = str(item["profile_url"])
+                if profile_url in seen_urls:
+                    continue
+                seen_urls.add(profile_url)
+                detail = session.get(profile_url, headers=DEFAULT_HEADERS, timeout=timeout, proxies=proxies)
+                detail.raise_for_status()
+                parsed = parse_resident_detail_html(
+                    detail.text,
+                    url=profile_url,
+                    list_item=item,
+                    http_status=detail.status_code,
+                )
+                results.append(parsed)
+                if output:
+                    write_results(output, results)
+                if limit and len(results) >= limit:
+                    return results
+                if delay > 0:
+                    time.sleep(delay)
+
+            if not has_next_catalog_page(response.text):
+                break
+            page += 1
+            if delay > 0:
+                time.sleep(delay)
+
+    return results
+
+
+def load_snapshot(path: Path) -> list[dict[str, Any]]:
+    rows = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(rows, list):
+        raise ValueError("Expected a JSON array")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def diff_snapshot_rows(old_rows: list[dict[str, Any]], new_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def row_key(row: dict[str, Any]) -> str | None:
+        return clean_unp(row.get("unp")) or clean_text(row.get("profile_url"))
+
+    old_map = {key: row for row in old_rows if (key := row_key(row))}
+    new_map = {key: row for row in new_rows if (key := row_key(row))}
+    old_keys = set(old_map)
+    new_keys = set(new_map)
+    comparable_fields = (
+        "name",
+        "profile_url",
+        "description",
+        "city",
+        "legal_address",
+        "phone",
+        "website",
+        "activity_directions",
+    )
+
+    changed = []
+    for key in sorted(old_keys & new_keys):
+        field_changes = {}
+        for field in comparable_fields:
+            old_value = old_map[key].get(field)
+            new_value = new_map[key].get(field)
+            if old_value != new_value:
+                field_changes[field] = {"old": old_value, "new": new_value}
+        if field_changes:
+            changed.append(
+                {
+                    "key": key,
+                    "unp": clean_unp(new_map[key].get("unp")),
+                    "name": new_map[key].get("name"),
+                    "changes": field_changes,
+                }
+            )
+
+    return {
+        "old_count": len(old_map),
+        "new_count": len(new_map),
+        "added": [new_map[key] for key in sorted(new_keys - old_keys)],
+        "removed": [old_map[key] for key in sorted(old_keys - new_keys)],
+        "changed": changed,
+    }
+
+
+def import_pvt_snapshot_rows(db: Any, rows: list[dict[str, Any]], batch_size: int = 500) -> dict[str, int]:
+    from app.database.models import Company
+
+    stats = {"total": 0, "found_company": 0, "missing_company": 0, "invalid": 0, "saved": 0}
+    pending = 0
+    for row in rows:
+        stats["total"] += 1
+        unp = clean_unp(row.get("unp"))
+        if not unp:
+            stats["invalid"] += 1
+            continue
+        company = db.query(Company).filter(Company.unp == int(unp)).first()
+        if not company:
+            stats["missing_company"] += 1
+            continue
+        result = ParkResidentResult(
+            unp=unp,
+            status="found",
+            name=clean_text(row.get("name")),
+            profile_url=clean_text(row.get("profile_url")),
+            description=clean_text(row.get("description")),
+            source_url=clean_text(row.get("source_url")) or clean_text(row.get("profile_url")),
+            city=clean_text(row.get("city")),
+            legal_address=clean_text(row.get("legal_address")),
+            phone=clean_text(row.get("phone")),
+            website=clean_text(row.get("website")),
+            activity_directions=row.get("activity_directions") if isinstance(row.get("activity_directions"), list) else None,
+            list_letter=clean_text(row.get("list_letter")),
+            list_page=row.get("list_page") if isinstance(row.get("list_page"), int) else None,
+            list_description=clean_text(row.get("list_description")),
+        )
+        upsert_resident_record(db, company.id, result)
+        stats["found_company"] += 1
+        stats["saved"] += 1
+        pending += 1
+        if pending >= batch_size:
+            db.commit()
+            pending = 0
+    if pending:
+        db.commit()
+    return stats
+
+
+def import_pvt_snapshot_json(db: Any, snapshot_path: Path, batch_size: int = 500) -> dict[str, int]:
+    return import_pvt_snapshot_rows(db, load_snapshot(snapshot_path), batch_size=batch_size)
+
+
+def sync_pvt_residents_from_catalog(
+    db: Any,
+    output: Path | None = None,
+    letters: Iterable[str] | None = None,
+    limit: int | None = None,
+    batch_size: int = 500,
+    delay: float = 0.2,
+    timeout: float = 30.0,
+    proxy: str | None = None,
+) -> dict[str, int]:
+    rows = fetch_catalog_snapshot(
+        output=output,
+        letters=letters,
+        delay=delay,
+        timeout=timeout,
+        proxy=proxy,
+        limit=limit,
+    )
+    stats = import_pvt_snapshot_rows(
+        db,
+        [asdict(row) for row in rows],
+        batch_size=batch_size,
+    )
+    stats["fetched"] = len(rows)
+    stats["source"] = "catalog"
+    if output:
+        stats["output"] = str(output)
+    return stats
 
 
 def sync_pvt_residents(

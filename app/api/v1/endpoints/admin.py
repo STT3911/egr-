@@ -860,6 +860,10 @@ async def queue_pvt_residents_sync(
     delay: float = 0.2,
     only_missing: bool = False,
     resume: bool = True,
+    source: str = "catalog",
+    output: str | None = None,
+    letters: str | None = None,
+    prefixes: str | None = None,
     session: dict = Depends(require_admin),
 ):
     if limit is not None and limit < 1:
@@ -872,6 +876,8 @@ async def queue_pvt_residents_sync(
         raise HTTPException(status_code=400, detail="batch_size must be greater than zero")
     if delay < 0:
         raise HTTPException(status_code=400, detail="delay must be greater than or equal to zero")
+    if source not in {"catalog", "egr_scan"}:
+        raise HTTPException(status_code=400, detail="source must be either catalog or egr_scan")
 
     from app.tasks.park_tasks import sync_pvt_residents_task
 
@@ -883,6 +889,10 @@ async def queue_pvt_residents_sync(
         delay=delay,
         only_missing=only_missing,
         resume=resume,
+        source=source,
+        output=output,
+        letters=letters,
+        prefixes=prefixes,
     )
     return {
         "queued": True,
@@ -894,6 +904,10 @@ async def queue_pvt_residents_sync(
         "delay": delay,
         "only_missing": only_missing,
         "resume": resume,
+        "source": source,
+        "output": output,
+        "letters": letters,
+        "prefixes": prefixes,
     }
 
 
