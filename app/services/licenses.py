@@ -224,6 +224,7 @@ def import_license_rows(db: Any, rows: list[dict[str, Any]], batch_size: int | N
     stats = {
         "total": 0,
         "invalid": 0,
+        "duplicate_license_ids": 0,
         "with_unp": 0,
         "matched_company": 0,
         "missing_company": 0,
@@ -233,6 +234,7 @@ def import_license_rows(db: Any, rows: list[dict[str, Any]], batch_size: int | N
         "saved": 0,
     }
     pending: list[dict[str, Any]] = []
+    seen_license_ids: set[int] = set()
 
     unps: set[int] = set()
     license_ids: set[int] = set()
@@ -263,6 +265,10 @@ def import_license_rows(db: Any, rows: list[dict[str, Any]], batch_size: int | N
         if payload is None:
             stats["invalid"] += 1
             continue
+        if payload["license_id"] in seen_license_ids:
+            stats["duplicate_license_ids"] += 1
+            continue
+        seen_license_ids.add(payload["license_id"])
 
         current_hash = known_hashes.get(payload["license_id"])
         if current_hash is None:

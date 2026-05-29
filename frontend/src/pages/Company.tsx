@@ -84,16 +84,11 @@ const Company = () => {
   const [taxDebtData, setTaxDebtData] = useState<CompanyTaxDebtResponse | null>(null);
   const [taxDebtLoading, setTaxDebtLoading] = useState(false);
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
-  const [activeItem, setActiveItem] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, { stiffness: 200, damping: 30 });
-
-  const handleItemClick = (itemId: string) => {
-    setActiveItem(activeItem === itemId ? null : itemId);
-  };
 
   useEffect(() => {
     const theme = localStorage.getItem("theme");
@@ -523,18 +518,13 @@ const Company = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
-                <div className="text-xs text-muted-foreground text-center mb-4 opacity-60">
-                  Наведите курсор или нажмите на адрес для просмотра периода действия
-                </div>
                 {profile.addresses.map((addr, idx) => {
-                  const itemId = `address-${idx}`;
                   return (
                     <div
                       key={idx}
-                      className="glass p-3 sm:p-4 rounded-lg hover:bg-secondary/5 dark:hover:bg-secondary/10 transition-all duration-300 border-l-4 border-secondary/30 group cursor-pointer relative"
-                      onClick={() => handleItemClick(itemId)}
+                      className="glass p-3 sm:p-4 rounded-lg hover:bg-secondary/5 dark:hover:bg-secondary/10 transition-all duration-300 border-l-4 border-secondary/30 relative"
                     >
-                      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 opacity-40 group-hover:opacity-70 transition-opacity">
+                      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 opacity-50">
                         <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-secondary/50"></div>
                       </div>
                       <p className="text-foreground font-semibold text-sm sm:text-base mb-2 pr-4 sm:pr-6">{addr.full_address}</p>
@@ -543,14 +533,12 @@ const Company = () => {
                         {[addr.region, addr.district].filter(Boolean).join(", ")}
                       </p>
                     )}
-                    <div className={`transition-all duration-300 text-xs text-muted-foreground px-2 py-1 inline-block ${
-                      activeItem === itemId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    }`}>
+                    <div className="text-sm sm:text-base text-muted-foreground px-2 py-1 inline-block mt-2 rounded-md bg-muted/40">
                       <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${!addr.valid_to ? 'bg-green-500 animate-pulse' : 'bg-accent/60 dark:bg-accent/80'}`}></div>
-                        <span>
-                          {addr.valid_from && `С ${formatDate(addr.valid_from)}`}
-                          {addr.valid_to && ` по ${formatDate(addr.valid_to)}`}
+                        <span className="font-medium">
+                          {addr.valid_from ? `С ${formatDate(addr.valid_from)}` : "С даты не указано"}
+                          {addr.valid_to ? ` по ${formatDate(addr.valid_to)}` : " по настоящее время"}
                         </span>
                       </div>
                     </div>
@@ -589,18 +577,13 @@ const Company = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
-                <div className="text-xs text-muted-foreground text-center mb-4 opacity-60">
-                  Наведите курсор или нажмите на вид деятельности для просмотра периода действия
-                </div>
                 {profile.ved.map((v, idx) => {
-                  const itemId = `ved-${idx}`;
                   return (
                     <div
                       key={idx}
-                      className="glass p-3 sm:p-4 rounded-lg hover:bg-primary/5 dark:hover:bg-primary/10 transition-all duration-300 border-l-4 border-primary/30 group cursor-pointer relative"
-                      onClick={() => handleItemClick(itemId)}
+                      className="glass p-3 sm:p-4 rounded-lg hover:bg-primary/5 dark:hover:bg-primary/10 transition-all duration-300 border-l-4 border-primary/30 relative"
                     >
-                      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 opacity-40 group-hover:opacity-70 transition-opacity">
+                      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 opacity-50">
                         <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-primary/50"></div>
                       </div>
                       <div className="flex flex-col sm:flex-row sm:gap-3 gap-2 items-start pr-4 sm:pr-6">
@@ -609,14 +592,12 @@ const Company = () => {
                       </span>
                       <span className="text-foreground font-medium flex-1 text-sm sm:text-base">{v.ved_name}</span>
                     </div>
-                    <div className={`transition-all duration-300 text-xs text-muted-foreground px-2 py-1 inline-block mt-2 ${
-                      activeItem === itemId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    }`}>
+                    <div className="text-sm sm:text-base text-muted-foreground px-2 py-1 inline-block mt-2 rounded-md bg-muted/40">
                       <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full ${!v.valid_to ? 'bg-green-500 animate-pulse' : 'bg-secondary/60 dark:bg-secondary/80'}`}></div>
-                        <span>
-                          {v.valid_from && `С ${formatDate(v.valid_from)}`}
-                          {v.valid_to && ` по ${formatDate(v.valid_to)}`}
+                        <span className="font-medium">
+                          {v.valid_from ? `С ${formatDate(v.valid_from)}` : "С даты не указано"}
+                          {v.valid_to ? ` по ${formatDate(v.valid_to)}` : " по настоящее время"}
                         </span>
                       </div>
                     </div>
