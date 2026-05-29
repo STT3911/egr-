@@ -470,18 +470,13 @@ const Company = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
-                <div className="text-xs text-muted-foreground text-center mb-4 opacity-60">
-                  Наведите курсор или нажмите на запись для просмотра информации о датах
-                </div>
                 {profile.names.map((name, idx) => {
-                  const itemId = `name-${idx}`;
                   return (
                     <div
                       key={idx}
-                      className="glass p-3 sm:p-4 rounded-lg hover:bg-accent/5 dark:hover:bg-accent/10 transition-all duration-300 border-l-4 border-accent/30 group cursor-pointer relative"
-                      onClick={() => handleItemClick(itemId)}
+                      className="glass p-3 sm:p-4 rounded-lg hover:bg-accent/5 dark:hover:bg-accent/10 transition-all duration-300 border-l-4 border-accent/30 relative"
                     >
-                      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 opacity-40 group-hover:opacity-70 transition-opacity">
+                      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 opacity-50">
                         <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-accent/50"></div>
                       </div>
                       <div className="space-y-2 pr-4 sm:pr-6">
@@ -497,14 +492,12 @@ const Company = () => {
                           <p className="text-foreground font-semibold text-sm sm:text-base">{name.short_name_ru}</p>
                         </div>
                       )}
-                      <div className={`transition-all duration-300 text-xs text-muted-foreground px-2 py-1 inline-block mt-2 ${
-                        activeItem === itemId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                      }`}>
+                      <div className="text-sm sm:text-base text-muted-foreground px-2 py-1 inline-block mt-2 rounded-md bg-muted/40">
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${!name.valid_to ? 'bg-green-500 animate-pulse' : 'bg-primary/60 dark:bg-primary/80'}`}></div>
-                          <span>
-                            {name.valid_from && `С ${formatDate(name.valid_from)}`}
-                            {name.valid_to && ` по ${formatDate(name.valid_to)}`}
+                          <span className="font-medium">
+                            {name.valid_from ? `С ${formatDate(name.valid_from)}` : "С даты не указано"}
+                            {name.valid_to ? ` по ${formatDate(name.valid_to)}` : " по настоящее время"}
                           </span>
                         </div>
                       </div>
