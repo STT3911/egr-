@@ -20,6 +20,8 @@ from app.database.models import (
     TradeRegistryImportStage,
     PVTResidentRecord,
     EAEUSEZResidentRecord,
+    LicenseRecord,
+    LicenseSyncRun,
     GiasSyncRun,
     GiasAccreditedCustomer,
     GiasAccreditedCustomerHistory,
@@ -48,6 +50,8 @@ __all__ = [
     "TradeRegistryImportStage",
     "PVTResidentRecord",
     "EAEUSEZResidentRecord",
+    "LicenseRecord",
+    "LicenseSyncRun",
     "GiasSyncRun",
     "GiasAccreditedCustomer",
     "GiasAccreditedCustomerHistory",
@@ -56,6 +60,5 @@ __all__ = [
     "LockedSupplier",
     "LockedSupplierHistory",
 ]
-
 
 

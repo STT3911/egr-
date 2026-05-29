@@ -987,6 +987,78 @@ const Company = () => {
             </SectionCard>
           )}
 
+          {profile.license_records && profile.license_records.length > 0 && (
+            <SectionCard>
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-sky-500/25">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(199 89% 48% / 0.12) 0%, hsl(var(--primary) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <FileText className="w-5 h-5 text-sky-600 dark:text-sky-400" />
+                  Лицензии
+                  <span className="ml-auto text-sm font-normal text-muted-foreground">
+                    Записей: {profile.license_records.length}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                {profile.license_records.map((record, idx) => (
+                  <div key={`${record.license_id}-${idx}`} className="glass p-3 sm:p-4 rounded-lg hover:bg-sky-500/5 transition-all duration-300 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                      <div>
+                        <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Вид деятельности</span>
+                        <p className="text-foreground font-semibold text-sm sm:text-base leading-relaxed">
+                          {record.activity_type_name || "Не указано"}
+                        </p>
+                      </div>
+                      {record.generated_number && (
+                        <span className="font-mono text-xs glass px-2 py-1 rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 font-semibold w-fit">
+                          № {record.generated_number}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      {record.holder_name && (
+                        <div>
+                          <span className="text-muted-foreground block">Лицензиат</span>
+                          <span className="text-foreground font-medium">{record.holder_name}</span>
+                        </div>
+                      )}
+                      {record.activity_is_active !== undefined && record.activity_is_active !== null && (
+                        <div>
+                          <span className="text-muted-foreground block">Статус</span>
+                          <span className={`font-medium ${record.activity_is_active ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+                            {record.activity_is_active ? "Активна" : "Не активна"}
+                          </span>
+                        </div>
+                      )}
+                      {record.activity_date_start && (
+                        <div>
+                          <span className="text-muted-foreground block">Начало</span>
+                          <span className="text-foreground font-medium">{formatDate(record.activity_date_start)}</span>
+                        </div>
+                      )}
+                      {record.activity_date_end && (
+                        <div>
+                          <span className="text-muted-foreground block">Окончание</span>
+                          <span className="text-foreground font-medium">{formatDate(record.activity_date_end)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {record.last_seen_at && (
+                      <div className="text-xs text-muted-foreground">
+                        Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+            </SectionCard>
+          )}
+
           {profile.trade_registry_records && profile.trade_registry_records.length > 0 && (
             <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">

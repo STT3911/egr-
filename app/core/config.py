@@ -136,6 +136,16 @@ class Settings(BaseSettings):
     BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу
     BANKROT_SCHEDULE_SECONDS: int = 86400            # интервал периодической задачи (сек)
 
+    # license.gov.by license registry synchronization
+    LICENSE_API_URL: str = "https://license.gov.by/api/licenses"
+    LICENSE_PAGE_SIZE: int = 200
+    LICENSE_TIMEOUT_SECONDS: float = 30.0
+    LICENSE_PAGE_DELAY_SECONDS: float = 0.2
+    LICENSE_SAVE_EVERY: int = 500
+    LICENSE_VERIFY_TLS: bool = True
+    LICENSE_SCHEDULE_ENABLED: bool = False
+    LICENSE_SCHEDULE_SECONDS: int = 86400
+
     # Telegram bot
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_API_BASE_URL: str = "http://egr-api:8000"

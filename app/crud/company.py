@@ -19,6 +19,7 @@ from app.database.models import (
     PVTResidentRecord,
     EAEUSEZResidentRecord,
     TradeRegistryRecord,
+    LicenseRecord,
 )
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
@@ -413,6 +414,30 @@ class CompanyCRUD:
             for item in sez_rows
         ]
 
+        license_rows = (
+            self.db.query(LicenseRecord)
+            .filter(LicenseRecord.holder_unp == unp)
+            .order_by(
+                LicenseRecord.activity_is_active.desc().nullslast(),
+                LicenseRecord.last_seen_at.desc().nullslast(),
+                LicenseRecord.license_id.desc(),
+            )
+            .all()
+        )
+        license_records = [
+            {
+                "license_id": item.license_id,
+                "generated_number": item.generated_number,
+                "holder_name": item.holder_name,
+                "activity_type_name": item.activity_type_name,
+                "activity_date_start": item.activity_date_start.isoformat() if item.activity_date_start else None,
+                "activity_date_end": item.activity_date_end.isoformat() if item.activity_date_end else None,
+                "activity_is_active": item.activity_is_active,
+                "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            }
+            for item in license_rows
+        ]
+
         # Дела о банкротстве — мягкая связь по УНП
         bankrot_rows = (
             self.db.query(BankrotCase)
@@ -449,6 +474,7 @@ class CompanyCRUD:
             "pvt_resident": pvt_resident,
             "trade_registry_records": trade_registry_records,
             "eaeu_sez_resident_records": eaeu_sez_resident_records,
+            "license_records": license_records,
             "bankrot_cases": bankrot_cases,
             "names": [
                 {

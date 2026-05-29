@@ -119,6 +119,16 @@ export type CompanyProfile = {
     source_url?: string;
     last_seen_at?: string;
   }[];
+  license_records?: {
+    license_id: number;
+    generated_number?: string;
+    holder_name?: string;
+    activity_type_name?: string;
+    activity_date_start?: string;
+    activity_date_end?: string;
+    activity_is_active?: boolean;
+    last_seen_at?: string;
+  }[];
 };
 
 export type ReferenceItem = {

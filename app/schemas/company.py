@@ -123,6 +123,17 @@ class CompanyEAEUSEZResidentRecordSchema(BaseModel):
     last_seen_at: Optional[str] = None
 
 
+class CompanyLicenseRecordSchema(BaseModel):
+    license_id: int
+    generated_number: Optional[str] = None
+    holder_name: Optional[str] = None
+    activity_type_name: Optional[str] = None
+    activity_date_start: Optional[str] = None
+    activity_date_end: Optional[str] = None
+    activity_is_active: Optional[bool] = None
+    last_seen_at: Optional[str] = None
+
+
 class BankrotCaseSchema(BaseModel):
     """Краткая карточка дела о банкротстве для профиля компании."""
     case_id: int
@@ -157,6 +168,7 @@ class CompanyProfileResponse(BaseModel):
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
     eaeu_sez_resident_records: List[CompanyEAEUSEZResidentRecordSchema] = []
+    license_records: List[CompanyLicenseRecordSchema] = []
     bankrot_cases: List[BankrotCaseSchema] = []
 
     class Config:

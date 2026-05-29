@@ -476,6 +476,21 @@ def _get_company_rows(db: Session, unps: list[str]) -> dict[str, list[dict]]:
         ORDER BY unp, source_date DESC NULLS LAST, registration_number
     """, unps, "Trade Registry")
 
+    export["Licenses"] = _fetch_rows(db, """
+        SELECT
+            holder_unp AS unp,
+            generated_number,
+            holder_name,
+            activity_type_name,
+            activity_date_start,
+            activity_date_end,
+            activity_is_active,
+            last_seen_at
+        FROM license_records
+        WHERE holder_unp = ANY(CAST(:unps AS bigint[]))
+        ORDER BY holder_unp, activity_is_active DESC NULLS LAST, last_seen_at DESC NULLS LAST, license_id DESC
+    """, unps, "Licenses")
+
     return export
 
 
@@ -639,6 +654,16 @@ def _build_result_workbook(unps: list[str], company_rows: dict[str, list[dict]])
             ("inclusion_date", "Дата включения"),
             ("source_date", "Дата источника"),
             ("source_file", "Файл источника"),
+        ],
+        "Licenses": [
+            ("unp", "UNP"),
+            ("generated_number", "License number"),
+            ("holder_name", "License holder"),
+            ("activity_type_name", "Activity type"),
+            ("activity_date_start", "Start date"),
+            ("activity_date_end", "End date"),
+            ("activity_is_active", "Active"),
+            ("last_seen_at", "Checked at"),
         ],
     }
 

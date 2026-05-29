@@ -174,6 +174,7 @@ class Company(Base):
     trade_registry_records = relationship("TradeRegistryRecord", back_populates="company")
     pvt_resident = relationship("PVTResidentRecord", back_populates="company", uselist=False)
     eaeu_sez_resident_records = relationship("EAEUSEZResidentRecord", back_populates="company")
+    license_records = relationship("LicenseRecord", back_populates="company")
 
 
 class TradeRegistryRecord(Base):
@@ -339,6 +340,55 @@ class EAEUSEZResidentRecord(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     company = relationship("Company", back_populates="eaeu_sez_resident_records")
+
+
+class LicenseRecord(Base):
+    """License registry row from license.gov.by linked to an EGR company by UNP."""
+    __tablename__ = "license_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    license_id = Column(BigInteger, nullable=False, unique=True, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=True, index=True)
+    holder_unp = Column(BigInteger, nullable=True, index=True)
+    holder_name = Column(Text, nullable=True)
+    generated_number = Column(String(64), nullable=True, index=True)
+
+    activity_type_id = Column(BigInteger, nullable=True, index=True)
+    activity_type_code = Column(String(64), nullable=True)
+    activity_type_name = Column(Text, nullable=True, index=True)
+    activity_date_start = Column(DateTime, nullable=True)
+    activity_date_end = Column(DateTime, nullable=True)
+    activity_is_active = Column(Boolean, nullable=True, index=True)
+
+    raw_json = Column(JSONB, nullable=False)
+    sync_hash = Column(String(64), nullable=False)
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    company = relationship("Company", back_populates="license_records")
+
+
+class LicenseSyncRun(Base):
+    """Synchronization log for license.gov.by registry imports."""
+    __tablename__ = "license_sync_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    status = Column(String(32), nullable=False, default="running", index=True)
+    started_at = Column(DateTime, nullable=False, server_default=func.now())
+    finished_at = Column(DateTime, nullable=True)
+    total_records = Column(Integer, nullable=False, default=0)
+    processed_records = Column(Integer, nullable=False, default=0)
+    created_count = Column(Integer, nullable=False, default=0)
+    updated_count = Column(Integer, nullable=False, default=0)
+    unchanged_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    last_page = Column(Integer, nullable=False, default=0)
+    error = Column(Text, nullable=True)
+    stats_json = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class CompanyPlaceLocation(Base):

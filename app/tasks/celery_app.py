@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.trade_registry_tasks",
         "app.tasks.park_tasks",
         "app.tasks.bankrot_tasks",
+        "app.tasks.license_tasks",
     ],
 )
 
@@ -21,6 +22,7 @@ from app.tasks import sync_tasks
 from app.tasks import trade_registry_tasks
 from app.tasks import park_tasks
 from app.tasks import bankrot_tasks
+from app.tasks import license_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {
@@ -123,6 +125,13 @@ if settings.BANKROT_SCHEDULE_ENABLED:
         "kwargs": {},
     }
 
+if settings.LICENSE_SCHEDULE_ENABLED:
+    _beat_schedule["license-check-changes"] = {
+        "task": "app.tasks.license_tasks.check_license_changes",
+        "schedule": timedelta(seconds=settings.LICENSE_SCHEDULE_SECONDS),
+        "kwargs": {},
+    }
+
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
@@ -152,6 +161,7 @@ celery_app.conf.update(
         "app.tasks.sync_tasks.reindex_elasticsearch":         {"queue": "heavy"},
         "app.tasks.sync_tasks.enrich_missing_raw":            {"queue": "heavy"},
         "app.tasks.bankrot_tasks.sync_bankrot_cases":         {"queue": "heavy"},
+        "app.tasks.license_tasks.check_license_changes":      {"queue": "heavy"},
         "app.tasks.park_tasks.sync_pvt_residents":            {"queue": "heavy"},
         # ── Default (celery) queue — всё остальное ────────────────────
         # process_search_index_queue, grp_process_raw, egr_process_raw,
