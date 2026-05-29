@@ -901,6 +901,99 @@ const Company = () => {
             </SectionCard>
           )}
 
+          {profile.eaeu_sez_resident_records && profile.eaeu_sez_resident_records.length > 0 && (
+            <SectionCard>
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-emerald-500/25">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(150 70% 40% / 0.12) 0%, hsl(var(--primary) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <Building2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                  Резидент СЭЗ ЕАЭС
+                  <span className="ml-auto text-sm font-normal text-muted-foreground">
+                    Записей: {profile.eaeu_sez_resident_records.length}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                {profile.eaeu_sez_resident_records.map((record, idx) => (
+                  <div key={`${record.item_id}-${idx}`} className="glass p-3 sm:p-4 rounded-lg hover:bg-emerald-500/5 transition-all duration-300 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                      <div>
+                        <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">СЭЗ</span>
+                        <p className="text-foreground font-semibold text-sm sm:text-base leading-relaxed">
+                          {record.sez_name || "—"}
+                        </p>
+                      </div>
+                      {record.certificate && (
+                        <span className="font-mono text-xs glass px-2 py-1 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold w-fit">
+                          {record.certificate}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      {record.short_name && (
+                        <div>
+                          <span className="text-muted-foreground block">Краткое наименование</span>
+                          <span className="text-foreground font-medium">{record.short_name}</span>
+                        </div>
+                      )}
+                      {record.firm_name && (
+                        <div>
+                          <span className="text-muted-foreground block">Фирменное наименование</span>
+                          <span className="text-foreground font-medium">{record.firm_name}</span>
+                        </div>
+                      )}
+                      {record.registration_agency && (
+                        <div className="sm:col-span-2">
+                          <span className="text-muted-foreground block">Орган регистрации</span>
+                          <span className="text-foreground font-medium">{record.registration_agency}</span>
+                        </div>
+                      )}
+                      {record.registry_entry_date && (
+                        <div>
+                          <span className="text-muted-foreground block">Дата записи</span>
+                          <span className="text-foreground font-medium">{record.registry_entry_date}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {record.legal_address && (
+                      <div className="text-sm">
+                        <span className="text-muted-foreground block">Юридический адрес</span>
+                        <span className="text-foreground font-medium">{record.legal_address}</span>
+                      </div>
+                    )}
+                    {record.project_name && (
+                      <div className="text-sm">
+                        <span className="text-muted-foreground block">Проект</span>
+                        <span className="text-foreground font-medium">{record.project_name}</span>
+                      </div>
+                    )}
+                    {record.source_url && (
+                      <a
+                        href={record.source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-primary hover:text-primary/80 font-semibold underline decoration-primary/30 hover:decoration-primary transition-all duration-300 text-sm"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Запись в реестре ЕАЭС
+                      </a>
+                    )}
+                    {record.last_seen_at && (
+                      <div className="text-xs text-muted-foreground">
+                        Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+            </SectionCard>
+          )}
+
           {profile.trade_registry_records && profile.trade_registry_records.length > 0 && (
             <SectionCard>
             <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">

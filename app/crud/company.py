@@ -17,6 +17,7 @@ from app.database.models import (
     GiasAccreditedCustomer,
     LockedSupplier,
     PVTResidentRecord,
+    EAEUSEZResidentRecord,
     TradeRegistryRecord,
 )
 from datetime import datetime
@@ -384,6 +385,34 @@ class CompanyCRUD:
             for item in trade_registry_rows
         ]
 
+        sez_rows = (
+            self.db.query(EAEUSEZResidentRecord)
+            .filter(EAEUSEZResidentRecord.unp == unp)
+            .order_by(
+                EAEUSEZResidentRecord.sez_name.asc().nullsfirst(),
+                EAEUSEZResidentRecord.item_id.asc(),
+            )
+            .all()
+        )
+        eaeu_sez_resident_records = [
+            {
+                "item_id": item.item_id,
+                "country": item.country,
+                "full_name": item.full_name,
+                "short_name": item.short_name,
+                "legal_address": item.legal_address,
+                "firm_name": item.firm_name,
+                "registration_agency": item.registration_agency,
+                "sez_name": item.sez_name,
+                "project_name": item.project_name,
+                "registry_entry_date": item.registry_entry_date,
+                "certificate": item.certificate,
+                "source_url": item.source_url,
+                "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            }
+            for item in sez_rows
+        ]
+
         # Дела о банкротстве — мягкая связь по УНП
         bankrot_rows = (
             self.db.query(BankrotCase)
@@ -419,6 +448,7 @@ class CompanyCRUD:
             "gias_locked_suppliers": gias_locked_suppliers,
             "pvt_resident": pvt_resident,
             "trade_registry_records": trade_registry_records,
+            "eaeu_sez_resident_records": eaeu_sez_resident_records,
             "bankrot_cases": bankrot_cases,
             "names": [
                 {

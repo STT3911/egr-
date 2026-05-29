@@ -20,6 +20,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import date, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -184,6 +185,43 @@ def build_parameters(extra: dict[str, Any] | None = None) -> str:
     return ET.tostring(root, encoding="unicode", short_empty_elements=True)
 
 
+def caml_text_eq(field_name: str, value: str) -> str:
+    return (
+        "<Eq>"
+        f"<FieldRef Name=\"{field_name}\"/>"
+        f"<Value Type=\"Text\"><![CDATA[{value}]]></Value>"
+        "</Eq>"
+    )
+
+
+def caml_state_on(on_date: date) -> str:
+    iso_date = datetime.combine(on_date, datetime.min.time()).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return (
+        "<And>"
+        "<Or>"
+        "<Leq>"
+        "<FieldRef Name='StartDate'/>"
+        f"<Value Type='DateTime' IncludeTimeValue='False'>{iso_date}</Value>"
+        "</Leq>"
+        "<IsNull><FieldRef Name='StartDate'/></IsNull>"
+        "</Or>"
+        "<Or>"
+        "<Geq>"
+        "<FieldRef Name='EndDate'/>"
+        f"<Value Type='DateTime' IncludeTimeValue='False'>{iso_date}</Value>"
+        "</Geq>"
+        "<IsNull><FieldRef Name='EndDate'/></IsNull>"
+        "</Or>"
+        "</And>"
+    )
+
+
+def join_caml(left: str, right: str) -> str:
+    if left and right:
+        return f"<And>{left}{right}</And>"
+    return left or right
+
+
 def extract_html_fragment(response_text: str) -> str:
     root = ET.fromstring(response_text)
     error = root.find(".//Error")
@@ -233,6 +271,7 @@ def fetch_rows(
     limit_pages: int | None,
     retries: int,
     quiet: bool,
+    on_date: date | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     matched: list[dict[str, Any]] = []
     seen_pages = 0
@@ -240,6 +279,12 @@ def fetch_rows(
     overall_count: int | None = None
     seen_page_keys: set[tuple[tuple[str, str], ...]] = set()
     scanned_rows = 0
+    base_params: dict[str, str] = {}
+    query = ""
+    if on_date is not None:
+        query = join_caml(query, caml_state_on(on_date))
+    if query:
+        base_params["query"] = query
 
     with requests.Session() as session:
         while True:
@@ -248,7 +293,8 @@ def fetch_rows(
                 raise RuntimeError(f"Pagination loop detected at params: {dict(page_key)}")
             seen_page_keys.add(page_key)
 
-            page = fetch_page(session, next_params, timeout=timeout, retries=retries)
+            request_params = {**base_params, **(next_params or {})}
+            page = fetch_page(session, request_params, timeout=timeout, retries=retries)
             seen_pages += 1
             if page.overall_count is not None:
                 overall_count = page.overall_count
@@ -289,6 +335,7 @@ def fetch_rows(
         "pages": seen_pages,
         "scanned_rows": scanned_rows,
         "registry_total": overall_count,
+        "on_date": on_date.isoformat() if on_date else None,
     }
     return matched, stats
 
@@ -310,6 +357,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--on-date", type=date.fromisoformat, default=None)
+    parser.add_argument("--include-history", action="store_true", help="Do not apply portal state-on-date CAML filter")
     parser.add_argument("--limit-pages", type=int, default=None, help="Debug: stop after N pages")
     return parser.parse_args()
 
@@ -323,6 +372,7 @@ def main() -> int:
         limit_pages=args.limit_pages,
         retries=args.retries,
         quiet=args.quiet,
+        on_date=None if args.include_history else args.on_date,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

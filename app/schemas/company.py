@@ -107,6 +107,22 @@ class CompanyTradeRegistryRecordSchema(BaseModel):
     last_seen_at: Optional[str] = None
 
 
+class CompanyEAEUSEZResidentRecordSchema(BaseModel):
+    item_id: int
+    country: Optional[str] = None
+    full_name: Optional[str] = None
+    short_name: Optional[str] = None
+    legal_address: Optional[str] = None
+    firm_name: Optional[str] = None
+    registration_agency: Optional[str] = None
+    sez_name: Optional[str] = None
+    project_name: Optional[str] = None
+    registry_entry_date: Optional[str] = None
+    certificate: Optional[str] = None
+    source_url: Optional[str] = None
+    last_seen_at: Optional[str] = None
+
+
 class BankrotCaseSchema(BaseModel):
     """Краткая карточка дела о банкротстве для профиля компании."""
     case_id: int
@@ -140,6 +156,7 @@ class CompanyProfileResponse(BaseModel):
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
+    eaeu_sez_resident_records: List[CompanyEAEUSEZResidentRecordSchema] = []
     bankrot_cases: List[BankrotCaseSchema] = []
 
     class Config:
@@ -162,4 +179,3 @@ class CompanyLookupResponse(BaseModel):
     query: str
     count: int
     results: List[CompanyLookupItem] = []
-

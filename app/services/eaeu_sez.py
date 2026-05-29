@@ -10,8 +10,6 @@ from typing import Any
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.database.models import Company, EAEUSEZResidentRecord
-
 
 TEXT_FIELDS = [
     "country",
@@ -45,10 +43,26 @@ def load_snapshot(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON list in {path}")
-    return [row for row in data if isinstance(row, dict)]
+    rows: list[dict[str, Any]] = []
+    seen_item_ids: set[int] = set()
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        try:
+            item_id = int(row["item_id"])
+        except (KeyError, TypeError, ValueError):
+            rows.append(row)
+            continue
+        if item_id in seen_item_ids:
+            continue
+        seen_item_ids.add(item_id)
+        rows.append(row)
+    return rows
 
 
 def company_map_for_unps(db: Any, unps: set[int]) -> dict[int, Any]:
+    from app.database.models import Company
+
     if not unps:
         return {}
     rows = db.query(Company.unp, Company.id).filter(Company.unp.in_(sorted(unps))).all()
@@ -75,6 +89,8 @@ def normalize_row(row: dict[str, Any], company_id: Any, unp: int) -> dict[str, A
 
 
 def upsert_rows(db: Any, payloads: list[dict[str, Any]]) -> None:
+    from app.database.models import EAEUSEZResidentRecord
+
     if not payloads:
         return
     stmt = pg_insert(EAEUSEZResidentRecord).values(payloads)

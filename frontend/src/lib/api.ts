@@ -104,6 +104,21 @@ export type CompanyProfile = {
     source_file?: string;
     last_seen_at?: string;
   }[];
+  eaeu_sez_resident_records?: {
+    item_id: number;
+    country?: string;
+    full_name?: string;
+    short_name?: string;
+    legal_address?: string;
+    firm_name?: string;
+    registration_agency?: string;
+    sez_name?: string;
+    project_name?: string;
+    registry_entry_date?: string;
+    certificate?: string;
+    source_url?: string;
+    last_seen_at?: string;
+  }[];
 };
 
 export type ReferenceItem = {
