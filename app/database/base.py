@@ -15,6 +15,11 @@ from app.database.models import (
     SyncHistory,
     ApiLog,
     NalogDebtRecord,
+    TradeRegistryRecord,
+    TradeRegistryImportRun,
+    TradeRegistryImportStage,
+    PVTResidentRecord,
+    EAEUSEZResidentRecord,
     GiasSyncRun,
     GiasAccreditedCustomer,
     GiasAccreditedCustomerHistory,
@@ -38,6 +43,11 @@ __all__ = [
     "SyncHistory",
     "ApiLog",
     "NalogDebtRecord",
+    "TradeRegistryRecord",
+    "TradeRegistryImportRun",
+    "TradeRegistryImportStage",
+    "PVTResidentRecord",
+    "EAEUSEZResidentRecord",
     "GiasSyncRun",
     "GiasAccreditedCustomer",
     "GiasAccreditedCustomerHistory",
@@ -46,7 +56,6 @@ __all__ = [
     "LockedSupplier",
     "LockedSupplierHistory",
 ]
-
 
 
 

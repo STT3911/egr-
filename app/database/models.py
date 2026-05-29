@@ -173,6 +173,7 @@ class Company(Base):
     gias_locked_suppliers = relationship("LockedSupplier", back_populates="company")
     trade_registry_records = relationship("TradeRegistryRecord", back_populates="company")
     pvt_resident = relationship("PVTResidentRecord", back_populates="company", uselist=False)
+    eaeu_sez_resident_records = relationship("EAEUSEZResidentRecord", back_populates="company")
 
 
 class TradeRegistryRecord(Base):
@@ -308,6 +309,36 @@ class PVTResidentRecord(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     company = relationship("Company", back_populates="pvt_resident")
+
+
+class EAEUSEZResidentRecord(Base):
+    """EAEU SEZ resident registry row linked to an EGR company by UNP."""
+    __tablename__ = "eaeu_sez_resident_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    item_id = Column(BigInteger, nullable=False, unique=True, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    unp = Column(BigInteger, nullable=False, index=True)
+
+    country = Column(String(255), nullable=False, index=True)
+    full_name = Column(Text, nullable=True)
+    short_name = Column(Text, nullable=True)
+    legal_address = Column(Text, nullable=True)
+    firm_name = Column(Text, nullable=True)
+    registration_agency = Column(Text, nullable=True)
+    sez_name = Column(Text, nullable=True)
+    project_name = Column(Text, nullable=True)
+    registry_entry_date = Column(Text, nullable=True)
+    certificate = Column(Text, nullable=True)
+    source_url = Column(Text, nullable=True)
+    raw_json = Column(JSONB, nullable=False)
+
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    company = relationship("Company", back_populates="eaeu_sez_resident_records")
 
 
 class CompanyPlaceLocation(Base):
