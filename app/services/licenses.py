@@ -195,7 +195,8 @@ def upsert_license_rows(db: Any, payloads: list[dict[str, Any]]) -> None:
 
     if not payloads:
         return
-    stmt = pg_insert(LicenseRecord).values(payloads)
+    deduped = list({int(payload["license_id"]): payload for payload in payloads}.values())
+    stmt = pg_insert(LicenseRecord).values(deduped)
     stmt = stmt.on_conflict_do_update(
         index_elements=[LicenseRecord.license_id],
         set_={
