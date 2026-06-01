@@ -175,6 +175,7 @@ class Company(Base):
     pvt_resident = relationship("PVTResidentRecord", back_populates="company", uselist=False)
     eaeu_sez_resident_records = relationship("EAEUSEZResidentRecord", back_populates="company")
     license_records = relationship("LicenseRecord", back_populates="company")
+    inspection_plan_records = relationship("InspectionPlanRecord", back_populates="company")
 
 
 class TradeRegistryRecord(Base):
@@ -244,6 +245,48 @@ class TradeRegistryRecord(Base):
     )
 
     company = relationship("Company", back_populates="trade_registry_records")
+
+
+class InspectionPlanRecord(Base):
+    """Rows from Belarus scheduled inspection plans."""
+    __tablename__ = "inspection_plan_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="SET NULL"), nullable=True, index=True)
+    subject_unp = Column(BigInteger, nullable=False, index=True)
+    subject_name = Column(Text, nullable=False)
+
+    plan_period = Column(String(16), nullable=False, index=True)
+    plan_year = Column(Integer, nullable=True, index=True)
+    plan_half = Column(Integer, nullable=True, index=True)
+    source_region = Column(Text, nullable=False, index=True)
+    plan_title = Column(Text, nullable=True)
+    plan_item_no = Column(Integer, nullable=True, index=True)
+
+    approving_authority = Column(Text, nullable=True)
+    controller_unp = Column(BigInteger, nullable=True, index=True)
+    controller_authority = Column(Text, nullable=True)
+    executor_phone = Column(Text, nullable=True)
+    start_month = Column(String(32), nullable=True, index=True)
+    start_month_no = Column(Integer, nullable=True, index=True)
+
+    source_file = Column(Text, nullable=False)
+    source_sheet = Column(Text, nullable=False)
+    source_row_no = Column(Integer, nullable=False)
+    raw_json = Column(JSONB, nullable=False)
+    sync_key = Column(String(64), nullable=False)
+    sync_hash = Column(String(64), nullable=False)
+
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("sync_key", name="uq_inspection_plan_records_sync_key"),
+    )
+
+    company = relationship("Company", back_populates="inspection_plan_records")
 
 
 class TradeRegistryImportRun(Base):
