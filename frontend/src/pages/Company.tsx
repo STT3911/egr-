@@ -242,13 +242,13 @@ const Company = () => {
   };
 
   const formatInspectionPeriod = (value?: string, year?: number, half?: number) => {
-    if (year && half === 1) return `1 полугодие ${year}`;
-    if (year && half === 2) return `2 полугодие ${year}`;
+    if (year && half === 1) return `первое полугодие ${year}`;
+    if (year && half === 2) return `второе полугодие ${year}`;
     if (year) return String(year);
 
     const match = (value || "").match(/^(\d{4})-H([12])$/i);
     if (match) {
-      return `${match[2]} полугодие ${match[1]}`;
+      return `${match[2] === "1" ? "первое" : "второе"} полугодие ${match[1]}`;
     }
     return value || "—";
   };
@@ -1097,7 +1097,7 @@ const Company = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                       {record.plan_item_no !== undefined && record.plan_item_no !== null && (
                         <div>
-                          <span className="text-muted-foreground block">Пункт плана</span>
+                          <span className="text-muted-foreground block">№ пункта в плане</span>
                           <span className="text-foreground font-medium">{record.plan_item_no}</span>
                         </div>
                       )}
