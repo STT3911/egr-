@@ -225,6 +225,22 @@ const Company = () => {
     ].filter(Boolean).join(", ");
   };
 
+  const formatInspectionRegion = (value?: string) => {
+    const normalized = (value || "").trim().toLowerCase();
+    const labels: Record<string, string> = {
+      "брестская область": "Брестская область",
+      "витебская область": "Витебская область",
+      "гомельская область": "Гомельская область",
+      "гродненская область": "Гродненская область",
+      "минская область": "Минская область",
+      "могилевская область": "Могилевская область",
+      "могилёвская область": "Могилевская область",
+      "минск": "г. Минск",
+      "г. минск": "г. Минск",
+    };
+    return labels[normalized] || value || "—";
+  };
+
   // Даты из bankrot могут быть 0001-01-01 — скрываем такие
   const formatBankrotDate = (value?: string) => {
     if (!value) return null;
@@ -1088,7 +1104,7 @@ const Company = () => {
                       {record.source_region && (
                         <div>
                           <span className="text-muted-foreground block">Регион плана</span>
-                          <span className="text-foreground font-medium">{record.source_region}</span>
+                          <span className="text-foreground font-medium">{formatInspectionRegion(record.source_region)}</span>
                         </div>
                       )}
                       {record.approving_authority && (
