@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, useScroll, useSpring } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Building2, CalendarDays, ChevronUp, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -1028,6 +1028,95 @@ const Company = () => {
                       )}
                     </div>
 
+                    {record.last_seen_at && (
+                      <div className="text-xs text-muted-foreground">
+                        Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+            </SectionCard>
+          )}
+
+          {profile.inspection_plan_records && profile.inspection_plan_records.length > 0 && (
+            <SectionCard>
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-amber-500/25">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(38 92% 50% / 0.12) 0%, hsl(var(--primary) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <ClipboardCheck className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                  План выборочных проверок
+                  <span className="ml-auto text-sm font-normal text-muted-foreground">
+                    Записей: {profile.inspection_plan_records.length}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                {profile.inspection_plan_records.map((record, idx) => (
+                  <div key={`${record.plan_period}-${record.plan_item_no}-${record.controller_unp}-${idx}`} className="glass p-3 sm:p-4 rounded-lg hover:bg-amber-500/5 transition-all duration-300 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                      <div>
+                        <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Контролирующий орган</span>
+                        <p className="text-foreground font-semibold text-sm sm:text-base leading-relaxed">
+                          {record.controller_authority || "Не указан"}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {record.plan_item_no !== undefined && record.plan_item_no !== null && (
+                          <span className="font-mono text-xs glass px-2 py-1 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold w-fit">
+                            пункт {record.plan_item_no}
+                          </span>
+                        )}
+                        {record.plan_period && (
+                          <span className="text-xs glass px-2 py-1 rounded bg-primary/10 text-primary font-semibold w-fit">
+                            {record.plan_period}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      {record.start_month && (
+                        <div>
+                          <span className="text-muted-foreground block">Месяц начала</span>
+                          <span className="text-foreground font-medium">{record.start_month}</span>
+                        </div>
+                      )}
+                      {record.source_region && (
+                        <div>
+                          <span className="text-muted-foreground block">Регион плана</span>
+                          <span className="text-foreground font-medium">{record.source_region}</span>
+                        </div>
+                      )}
+                      {record.approving_authority && (
+                        <div>
+                          <span className="text-muted-foreground block">Утвердивший орган</span>
+                          <span className="text-foreground font-medium">{record.approving_authority}</span>
+                        </div>
+                      )}
+                      {record.controller_unp && (
+                        <div>
+                          <span className="text-muted-foreground block">УНП контролирующего органа</span>
+                          <span className="text-foreground font-medium">{record.controller_unp}</span>
+                        </div>
+                      )}
+                      {record.executor_phone && (
+                        <div>
+                          <span className="text-muted-foreground block">Телефон исполнителя</span>
+                          <span className="text-foreground font-medium">{record.executor_phone}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {record.plan_title && (
+                      <div className="text-sm">
+                        <span className="text-muted-foreground block">План</span>
+                        <span className="text-foreground font-medium">{record.plan_title}</span>
+                      </div>
+                    )}
                     {record.last_seen_at && (
                       <div className="text-xs text-muted-foreground">
                         Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}

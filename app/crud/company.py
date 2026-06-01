@@ -20,6 +20,7 @@ from app.database.models import (
     EAEUSEZResidentRecord,
     TradeRegistryRecord,
     LicenseRecord,
+    InspectionPlanRecord,
 )
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
@@ -438,6 +439,38 @@ class CompanyCRUD:
             for item in license_rows
         ]
 
+        inspection_plan_rows = (
+            self.db.query(InspectionPlanRecord)
+            .filter(InspectionPlanRecord.subject_unp == unp)
+            .order_by(
+                InspectionPlanRecord.plan_year.desc().nullslast(),
+                InspectionPlanRecord.plan_half.desc().nullslast(),
+                InspectionPlanRecord.start_month_no.asc().nullslast(),
+                InspectionPlanRecord.plan_item_no.asc().nullslast(),
+                InspectionPlanRecord.controller_authority.asc().nullsfirst(),
+            )
+            .all()
+        )
+        inspection_plan_records = [
+            {
+                "plan_period": item.plan_period,
+                "plan_year": item.plan_year,
+                "plan_half": item.plan_half,
+                "source_region": item.source_region,
+                "plan_title": item.plan_title,
+                "plan_item_no": item.plan_item_no,
+                "approving_authority": item.approving_authority,
+                "controller_unp": item.controller_unp,
+                "controller_authority": item.controller_authority,
+                "executor_phone": item.executor_phone,
+                "start_month": item.start_month,
+                "start_month_no": item.start_month_no,
+                "source_file": item.source_file,
+                "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            }
+            for item in inspection_plan_rows
+        ]
+
         # Дела о банкротстве — мягкая связь по УНП
         bankrot_rows = (
             self.db.query(BankrotCase)
@@ -475,6 +508,7 @@ class CompanyCRUD:
             "trade_registry_records": trade_registry_records,
             "eaeu_sez_resident_records": eaeu_sez_resident_records,
             "license_records": license_records,
+            "inspection_plan_records": inspection_plan_records,
             "bankrot_cases": bankrot_cases,
             "names": [
                 {

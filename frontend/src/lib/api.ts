@@ -129,6 +129,22 @@ export type CompanyProfile = {
     activity_is_active?: boolean;
     last_seen_at?: string;
   }[];
+  inspection_plan_records?: {
+    plan_period: string;
+    plan_year?: number;
+    plan_half?: number;
+    source_region?: string;
+    plan_title?: string;
+    plan_item_no?: number;
+    approving_authority?: string;
+    controller_unp?: number;
+    controller_authority?: string;
+    executor_phone?: string;
+    start_month?: string;
+    start_month_no?: number;
+    source_file?: string;
+    last_seen_at?: string;
+  }[];
 };
 
 export type ReferenceItem = {

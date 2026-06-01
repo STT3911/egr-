@@ -134,6 +134,23 @@ class CompanyLicenseRecordSchema(BaseModel):
     last_seen_at: Optional[str] = None
 
 
+class CompanyInspectionPlanRecordSchema(BaseModel):
+    plan_period: str
+    plan_year: Optional[int] = None
+    plan_half: Optional[int] = None
+    source_region: Optional[str] = None
+    plan_title: Optional[str] = None
+    plan_item_no: Optional[int] = None
+    approving_authority: Optional[str] = None
+    controller_unp: Optional[int] = None
+    controller_authority: Optional[str] = None
+    executor_phone: Optional[str] = None
+    start_month: Optional[str] = None
+    start_month_no: Optional[int] = None
+    source_file: Optional[str] = None
+    last_seen_at: Optional[str] = None
+
+
 class BankrotCaseSchema(BaseModel):
     """Краткая карточка дела о банкротстве для профиля компании."""
     case_id: int
@@ -169,6 +186,7 @@ class CompanyProfileResponse(BaseModel):
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
     eaeu_sez_resident_records: List[CompanyEAEUSEZResidentRecordSchema] = []
     license_records: List[CompanyLicenseRecordSchema] = []
+    inspection_plan_records: List[CompanyInspectionPlanRecordSchema] = []
     bankrot_cases: List[BankrotCaseSchema] = []
 
     class Config:
