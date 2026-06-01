@@ -241,6 +241,18 @@ const Company = () => {
     return labels[normalized] || value || "—";
   };
 
+  const formatInspectionPeriod = (value?: string, year?: number, half?: number) => {
+    if (year && half === 1) return `1 полугодие ${year}`;
+    if (year && half === 2) return `2 полугодие ${year}`;
+    if (year) return String(year);
+
+    const match = (value || "").match(/^(\d{4})-H([12])$/i);
+    if (match) {
+      return `${match[2]} полугодие ${match[1]}`;
+    }
+    return value || "—";
+  };
+
   // Даты из bankrot могут быть 0001-01-01 — скрываем такие
   const formatBankrotDate = (value?: string) => {
     if (!value) return null;
@@ -1080,21 +1092,23 @@ const Company = () => {
                           {record.controller_authority || "Не указан"}
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {record.plan_item_no !== undefined && record.plan_item_no !== null && (
-                          <span className="font-mono text-xs glass px-2 py-1 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold w-fit">
-                            пункт {record.plan_item_no}
-                          </span>
-                        )}
-                        {record.plan_period && (
-                          <span className="text-xs glass px-2 py-1 rounded bg-primary/10 text-primary font-semibold w-fit">
-                            {record.plan_period}
-                          </span>
-                        )}
-                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      {record.plan_item_no !== undefined && record.plan_item_no !== null && (
+                        <div>
+                          <span className="text-muted-foreground block">Пункт плана</span>
+                          <span className="text-foreground font-medium">{record.plan_item_no}</span>
+                        </div>
+                      )}
+                      {record.plan_period && (
+                        <div>
+                          <span className="text-muted-foreground block">Период</span>
+                          <span className="text-foreground font-medium">
+                            {formatInspectionPeriod(record.plan_period, record.plan_year, record.plan_half)}
+                          </span>
+                        </div>
+                      )}
                       {record.start_month && (
                         <div>
                           <span className="text-muted-foreground block">Месяц начала</span>
