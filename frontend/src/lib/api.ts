@@ -145,6 +145,20 @@ export type CompanyProfile = {
     source_file?: string;
     last_seen_at?: string;
   }[];
+  belltpp_own_certificates?: {
+    holder_name?: string;
+    cert_number: string;
+    blank_number?: string;
+    issue_date?: string;
+    valid_until?: string;
+    verify_url?: string;
+    products?: {
+      row_no?: number;
+      name?: string;
+      code?: string;
+    }[];
+    last_seen_at?: string;
+  }[];
 };
 
 export type ReferenceItem = {

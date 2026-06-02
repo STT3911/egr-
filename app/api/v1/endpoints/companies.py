@@ -443,7 +443,7 @@ async def get_company_profile(
     """
     try:
         unp = int(identifier)
-        cache_key = f"company_profile_v4:{unp}"
+        cache_key = f"company_profile_v5:{unp}"
 
         if not force_refresh and not db_only:
             aggregator = AggregatorService()

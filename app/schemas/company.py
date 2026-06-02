@@ -151,6 +151,17 @@ class CompanyInspectionPlanRecordSchema(BaseModel):
     last_seen_at: Optional[str] = None
 
 
+class CompanyBeltppOwnCertificateSchema(BaseModel):
+    holder_name: Optional[str] = None
+    cert_number: str
+    blank_number: Optional[str] = None
+    issue_date: Optional[str] = None
+    valid_until: Optional[str] = None
+    verify_url: Optional[str] = None
+    products: List[dict] = []
+    last_seen_at: Optional[str] = None
+
+
 class BankrotCaseSchema(BaseModel):
     """Краткая карточка дела о банкротстве для профиля компании."""
     case_id: int
@@ -187,6 +198,7 @@ class CompanyProfileResponse(BaseModel):
     eaeu_sez_resident_records: List[CompanyEAEUSEZResidentRecordSchema] = []
     license_records: List[CompanyLicenseRecordSchema] = []
     inspection_plan_records: List[CompanyInspectionPlanRecordSchema] = []
+    belltpp_own_certificates: List[CompanyBeltppOwnCertificateSchema] = []
     bankrot_cases: List[BankrotCaseSchema] = []
 
     class Config:

@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, useScroll, useSpring } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -1154,6 +1154,110 @@ const Company = () => {
                     )}
                   </div>
                 ))}
+              </CardContent>
+            </Card>
+            </SectionCard>
+          )}
+
+          {profile.belltpp_own_certificates && profile.belltpp_own_certificates.length > 0 && (
+            <SectionCard>
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-violet-500/25">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(262 83% 58% / 0.12) 0%, hsl(var(--primary) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <Award className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+                  Сертификаты собственного производства БелТПП
+                  <span className="ml-auto text-sm font-normal text-muted-foreground">
+                    Записей: {profile.belltpp_own_certificates.length}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                {profile.belltpp_own_certificates.map((record, idx) => {
+                  const products = record.products || [];
+                  return (
+                    <div key={`${record.cert_number}-${record.blank_number}-${idx}`} className="glass p-3 sm:p-4 rounded-lg hover:bg-violet-500/5 transition-all duration-300 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                        <div>
+                          <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Сертификат</span>
+                          <p className="text-foreground font-semibold text-sm sm:text-base leading-relaxed">
+                            {record.cert_number}
+                          </p>
+                        </div>
+                        {record.verify_url && (
+                          <a
+                            href={record.verify_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 text-primary hover:text-primary/80 font-semibold underline decoration-primary/30 hover:decoration-primary transition-all duration-300 text-sm"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                            Проверить
+                          </a>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                        {record.blank_number && (
+                          <div>
+                            <span className="text-muted-foreground block">Бланк</span>
+                            <span className="text-foreground font-medium">{record.blank_number}</span>
+                          </div>
+                        )}
+                        {record.issue_date && (
+                          <div>
+                            <span className="text-muted-foreground block">Дата выдачи</span>
+                            <span className="text-foreground font-medium">{formatDate(record.issue_date)}</span>
+                          </div>
+                        )}
+                        {record.valid_until && (
+                          <div>
+                            <span className="text-muted-foreground block">Действителен до</span>
+                            <span className="text-foreground font-medium">{formatDate(record.valid_until)}</span>
+                          </div>
+                        )}
+                        {products.length > 0 && (
+                          <div>
+                            <span className="text-muted-foreground block">Продукции/услуг</span>
+                            <span className="text-foreground font-medium">{products.length}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {products.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-muted-foreground block text-sm">Продукция / услуги</span>
+                          <div className="space-y-2">
+                            {products.slice(0, 6).map((product, productIdx) => (
+                              <div key={`${record.cert_number}-product-${productIdx}`} className="rounded-md bg-background/60 border border-border/50 p-2 text-sm">
+                                <div className="text-foreground font-medium leading-relaxed">
+                                  {product.name || "Не указано"}
+                                </div>
+                                {product.code && (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    Код: {product.code}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                            {products.length > 6 && (
+                              <div className="text-xs text-muted-foreground">
+                                Ещё позиций: {products.length - 6}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {record.last_seen_at && (
+                        <div className="text-xs text-muted-foreground">
+                          Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
             </SectionCard>

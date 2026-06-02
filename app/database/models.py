@@ -176,6 +176,7 @@ class Company(Base):
     eaeu_sez_resident_records = relationship("EAEUSEZResidentRecord", back_populates="company")
     license_records = relationship("LicenseRecord", back_populates="company")
     inspection_plan_records = relationship("InspectionPlanRecord", back_populates="company")
+    belltpp_own_certificates = relationship("BeltppOwnCertificate", back_populates="company")
 
 
 class TradeRegistryRecord(Base):
@@ -287,6 +288,41 @@ class InspectionPlanRecord(Base):
     )
 
     company = relationship("Company", back_populates="inspection_plan_records")
+
+
+class BeltppOwnCertificate(Base):
+    """BelTPP certificates for products, works, or services of own production."""
+    __tablename__ = "belltpp_own_certificates"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="SET NULL"), nullable=True, index=True)
+    holder_unp = Column(BigInteger, nullable=False, index=True)
+    holder_name = Column(Text, nullable=False)
+
+    cert_number = Column(String(64), nullable=False, index=True)
+    blank_number = Column(String(64), nullable=True, index=True)
+    issue_date = Column(Date, nullable=True, index=True)
+    valid_until = Column(Date, nullable=True, index=True)
+    verify_url = Column(Text, nullable=True)
+    source_url = Column(Text, nullable=False)
+    source_page = Column(Integer, nullable=False)
+    source_position = Column(Integer, nullable=True)
+    source_id = Column(BigInteger, nullable=True, index=True)
+    products = Column(JSONB, nullable=False, default=list)
+    raw_json = Column(JSONB, nullable=False)
+    sync_key = Column(String(64), nullable=False)
+    sync_hash = Column(String(64), nullable=False)
+
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("sync_key", name="uq_belltpp_own_certificates_sync_key"),
+    )
+
+    company = relationship("Company", back_populates="belltpp_own_certificates")
 
 
 class TradeRegistryImportRun(Base):

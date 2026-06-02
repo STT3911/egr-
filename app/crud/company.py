@@ -21,6 +21,7 @@ from app.database.models import (
     TradeRegistryRecord,
     LicenseRecord,
     InspectionPlanRecord,
+    BeltppOwnCertificate,
 )
 from datetime import datetime
 from app.utils.search_normalizer import normalize_company_name
@@ -471,6 +472,30 @@ class CompanyCRUD:
             for item in inspection_plan_rows
         ]
 
+        belltpp_own_certificate_rows = (
+            self.db.query(BeltppOwnCertificate)
+            .filter(BeltppOwnCertificate.holder_unp == unp)
+            .order_by(
+                BeltppOwnCertificate.valid_until.desc().nullslast(),
+                BeltppOwnCertificate.issue_date.desc().nullslast(),
+                BeltppOwnCertificate.cert_number.asc(),
+            )
+            .all()
+        )
+        belltpp_own_certificates = [
+            {
+                "holder_name": item.holder_name,
+                "cert_number": item.cert_number,
+                "blank_number": item.blank_number,
+                "issue_date": item.issue_date.isoformat() if item.issue_date else None,
+                "valid_until": item.valid_until.isoformat() if item.valid_until else None,
+                "verify_url": item.verify_url,
+                "products": item.products or [],
+                "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            }
+            for item in belltpp_own_certificate_rows
+        ]
+
         # Дела о банкротстве — мягкая связь по УНП
         bankrot_rows = (
             self.db.query(BankrotCase)
@@ -509,6 +534,7 @@ class CompanyCRUD:
             "eaeu_sez_resident_records": eaeu_sez_resident_records,
             "license_records": license_records,
             "inspection_plan_records": inspection_plan_records,
+            "belltpp_own_certificates": belltpp_own_certificates,
             "bankrot_cases": bankrot_cases,
             "names": [
                 {
