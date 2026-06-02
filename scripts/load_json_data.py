@@ -8,7 +8,7 @@
   2. enrich_missing_raw() - обогащение через API (добавление names, addresses, VED)
   3. process_pending_raw() - парсинг в структурные таблицы
 
-Для автоматической загрузки используйте auto-import-data.py
+Для автоматической загрузки используйте scripts/legacy/auto_import_data.py
 """
 import sys
 from app.core.logger import get_logger

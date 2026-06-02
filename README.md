@@ -1,471 +1,157 @@
-# ЕГР Aggregator Service
+# EGR Service
 
-Микросервис для агрегации и обработки данных из API ЕГР Республики Беларусь.
+EGR Service is a FastAPI/PostgreSQL service with a React frontend for Belarus company dossiers and related public registries.
 
-## Возможности
+The project keeps application code, import logic, source snapshots, and operational scripts in separate places so deploys and repeated imports stay predictable.
 
-- Автоматическая синхронизация данных из ЕГР
-- Поддержка двух API: Mobile (быстрый) и Legacy (полный)
-- Буферизация сырых данных (ELT паттерн)
-- История изменений компаний (названия, адреса, ВЭД, контакты)
-- История событий (регистрация, ликвидация, банкротство)
-- Справочники NSI из ЕГР
-- REST API для поиска компаний
-- Поиск по УНП и названию с автокомплитом
-- Фоновая обработка через Celery
-- Docker-ready с автоматической настройкой
-- Оптимизированный парсинг (до 120,000 записей/час)
+## Repository Layout
 
-## Текущее состояние базы данных
+```text
+app/                 Backend application: API, DB models, services, tasks.
+frontend/            React/Vite frontend.
+migrations/          Alembic migrations.
+scripts/             Operational scripts and compatibility entrypoints.
+scripts/imports/     Import and snapshot commands.
+scripts/legacy/      Old one-off scripts kept behind compatibility wrappers.
+scripts/deploy/      Deployment/SSL helper scripts.
+scripts/sql/         Manual and bootstrap SQL helpers.
+docs/                Detailed documentation and historical notes.
+data/imports/        Source snapshots and operator-provided import files.
+reference_tables/    Reference-table bootstrap helpers.
+tests/               Python tests.
+nginx/               Nginx configs.
+```
 
-### Основные таблицы
+Root-level legacy files such as `Start.py`, `auto-import-data.py`, and `scripts/import_*.py` are compatibility wrappers. Prefer the organized paths under `scripts/` for new work.
 
-| Таблица | Записей | Статус |
-|---------|---------|--------|
-| Компании | ~400,000 | Активно заполняется |
-| История названий | ~235,000 | Активно |
-| История адресов | ~52,000 | Активно |
-| История ВЭД | ~238,000 | Активно |
-| История контактов | ~37,000 | Активно |
+## Main Data Sources
 
-### Справочники
+The profile endpoint can include linked records from:
 
-| Справочник | Записей | Статус |
-|------------|---------|--------|
-| Статусы компаний | 6 | Загружен |
-| Способы создания | 4 | Загружен |
-| Типы субъектов (ЮЛ/ИП) | 2 | Загружен |
-| Органы регистрации | 261 | Загружен |
-| Способы ликвидации | 5 | Загружен |
-| Коды ВЭД | 140+ | Загружен |
+- EGR company data;
+- GRP taxpayer data;
+- tax debt records;
+- GIAS accredited customers and locked suppliers;
+- MАРТ trade registry;
+- license.gov.by licenses;
+- park.by residents;
+- EAEU SEZ residents;
+- bankruptcy cases;
+- scheduled inspection plans;
+- BelTPP own-production certificates.
 
-### Прогресс парсинга
+## Local Development
 
-- **1.6+ млн** записей сырых данных загружены
-- **Автоматическая обработка**: ~40,000-120,000 записей/час
-- **Парсинг работает** в фоне через Celery Beat
-
-## Быстрый старт
-
-### Docker Compose (рекомендуется)
+Install backend dependencies:
 
 ```bash
-# 1. Клонировать репозиторий
-git clone <repository-url>
-cd egr-service
-
-# 2. Запустить все сервисы
-docker-compose up -d
-
-# 3. Проверить статус
-docker-compose ps
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt
 ```
 
-Это запустит:
-- **egr-init** (один раз) — миграции, SQL-скрипты, заполнение справочников
-- **API сервер** → http://localhost:8002 (стартует быстро после init)
-- **Celery Worker** — парсинг и обогащение сырых данных по расписанию
-- **Celery Beat** — планировщик (process_pending_raw каждые 15 с, enrich — раз в минуту)
-- **Frontend** → http://localhost (http://localhost:5173 для dev)
-- **PostgreSQL**, **Redis**, **Nginx** (80/443)
-
-**Порядок запуска и автоматизация:**
-1. **SSL**: сертификаты копируются из `LETSENCRYPT_LIVE` в `./ssl` (сервис ssl-copy). Если сертификатов нет — Nginx поднимается в режиме HTTP-only.
-2. **egr-init**: ждёт БД/Redis → `alembic upgrade head` → SQL из `scripts/sql/` → `update_reference_tables()` (справочники из raw). После этого контейнер завершается.
-3. **egr-api**: ждёт завершения egr-init, затем только поднимает uvicorn (миграции не повторяются).
-4. **Парсинг**: Celery worker/beat стартуют после healthy API; задача `process_pending_raw` каждые 15 с обрабатывает до 5000 записей; при пустых справочниках вызывается `update_reference_tables()`.
-
-## API Endpoints
-
-### Документация
-
-- **Swagger UI**: http://localhost:8002/docs
-- **ReDoc**: http://localhost:8002/redoc
-
-### Основные endpoints
-
-#### Компании
+Install frontend dependencies:
 
 ```bash
-# Получить профиль компании
-GET /api/v1/companies/{unp}
-
-# Автокомплит по УНП/названию
-GET /api/v1/companies/lookup?q=500000306&limit=10
-
-# Сырые данные компании
-GET /api/v1/companies/{unp}/raw
-
-# Статус обработки
-GET /api/v1/companies/{unp}/raw/status
-
-# Запустить парсинг вручную
-POST /api/v1/companies/{unp}/parse?force=true
+npm --prefix frontend install
 ```
 
-#### Справочники
+Run with Docker Compose:
 
 ```bash
-# Список всех справочников
-GET /api/v1/references/
-
-# Получить данные справочника
-GET /api/v1/references/statuses
-GET /api/v1/references/authorities
-GET /api/v1/references/ved
+docker compose up -d db redis
+docker compose run --rm egr-api alembic upgrade head
+docker compose up -d egr-api frontend
 ```
 
-## Загрузка данных
-
-### 🚀 Автоматическая загрузка (НОВОЕ!)
-
-**Система работает полностью автоматически!**
-
-При запуске через `docker-compose up`:
-- **Каждые 6 часов**: загружает данные за последние 3 дня из API → JSON → БД
-- **Каждые 30 секунд**: обрабатывает 2000 записей из очереди
-- **Ежедневно в 2:00**: загружает новые JSON файлы
-
-**Схема работы:**
-```
-EGR API → JSON (полные данные) → PostgreSQL
-  ↓           ↓ (быстро)            ↓
-Медленно    Резервная копия      Готово!
-```
-
-**Преимущества:**
-- ✅ В 10-50 раз быстрее старого способа
-- ✅ Автоматическое обновление
-- ✅ JSON файлы как резервная копия
-- ✅ Не нужно обогащение через API
-
-См. **[AUTOMATIC_PARSING.md](AUTOMATIC_PARSING.md)** для деталей
-
-### 📥 Ручная загрузка данных
-
-#### Вариант 1: Загрузить из API в JSON с полными данными (РЕКОМЕНДУЕТСЯ)
+Build frontend:
 
 ```bash
-python scripts/fetch-to-json.py
+npm --prefix frontend run build
 ```
 
-Этот способ:
-- Загружает **ПОЛНЫЕ данные** из API (names, addresses, ved)
-- Сохраняет в JSON для быстрой повторной загрузки
-- Автоматически обрабатывает в БД
-- **В 10-50 раз быстрее** старого способа
+## Deployment
 
-#### Вариант 2: Загрузить существующие JSON файлы
-
-Если у вас уже есть JSON файлы:
+Typical server deploy:
 
 ```bash
-python load_json_data.py --sync
+cd ~/egr
+git pull
+docker compose build egr-api frontend
+docker compose up -d egr-api frontend
+docker compose run --rm egr-api alembic upgrade head
 ```
 
-Система автоматически определит формат JSON:
-- **Новый формат** (с полными данными) → сразу в БД (быстро)
-- **Старый формат** (только base_info) → требует обогащение (медленно)
+If only migrations changed, running `alembic upgrade head` is enough after the backend image/code is updated.
 
-#### Вариант 3: Только обогащение старых данных
+## Imports and Snapshots
 
-Если у вас старые JSON с base_info:
+Keep raw import inputs and fetched snapshots under `data/imports/`. Prefer date-stamped filenames for repeatability.
+
+### BelTPP Own-Production Certificates
+
+Fetch all cci.by pages into JSON:
 
 ```bash
-python scripts/enrich-data.py
+docker compose run --rm egr-api python scripts/imports/import_belltpp_own_certificates.py fetch \
+  --delay 0.5 \
+  --output /app/data/imports/belltpp_own_certificates/belltpp_own_certificates_$(date +%Y%m%d).json
 ```
 
-#### Программный доступ
-
-```python
-from app.tasks.sync_tasks import auto_fetch_and_load
-
-# Загрузить за период: API → JSON → БД
-result = auto_fetch_and_load("01.01.2024", "31.01.2024")
-```
-
-### ⚙️ Управление парсингом данных
-
-#### Автоматический парсинг (через Celery)
-
-Парсинг запускается **автоматически** каждые 30 секунд:
-- Обрабатывает 2000 записей за раз
-- Использует 4 параллельных потока
-- Скорость: ~40,000-120,000 записей/час
-
-#### Ручной запуск парсинга
+Import a saved JSON snapshot:
 
 ```bash
-./scripts/run-parsing.sh 5000
+docker compose run --rm egr-api python scripts/imports/import_belltpp_own_certificates.py import \
+  /app/data/imports/belltpp_own_certificates/belltpp_own_certificates_YYYYMMDD.json
 ```
 
-Параметры:
-- Первый аргумент - количество записей (по умолчанию: 5000)
-- Второй аргумент - `true`/`false` для async режима
-
-### 📤 Экспорт БД в JSON (в папку проекта на хосте)
-
-Сырые данные из контейнера с БД автоматически выгружаются в папку проекта на хосте (не внутрь контейнера), т.к. у сервисов смонтирован volume `.:/app`.
-
-- **Папка на хосте:** `./data/db_export/` (настраивается через `DB_EXPORT_DIR`, по умолчанию `data/db_export`).
-- **Только вручную** — экспорт в расписание не входит, запускайте по необходимости (см. команды ниже).
-
-**Ручной запуск экспорта:**
+Fetch and import in one command:
 
 ```bash
-# EGR: сырые данные (egr_raw_company_data)
-docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_raw_to_json; export_raw_to_json.delay(50000)"
-
-# EGR: таблица компаний (egr_companies)
-docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_companies_to_json; export_companies_to_json.delay(50000)"
-
-# GRP: сырые данные (grp_raw_data) и пропарсенные (grp_taxpayer_data)
-docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_grp_raw_to_json, export_grp_taxpayers_to_json; export_grp_raw_to_json.delay(50000); export_grp_taxpayers_to_json.delay(50000)"
+docker compose run --rm egr-api python scripts/imports/import_belltpp_own_certificates.py sync \
+  --delay 0.5 \
+  --output /app/data/imports/belltpp_own_certificates/belltpp_own_certificates_$(date +%Y%m%d).json
 ```
 
-**Что дальше делать с JSON:** бэкапы, импорт на другой инстанс, аналитика на хосте, обмен с партнёрами.
+### Scheduled Inspection Plans
 
-### GRP: запуск когда нужно
-
-Задачи ГРП (загрузка с API и парсинг) **по умолчанию не в расписании** — только ручной запуск.
-
-**Вариант 1 — запустить вручную когда надо:**
+Put Excel files under `data/imports/inspection_plan/`, then run:
 
 ```bash
-# Забрать сырые данные с API ГРП (300 записей за раз)
-docker compose exec egr_api python -c "from app.tasks.sync_tasks import grp_fetch_raw; grp_fetch_raw.delay(300)"
-
-# Разобрать сырые в grp_taxpayer_data (500 записей)
-docker compose exec egr_api python -c "from app.tasks.sync_tasks import grp_process_raw; grp_process_raw.delay(500)"
-
-# Экспорт GRP в JSON (сырые + пропарсенные)
-docker compose exec egr_api python -c "from app.tasks.sync_tasks import export_grp_raw_to_json, export_grp_taxpayers_to_json; export_grp_raw_to_json.delay(); export_grp_taxpayers_to_json.delay()"
+docker compose run --rm egr-api python scripts/imports/import_inspection_plan.py \
+  /app/data/imports/inspection_plan
 ```
 
-**Вариант 2 — включить GRP в расписание:**
-
-В `.env` задайте:
-
-```env
-GRP_SCHEDULE_ENABLED=true
-```
-
-Перезапустите worker и beat:
+### Trade Registry
 
 ```bash
-docker compose restart egr_celery_worker egr_celery_beat
+docker compose run --rm egr-api python scripts/imports/import_trade_registry_csv.py \
+  /app/data/imports/trade_registry/trade_registry.csv
 ```
 
-После этого `grp_fetch_raw` и `grp_process_raw` будут выполняться по расписанию (каждые 2 мин и 30 с). Чтобы снова отключить — поставьте `GRP_SCHEDULE_ENABLED=false` и перезапустите.
+## Checks
 
-Отдельно от этого в расписании всегда остаётся ежемесячный JSON-экспорт GRP:
-
-- `grp_monthly_export` — 1-го числа каждого месяца в `06:00`
-- выгружает `grp_raw_data` и `grp_taxpayer_data` в `data/db_export`
-
-### Celery: новые задачи и ручной запуск
-
-- **Добавить новую задачу:** в `app/tasks/sync_tasks.py` — функция с декоратором `@celery_app.task`; в `app/tasks/celery_app.py` в `beat_schedule` — расписание (crontab или timedelta).
-- **Запустить задачу вручную:**  
-  `docker compose exec egr_api python -c "from app.tasks.sync_tasks import <имя_задачи>; <имя_задачи>.delay()"`  
-  или через API/скрипт, который вызывает `.delay()`.
-- После изменения расписания перезапустить **worker** и **beat**:  
-  `docker compose restart egr_celery_worker egr_celery_beat`.
-
-### 📊 Мониторинг прогресса
+Backend syntax check:
 
 ```bash
-# Проверить статус загрузки
-docker exec egr_db psql -U postgres -d egr_db -c "
-SELECT 
-    COUNT(*) as total,
-    COUNT(*) FILTER (WHERE processed_at IS NULL) as pending,
-    COUNT(*) FILTER (WHERE last_error IS NOT NULL) as errors,
-    COUNT(*) FILTER (WHERE NOT (data ? 'names')) as needs_enrich
-FROM egr_raw_company_data;
-"
-
-# Проверить обработанные компании
-docker exec egr_db psql -U postgres -d egr_db -c "
-SELECT COUNT(*) as companies FROM egr_companies;
-"
+python -m py_compile app/**/*.py scripts/**/*.py
 ```
 
-### 🔧 Управление Celery
+Frontend build:
 
 ```bash
-# Перезапустить Celery
-docker-compose restart egr-celery-worker
-
-# Логи Celery
-docker-compose logs -f egr-celery-worker
-
-# Остановить автопарсинг
-docker-compose stop egr-celery-beat
+npm --prefix frontend run build
 ```
 
-## Загрузка справочников
-
-### Основные справочники (из raw data)
+Service status:
 
 ```bash
-# Копировать скрипт
-docker cp reference_tables/populate_from_raw.sql egr_db:/tmp/
-
-# Выполнить
-docker exec egr_db psql -U postgres -d egr_db -f /tmp/populate_from_raw.sql
+docker compose ps
+docker compose logs --tail=50 egr-api
+docker compose logs --tail=50 frontend
 ```
 
-Загружает: статусы, способы создания, типы субъектов, органы регистрации, способы ликвидации.
+## Notes
 
-### Справочник ВЭД (из истории)
-
-```bash
-docker cp reference_tables/populate_ved_opf_soato.sql egr_db:/tmp/
-docker exec egr_db psql -U postgres -d egr_db -f /tmp/populate_ved_opf_soato.sql
-```
-
-### Проверка справочников на корректное заполнение
-
-Скрипт выводит количество записей по всем `ref_*` и ищет **заглушки** (типа «Статус 1», «Орган 123») и пустые `name`:
-
-```bash
-# с хоста (из каталога проекта)
-docker exec -i egr_db psql -U postgres -d egr_db -f - < scripts/check_reference_tables.sql
-
-# или если скрипт уже в контейнере
-docker exec -i egr_db psql -U postgres -d egr_db -f /tmp/check_reference_tables.sql
-```
-
-Если в выводе есть строки в блоках 2–8 — в этих таблицах есть подозрительные записи. Сводка в блоке 8 показывает, в каких таблицах найдены заглушки.
-
-## База данных
-
-### Основные таблицы
-
-| Таблица | Описание |
-|---------|----------|
-| `egr_companies` | Основная таблица компаний |
-| `egr_company_names_history` | История названий |
-| `egr_company_addresses_history` | История адресов |
-| `egr_company_ved_history` | История ВЭД |
-| `egr_company_contacts_history` | Контакты |
-| `egr_raw_company_data` | Буфер сырых данных |
-
-### Справочные таблицы
-
-- `ref_statuses` - Статусы компаний
-- `ref_authorities` - Органы регистрации
-- `ref_ved` - Коды ВЭД
-- `ref_entity_types` - Типы субъектов
-- И другие...
-
-## Celery Tasks
-
-### Периодические задачи
-
-| Задача | Частота | Описание |
-|--------|---------|----------|
-| `process_pending_raw` | Каждые 30 сек | Парсинг данных (2000 записей) |
-| `update_reference_tables` | Ежедневно 04:00 | Обновление справочников |
-| `load_companies_from_json` | Ежедневно 02:00 | Загрузка из JSON |
-| `reprocess_failed_rows` | Суббота 05:00 | Переобработка ошибок |
-
-### Настройки производительности
-
-**Текущие (оптимальные):**
-- Concurrency: 4 потока
-- Batch: 2000 записей
-- Частота: 30 секунд
-- Скорость: ~40,000-120,000/час
-
-**Для ускорения** (docker-compose.yml):
-```yaml
-command: celery -A app.tasks.celery_app worker --concurrency=8
-```
-
-**Для снижения нагрузки** (app/tasks/celery_app.py):
-```python
-"schedule": timedelta(minutes=5),
-"args": (500,),
-```
-
-## Мониторинг
-
-### Health Check
-```bash
-curl http://localhost:8002/api/v1/health
-```
-
-### Логи
-```bash
-docker-compose logs -f egr-api        # API
-docker-compose logs -f egr-celery-worker  # Celery
-docker-compose logs -f egr_db         # БД
-```
-
-## Устранение неполадок
-
-### Celery не работает
-```bash
-docker-compose restart egr-celery-worker
-docker-compose logs -f egr-celery-worker
-```
-
-### Медленный парсинг
-Увеличьте `concurrency` в docker-compose.yml:
-```yaml
-command: celery ... --concurrency=8
-```
-
-### Ошибки миграций
-```bash
-docker exec egr_db psql -U postgres -d egr_db -c "SELECT * FROM alembic_version;"
-docker-compose exec egr-api alembic upgrade head
-```
-
-## Разработка
-
-### Миграции
-```bash
-alembic revision --autogenerate -m "описание"
-alembic upgrade head
-alembic downgrade -1
-```
-
-### Тестирование
-```bash
-pytest
-pytest --cov=app tests/
-```
-
-## Переменные окружения
-
-```bash
-# База данных
-DB_HOST=db
-DB_NAME=egr_db
-DB_USER=postgres
-DB_PASSWORD=your_password
-
-# Redis
-REDIS_URL=redis://redis:6379/3
-CELERY_BROKER_URL=redis://redis:6379/4
-
-# API
-EGR_API_URL=http://egr.gov.by/api/v2/egr
-EGR_MOBILE_API_URL=https://egr.gov.by/egrmobile/api/v1
-
-# CORS
-CORS_ORIGINS=http://localhost:5173,http://localhost
-```
-
-## Лицензия
-
-MIT License
-
----
-
-**Версия:** 2.0.0  
-**Дата обновления:** Январь 2026  
-**Статус:** Production Ready
+- Source snapshots in `data/imports/` are operational artifacts and are ignored by Git.
+- Large local backups in `backups/` are not part of the app source tree.
+- Historical root README content was moved to `docs/legacy-readme.md`.

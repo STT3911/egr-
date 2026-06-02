@@ -62,6 +62,7 @@ celerybeat.pid
 *.sqlite3
 *.dump
 *.sql.gz
+backups/
 
 # Node/frontend
 node_modules/

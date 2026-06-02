@@ -26,7 +26,7 @@ sleep 10
 
 # Run auto-import
 echo "🚀 Starting automatic data import..."
-python3 /app/auto-import-data.py
+python3 /app/scripts/legacy/auto_import_data.py
 
 if [ $? -eq 0 ]; then
     echo ""

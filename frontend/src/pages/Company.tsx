@@ -86,6 +86,7 @@ const Company = () => {
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [expandedBeltppProducts, setExpandedBeltppProducts] = useState<Set<string>>(new Set());
 
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, { stiffness: 200, damping: 30 });
@@ -223,6 +224,18 @@ const Company = () => {
       record.object_building,
       record.object_office,
     ].filter(Boolean).join(", ");
+  };
+
+  const toggleBeltppProducts = (key: string) => {
+    setExpandedBeltppProducts((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   const formatInspectionRegion = (value?: string) => {
@@ -1176,8 +1189,11 @@ const Company = () => {
               <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
                 {profile.belltpp_own_certificates.map((record, idx) => {
                   const products = record.products || [];
+                  const productKey = `${record.cert_number}-${record.blank_number || ""}-${idx}`;
+                  const productsExpanded = expandedBeltppProducts.has(productKey);
+                  const visibleProducts = productsExpanded ? products : products.slice(0, 6);
                   return (
-                    <div key={`${record.cert_number}-${record.blank_number}-${idx}`} className="glass p-3 sm:p-4 rounded-lg hover:bg-violet-500/5 transition-all duration-300 space-y-3">
+                    <div key={productKey} className="glass p-3 sm:p-4 rounded-lg hover:bg-violet-500/5 transition-all duration-300 space-y-3">
                       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                         <div>
                           <span className="text-xs sm:text-sm text-muted-foreground font-medium block mb-1">Сертификат</span>
@@ -1227,9 +1243,22 @@ const Company = () => {
 
                       {products.length > 0 && (
                         <div className="space-y-2">
-                          <span className="text-muted-foreground block text-sm">Продукция / услуги</span>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <span className="text-muted-foreground block text-sm">Продукция / услуги</span>
+                            {products.length > 6 && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="glass hover:bg-violet-500/10 transition-all duration-300 text-xs w-fit"
+                                onClick={() => toggleBeltppProducts(productKey)}
+                              >
+                                {productsExpanded ? "Скрыть позиции" : `Показать все позиции (${products.length})`}
+                              </Button>
+                            )}
+                          </div>
                           <div className="space-y-2">
-                            {products.slice(0, 6).map((product, productIdx) => (
+                            {visibleProducts.map((product, productIdx) => (
                               <div key={`${record.cert_number}-product-${productIdx}`} className="rounded-md bg-background/60 border border-border/50 p-2 text-sm">
                                 <div className="text-foreground font-medium leading-relaxed">
                                   {product.name || "Не указано"}
@@ -1242,9 +1271,15 @@ const Company = () => {
                               </div>
                             ))}
                             {products.length > 6 && (
-                              <div className="text-xs text-muted-foreground">
-                                Ещё позиций: {products.length - 6}
-                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="glass hover:bg-violet-500/10 transition-all duration-300 text-xs"
+                                onClick={() => toggleBeltppProducts(productKey)}
+                              >
+                                {productsExpanded ? "Скрыть позиции" : `Показать все позиции (${products.length})`}
+                              </Button>
                             )}
                           </div>
                         </div>

@@ -2,7 +2,7 @@
 
 Examples:
   python scripts/parse_park_residents.py --unp 193360017 --output data/imports/reports/pvt_residents.csv
-  python scripts/parse_park_residents.py --input trade_registry_missing_unps.csv --output pvt_residents.csv
+  python scripts/parse_park_residents.py --input data/imports/trade_registry/trade_registry_missing_unps.csv --output data/imports/reports/pvt_residents.csv
 """
 
 from __future__ import annotations

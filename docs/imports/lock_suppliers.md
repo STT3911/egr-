@@ -1,4 +1,4 @@
-# Таблицы для реестра недобросовестных поставщиков (`locked_suppliers.json`)
+# Таблицы для реестра недобросовестных поставщиков (`data/imports/locked_suppliers/locked_suppliers.json`)
 
 ## 1. Основная таблица `locked_suppliers`
 
@@ -45,4 +45,3 @@
 
 Индексы:
 - `UNIQUE (kind, text)`  
-

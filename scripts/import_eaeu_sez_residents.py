@@ -1,37 +1,7 @@
-"""Import an EAEU SEZ residents JSON snapshot into the database."""
+"""Compatibility wrapper. Prefer scripts/imports/import_eaeu_sez_residents.py."""
 
-from __future__ import annotations
-
-import argparse
-import json
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Import EAEU SEZ residents JSON snapshot into DB")
-    parser.add_argument("snapshot_json", type=Path, nargs="?", default=Path("data/eaeu/sez_residents_belarus.json"))
-    parser.add_argument("--batch-size", type=int, default=500)
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
-    from app.core.database import SessionLocal
-    from app.services.eaeu_sez import import_sez_snapshot_json
-
-    db = SessionLocal()
-    try:
-        stats = import_sez_snapshot_json(db, args.snapshot_json, batch_size=args.batch_size)
-        print(json.dumps(stats, ensure_ascii=False, indent=2))
-        return 0
-    finally:
-        db.close()
+from imports.import_eaeu_sez_residents import main
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
