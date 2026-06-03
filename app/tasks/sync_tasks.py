@@ -1,5 +1,6 @@
 """Synchronization tasks"""
 import asyncio
+import hashlib
 import json
 import os
 from datetime import date, timedelta, datetime
@@ -93,6 +94,53 @@ def _needs_enrichment(raw_data: dict) -> bool:
         return False
     # If any of these are missing/empty, fetch full history
     return not raw_data.get("addresses") or not raw_data.get("names") or not raw_data.get("ved")
+
+
+def _data_hash(data: dict | None) -> bytes | None:
+    """MD5 fingerprint for change detection (not for security)."""
+    if not data:
+        return None
+    return hashlib.md5(
+        json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    ).digest()
+
+
+async def _grp_one_with_retry(
+    client,
+    unp: int,
+    sem: asyncio.Semaphore,
+    max_retries: int,
+    base_delay: float,
+    success_delay: float = 0.0,
+) -> tuple:
+    """Fetch one UNP from GRP API with semaphore, retry, and rate-limit handling.
+
+    Returns: (unp, payload_or_None, http_status_or_None, error_or_None)
+    """
+    async with sem:
+        for retry in range(max_retries):
+            try:
+                payload = await client.get_taxpayer(int(unp))
+                if success_delay > 0:
+                    await asyncio.sleep(success_delay)
+                if isinstance(payload, dict) and payload:
+                    return unp, payload, 200, None
+                return unp, None, 404, "GRP returned empty payload"
+            except Exception as e:
+                status_code = e.response.status_code if isinstance(e, httpx.HTTPStatusError) and e.response else None
+                error_msg = str(e)[:500]
+                if retry < max_retries - 1 and _is_retryable_grp_error(error_msg, status_code):
+                    delay = base_delay * (2 ** retry)
+                    logger.warning(
+                        "GRP retryable error UNP %s (retry %s/%s in %.1fs): %s",
+                        unp, retry + 1, max_retries, delay, error_msg[:200],
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                if _is_terminal_grp_error(error_msg, status_code):
+                    return unp, None, status_code or 400, error_msg
+                return unp, None, status_code, error_msg
+        return unp, None, None, f"timeout after {max_retries} retries"
 
 
 @celery_app.task(bind=True, max_retries=3, time_limit=60, soft_time_limit=45)
@@ -282,16 +330,21 @@ def enrich_missing_raw(limit: int = 200):
     enriched = 0
     
     try:
-        candidates = (
+        to_enrich = (
             service.db.query(RawCompanyData)
+            .filter(
+                RawCompanyData.data.isnot(None),
+                or_(
+                    ~RawCompanyData.data.has_key("names"),
+                    ~RawCompanyData.data.has_key("addresses"),
+                    ~RawCompanyData.data.has_key("ved"),
+                ),
+            )
             .order_by(RawCompanyData.updated_at.asc())
-            .limit(limit * 5)
+            .limit(limit)
             .all()
         )
-        
-        # Filter candidates that need enrichment
-        to_enrich = [item for item in candidates if _needs_enrichment(item.data or {})][:limit]
-        
+
         if not to_enrich:
             logger.info("No rows need enrichment")
             return 0
@@ -599,39 +652,11 @@ def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
         async def _fetch_batch(batch_unps):
             client = GRPClient()
             sem = asyncio.Semaphore(concurrency)
-            async def _one(u):
-                async with sem:
-                    for retry in range(max_retries):
-                        try:
-                            payload = await client.get_taxpayer(int(u))
-                            await asyncio.sleep(success_delay)
-                            if isinstance(payload, dict) and payload:
-                                return u, payload, 200, None
-                            return u, None, 404, "GRP returned empty payload"
-                        except Exception as e:
-                            status_code = e.response.status_code if isinstance(e, httpx.HTTPStatusError) and e.response else None
-                            error_msg = str(e)[:500]
-
-                            if retry < max_retries - 1 and _is_retryable_grp_error(error_msg, status_code):
-                                delay = retry_base_delay * (2 ** retry)
-                                logger.warning(
-                                    "grp_fetch_raw: retryable error for UNP %s (retry %s/%s after %.1fs): %s",
-                                    u,
-                                    retry + 1,
-                                    max_retries,
-                                    delay,
-                                    error_msg[:200],
-                                )
-                                await asyncio.sleep(delay)
-                                continue
-
-                            if _is_terminal_grp_error(error_msg, status_code):
-                                return u, None, status_code or 400, error_msg
-
-                            return u, None, status_code, error_msg
-                    return u, None, None, "timeout"
             try:
-                return await asyncio.gather(*(_one(u) for u in batch_unps))
+                return await asyncio.gather(*(
+                    _grp_one_with_retry(client, u, sem, max_retries, retry_base_delay, success_delay)
+                    for u in batch_unps
+                ))
             finally:
                 await client.close()
         loop = asyncio.new_event_loop()
@@ -1475,9 +1500,7 @@ def load_companies_from_json(self, auto_process: bool = True):
                     if unp_val in existing_raw:
                         existing_entry = existing_raw[unp_val]
                         if not _needs_enrichment(data_val) or _needs_enrichment(existing_entry.get_data() or {}):
-                            old_data_json = json.dumps(existing_entry.data, sort_keys=True) if existing_entry.data else None
-                            new_data_json = json.dumps(data_val, sort_keys=True) if data_val else None
-                            data_changed = old_data_json != new_data_json
+                            data_changed = _data_hash(existing_entry.data) != _data_hash(data_val)
                             if data_changed or existing_entry.processed_at is None:
                                 existing_entry.data = data_val
                                 existing_entry.base_info = data_val.get("base_info")
@@ -1757,7 +1780,7 @@ def fetch_period_to_json(start_date: str, end_date: str, output_dir: str = "data
             filepath = os.path.join(output_dir, filename)
             
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(companies_data, f, ensure_ascii=False, indent=2)
+                json.dump(companies_data, f, ensure_ascii=False)
             
             logger.info(f"✅ Saved to {filepath}")
             logger.info(f"   File size: {os.path.getsize(filepath) / 1024 / 1024:.2f} MB")
@@ -1969,7 +1992,7 @@ def sync_grp_for_all(self, limit: int = 5000, only_missing: bool = True, batch_s
 
     This task is intentionally conservative (batch processing) to avoid overload / timeouts.
     """
-    from app.database.models import Company, GrpTaxpayerData  # local import to avoid cyclic
+    from app.database.models import Company, GrpTaxpayerData, GrpRawData  # local import to avoid cyclic
     from app.crud.grp import GrpCRUD
     from app.services.grp_client import GRPClient
     from sqlalchemy import and_
@@ -1981,7 +2004,15 @@ def sync_grp_for_all(self, limit: int = 5000, only_missing: bool = True, batch_s
             base_query = (
                 base_query
                 .outerjoin(GrpTaxpayerData, Company.unp == GrpTaxpayerData.unp)
+                .outerjoin(GrpRawData, Company.unp == GrpRawData.unp)
                 .filter(GrpTaxpayerData.unp == None)  # noqa: E711
+                .filter(
+                    or_(
+                        GrpRawData.unp == None,           # никогда не пробовали
+                        GrpRawData.http_status.is_(None), # таймаут/обрыв — повторяем
+                        GrpRawData.http_status.notin_([400, 404]),  # не терминальный
+                    )
+                )
             )
 
         unps = [row[0] for row in base_query.order_by(Company.unp.asc()).limit(limit).all()]
@@ -1994,41 +2025,12 @@ def sync_grp_for_all(self, limit: int = 5000, only_missing: bool = True, batch_s
 
         async def _fetch_batch(batch_unps):
             client = GRPClient()
-            sem = asyncio.Semaphore(3)  # Conservative concurrency to avoid rate limits
-
-            async def _one(u: int):
-                async with sem:
-                    max_retries = 3
-                    base_delay = 1.5
-
-                    for retry in range(max_retries):
-                        try:
-                            payload = await client.get_taxpayer(int(u))
-                            # Add delay between successful requests
-                            await asyncio.sleep(base_delay)
-                            return int(u), payload, 200, None
-                        except Exception as e:
-                            error_msg = str(e)
-                            if "429" in error_msg and retry < max_retries - 1:
-                                # Rate limit - exponential backoff
-                                delay = base_delay * (2 ** retry)
-                                logger.warning(f"Rate limit for UNP {u}, retry {retry+1}/{max_retries} after {delay}s")
-                                await asyncio.sleep(delay)
-                                continue
-                            elif ("Server disconnected" in error_msg or "timeout" in error_msg.lower()) and retry < max_retries - 1:
-                                # Connection issues - shorter retry
-                                delay = base_delay * (retry + 1)
-                                logger.warning(f"Connection issue for UNP {u}, retry {retry+1}/{max_retries} after {delay}s")
-                                await asyncio.sleep(delay)
-                                continue
-                            else:
-                                return int(u), None, None, error_msg
-
-                    return int(u), None, None, f"Failed after {max_retries} retries"
-
+            sem = asyncio.Semaphore(3)
             try:
-                results = await asyncio.gather(*(_one(u) for u in batch_unps))
-                return results
+                return await asyncio.gather(*(
+                    _grp_one_with_retry(client, u, sem, max_retries=3, base_delay=1.5, success_delay=1.5)
+                    for u in batch_unps
+                ))
             finally:
                 await client.close()
 
@@ -2146,7 +2148,6 @@ def fetch_grp_to_json(limit: int = 10000, only_missing: bool = True, output_dir:
                         else:
                             logger.warning(f"Empty or invalid data returned for UNP {unp}: {result}")
                             return f"⚠️ UNP {unp} - empty data"
-                        break  # Success or empty data, exit retry loop
 
                     except Exception as e:
                         retry_count += 1
@@ -2174,7 +2175,6 @@ def fetch_grp_to_json(limit: int = 10000, only_missing: bool = True, output_dir:
                             # Other errors - don't retry
                             logger.warning(f"Failed to fetch GRP data for UNP {unp}: {error_msg}")
                             return f"❌ UNP {unp} - error: {error_msg[:50]}"
-                            break
 
                 return f"❌ UNP {unp} - failed after retries"
 
@@ -2219,7 +2219,7 @@ def fetch_grp_to_json(limit: int = 10000, only_missing: bool = True, output_dir:
                 filepath = os.path.join(output_dir, filename)
 
                 with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(taxpayers_data, f, ensure_ascii=False, indent=2)
+                    json.dump(taxpayers_data, f, ensure_ascii=False)
 
                 logger.info(f"✅ Saved to {filepath}")
                 logger.info(f"   File size: {os.path.getsize(filepath) / 1024 / 1024:.2f} MB")
@@ -2277,7 +2277,29 @@ def load_grp_from_json(auto_process: bool = True, input_dir: str = "data/grp_jso
     db = SessionLocal()
     crud = GrpCRUD(db)
     loaded_count = 0
-    batch_size = 500    
+    batch_size = 500
+
+    def _flush_grp_batch(b: list) -> None:
+        nonlocal loaded_count
+        if not b:
+            return
+        try:
+            for td in b:
+                unp_val = td.get("unp")
+                if unp_val:
+                    crud.upsert_from_api(
+                        unp=unp_val,
+                        payload=td.get("raw", {}),
+                        http_status=200,
+                        error=None,
+                    )
+                    loaded_count += 1
+            db.commit()
+            logger.info("   ✅ Batch: %s saved", len(b))
+        except Exception as e:
+            db.rollback()
+            logger.error("load_grp_from_json batch error: %s", e)
+
     try:
         json_files = [
             os.path.join(input_dir, name)
@@ -2302,58 +2324,16 @@ def load_grp_from_json(auto_process: bool = True, input_dir: str = "data/grp_jso
 
             logger.info(f"   📊 Found {len(payload)} taxpayers in file")
 
-            # Process in batches
             batch = []
             for item in payload:
                 unp = item.get("unp")
                 if not unp:
                     continue
-
                 batch.append(item)
-
-                # Process batch when full
                 if len(batch) >= batch_size:
-                    try:
-                        # Batch upsert to database
-                        for taxpayer_data in batch:
-                            unp = taxpayer_data["unp"]
-                            crud.upsert_from_api(
-                                unp=unp,
-                                payload=taxpayer_data.get("raw", {}),
-                                http_status=200,
-                                error=None
-                            )
-                            loaded_count += 1
-
-                        db.commit()
-                        logger.info(f"   ✅ Batch: {len(batch)} saved")
-
-                    except Exception as e:
-                        db.rollback()
-                        logger.error(f"Batch processing error: {e}")
-
-                    finally:
-                        batch = []
-
-            # Process remaining batch
-            if batch:
-                try:
-                    for taxpayer_data in batch:
-                        unp = taxpayer_data["unp"]
-                        crud.upsert_from_api(
-                            unp=unp,
-                            payload=taxpayer_data.get("raw", {}),
-                            http_status=200,
-                            error=None
-                        )
-                        loaded_count += 1
-
-                    db.commit()
-                    logger.info(f"   ✅ Final batch: {len(batch)} saved")
-
-                except Exception as e:
-                    db.rollback()
-                    logger.error(f"Final batch processing error: {e}")
+                    _flush_grp_batch(batch)
+                    batch = []
+            _flush_grp_batch(batch)
 
         logger.info(f"")
         logger.info(f"🎉 COMPLETE!")

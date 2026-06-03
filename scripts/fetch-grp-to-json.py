@@ -109,7 +109,7 @@ def main():
         if process_mode == "1":
             # Только в JSON
             logger.info("📥 Загружаю данные из GRP API в JSON...")
-            count = fetch_grp_to_json(limit=limit, only_missing=only_missing, page_size=1000)
+            count = fetch_grp_to_json(limit=limit, only_missing=only_missing)
             logger.info(f"✅ Загружено {count} налогоплательщиков в JSON")
             print()
             print("=" * 80)
@@ -122,7 +122,7 @@ def main():
         else:
             # В JSON и сразу в БД
             logger.info("📥 Загружаю данные из GRP API в JSON и обрабатываю в БД...")
-            result = auto_fetch_grp_and_load(limit=limit, only_missing=only_missing, page_size=1000)
+            result = auto_fetch_grp_and_load(limit=limit, only_missing=only_missing)
             print()
             print("=" * 80)
             logger.info(f"🎉 ЗАВЕРШЕНО!")
