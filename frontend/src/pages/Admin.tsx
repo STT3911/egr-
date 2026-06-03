@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Building2,
+  Clock3,
   Database,
   Download,
   FileSpreadsheet,
@@ -26,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  AdminDataSourceStatus,
   AdminCompanyItem,
   TradeRegistryImportRun,
   adminLogin,
@@ -33,6 +35,7 @@ import {
   createTradeRegistryImport,
   fillCompanyFile,
   getAdminSession,
+  listAdminDataSources,
   listTradeRegistryImports,
   lookupCompanies,
 } from "@/lib/api";
@@ -62,6 +65,10 @@ const Admin = () => {
   const [tradeRegistryLoading, setTradeRegistryLoading] = useState(false);
   const [tradeRegistryError, setTradeRegistryError] = useState<string | null>(null);
 
+  const [dataSources, setDataSources] = useState<AdminDataSourceStatus[]>([]);
+  const [dataSourcesLoading, setDataSourcesLoading] = useState(false);
+  const [dataSourcesError, setDataSourcesError] = useState<string | null>(null);
+
   useEffect(() => {
     const loadSession = async () => {
       try {
@@ -87,18 +94,35 @@ const Admin = () => {
     }
   };
 
+  const loadDataSources = async () => {
+    setDataSourcesLoading(true);
+    try {
+      const data = await listAdminDataSources();
+      setDataSources(data.items);
+      setDataSourcesError(null);
+    } catch (err) {
+      setDataSourcesError(err instanceof Error ? err.message : "Не удалось загрузить источники данных");
+    } finally {
+      setDataSourcesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!sessionUser) {
       return;
     }
     loadTradeRegistryRuns();
+    loadDataSources();
   }, [sessionUser]);
 
   useEffect(() => {
     if (!sessionUser || !tradeRegistryRuns.some((run) => run.status === "queued" || run.status === "running")) {
       return;
     }
-    const timer = window.setInterval(loadTradeRegistryRuns, 5000);
+    const timer = window.setInterval(() => {
+      loadTradeRegistryRuns();
+      loadDataSources();
+    }, 5000);
     return () => window.clearInterval(timer);
   }, [sessionUser, tradeRegistryRuns]);
 
@@ -206,16 +230,43 @@ const Admin = () => {
 
   const statusLabel = (status: string) => {
     if (status === "success") return "Готово";
+    if (status === "done") return "Готово";
     if (status === "failed") return "Ошибка";
     if (status === "running") return "Импорт";
     if (status === "queued") return "В очереди";
+    if (status === "unknown") return "Нет данных";
     return status;
   };
 
   const statusVariant = (status: string): "secondary" | "destructive" | "outline" => {
     if (status === "success") return "secondary";
+    if (status === "done") return "secondary";
     if (status === "failed") return "destructive";
     return "outline";
+  };
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  };
+
+  const formatDate = (value?: string | null) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(date);
   };
 
   if (sessionLoading) {
@@ -383,6 +434,73 @@ const Admin = () => {
           </Card>
 
           <div className="space-y-6">
+            <Card className="h-fit border-border/80 shadow-card">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="flex items-center gap-2 text-xl">
+                    <Clock3 className="h-5 w-5 text-primary" />
+                    Источники данных
+                  </CardTitle>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={loadDataSources}
+                    disabled={dataSourcesLoading}
+                    aria-label="Обновить источники данных"
+                  >
+                    {dataSourcesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="overflow-x-auto rounded-lg border border-border/70">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Источник</TableHead>
+                        <TableHead>Статус</TableHead>
+                        <TableHead>Обновлен</TableHead>
+                        <TableHead>Срез</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {dataSourcesLoading && dataSources.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                            <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {dataSources.map((source) => (
+                        <TableRow key={source.key}>
+                          <TableCell className="min-w-[13rem]">
+                            <div className="font-medium text-foreground">{source.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Записей: {source.records_count.toLocaleString("ru-RU")}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={statusVariant(source.status)}>{statusLabel(source.status)}</Badge>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{formatDateTime(source.updated_at)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{formatDate(source.source_date)}</TableCell>
+                        </TableRow>
+                      ))}
+                      {!dataSourcesLoading && dataSources.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                            Источники данных пока не найдены
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+                {dataSourcesError && <p className="text-sm text-destructive">{dataSourcesError}</p>}
+              </CardContent>
+            </Card>
+
             <Card className="h-fit border-border/80 shadow-card">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-xl">

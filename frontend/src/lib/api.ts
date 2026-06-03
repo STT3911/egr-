@@ -304,6 +304,22 @@ export type TradeRegistryImportsResponse = {
   items: TradeRegistryImportRun[];
 };
 
+export type AdminDataSourceStatus = {
+  key: string;
+  name: string;
+  updated_at?: string | null;
+  source_date?: string | null;
+  status: string;
+  records_count: number;
+  details: Record<string, string | number | null>;
+  error?: string | null;
+};
+
+export type AdminDataSourcesResponse = {
+  updated_at: string;
+  items: AdminDataSourceStatus[];
+};
+
 export const lookupCompanies = async (query: string) => {
   const qs = toQuery({ q: query });
   return request<CompanyLookupResponse>(`/api/v1/companies/lookup?${qs}`);
@@ -387,6 +403,10 @@ export const adminLogout = async () => {
 
 export const getAdminSession = async () => {
   return adminRequest<AdminSession>("/api/v1/admin/me");
+};
+
+export const listAdminDataSources = async () => {
+  return adminRequest<AdminDataSourcesResponse>("/api/v1/admin/data-sources");
 };
 
 export const getAdminCompanies = async (query = "", offset = 0, limit = 25) => {

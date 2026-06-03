@@ -105,6 +105,118 @@ def _serialize_trade_registry_import(run: TradeRegistryImportRun) -> dict:
     }
 
 
+def _table_exists(db: Session, table_name: str) -> bool:
+    return db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": table_name}).scalar() is not None
+
+
+def _first_mapping(db: Session, sql: str, params: dict | None = None) -> dict:
+    row = db.execute(text(sql), params or {}).mappings().first()
+    return dict(row) if row else {}
+
+
+def _serialize_source_status(
+    *,
+    key: str,
+    name: str,
+    updated_at: datetime | None = None,
+    source_date: date | datetime | None = None,
+    status: str | None = None,
+    records_count: int | None = None,
+    details: dict | None = None,
+    error: str | None = None,
+) -> dict:
+    return {
+        "key": key,
+        "name": name,
+        "updated_at": _iso_datetime(updated_at),
+        "source_date": _iso(source_date),
+        "status": status or ("success" if updated_at or source_date else "unknown"),
+        "records_count": int(records_count or 0),
+        "details": details or {},
+        "error": error,
+    }
+
+
+def _latest_run_source(
+    db: Session,
+    *,
+    key: str,
+    name: str,
+    table_name: str,
+    sql: str,
+    data_table: str | None = None,
+    data_updated_column: str = "last_seen_at",
+    records_count_column: str = "*",
+    source_date_column: str | None = None,
+    details_keys: tuple[str, ...] = (),
+) -> dict:
+    if not _table_exists(db, table_name):
+        return _serialize_source_status(key=key, name=name)
+
+    run = _first_mapping(db, sql)
+    data = {}
+    if data_table and _table_exists(db, data_table):
+        source_date_select = f", max({source_date_column}) AS source_date" if source_date_column else ""
+        data = _first_mapping(
+            db,
+            f"""
+            SELECT max({data_updated_column}) AS data_updated_at,
+                   count({records_count_column}) AS records_count
+                   {source_date_select}
+            FROM {data_table}
+            """,
+        )
+
+    finished_at = run.get("finished_at")
+    started_at = run.get("started_at")
+    data_updated_at = data.get("data_updated_at")
+    updated_at = finished_at or data_updated_at or started_at
+    details = {key: run.get(key) for key in details_keys if run.get(key) is not None}
+
+    return _serialize_source_status(
+        key=key,
+        name=name,
+        updated_at=updated_at,
+        source_date=data.get("source_date") or run.get("source_date"),
+        status=run.get("status"),
+        records_count=data.get("records_count") or run.get("records_count") or 0,
+        details=details,
+        error=run.get("error"),
+    )
+
+
+def _table_snapshot_source(
+    db: Session,
+    *,
+    key: str,
+    name: str,
+    table_name: str,
+    updated_column: str,
+    records_count_column: str = "*",
+    source_date_column: str | None = None,
+) -> dict:
+    if not _table_exists(db, table_name):
+        return _serialize_source_status(key=key, name=name)
+
+    source_date_select = f", max({source_date_column}) AS source_date" if source_date_column else ""
+    row = _first_mapping(
+        db,
+        f"""
+        SELECT max({updated_column}) AS updated_at,
+               count({records_count_column}) AS records_count
+               {source_date_select}
+        FROM {table_name}
+        """,
+    )
+    return _serialize_source_status(
+        key=key,
+        name=name,
+        updated_at=row.get("updated_at"),
+        source_date=row.get("source_date"),
+        records_count=row.get("records_count") or 0,
+    )
+
+
 def _safe_upload_name(filename: str | None) -> str:
     name = Path(filename or "").name.strip()
     return name or "trade_registry.csv"
@@ -699,6 +811,189 @@ async def logout(response: Response):
 @router.get("/me")
 async def me(session: dict = Depends(require_admin)):
     return {"username": session["sub"]}
+
+
+@router.get("/data-sources")
+async def list_data_sources(
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_admin),
+):
+    sources = [
+        _table_snapshot_source(
+            db,
+            key="egr",
+            name="ЕГР: карточки компаний",
+            table_name="egr_raw_company_data",
+            updated_column="updated_at",
+            records_count_column="unp",
+        ),
+        _table_snapshot_source(
+            db,
+            key="grp",
+            name="ГРП: реестр плательщиков",
+            table_name="grp_taxpayer_data",
+            updated_column="fetched_at",
+            records_count_column="unp",
+        ),
+        _table_snapshot_source(
+            db,
+            key="place_locations",
+            name="ЕГР Mobile: адреса",
+            table_name="egr_company_place_locations",
+            updated_column="fetched_at",
+            records_count_column="unp",
+        ),
+        _latest_run_source(
+            db,
+            key="trade_registry",
+            name="МАРТ: торговый реестр",
+            table_name="trade_registry_import_runs",
+            sql="""
+                SELECT status,
+                       started_at,
+                       finished_at,
+                       source_date,
+                       error,
+                       stats_json ->> 'rows' AS rows,
+                       stats_json ->> 'written' AS written,
+                       stats_json ->> 'matched' AS matched
+                FROM trade_registry_import_runs
+                ORDER BY created_at DESC
+                LIMIT 1
+            """,
+            data_table="trade_registry_records",
+            data_updated_column="last_seen_at",
+            records_count_column="id",
+            source_date_column="source_date",
+            details_keys=("rows", "written", "matched"),
+        ),
+        _latest_run_source(
+            db,
+            key="licenses",
+            name="license.gov.by: лицензии",
+            table_name="license_sync_runs",
+            sql="""
+                SELECT status,
+                       started_at,
+                       finished_at,
+                       error,
+                       processed_records AS records_count,
+                       created_count,
+                       updated_count,
+                       unchanged_count,
+                       failed_count
+                FROM license_sync_runs
+                ORDER BY started_at DESC
+                LIMIT 1
+            """,
+            data_table="license_records",
+            data_updated_column="last_seen_at",
+            records_count_column="id",
+            details_keys=("created_count", "updated_count", "unchanged_count", "failed_count"),
+        ),
+        _latest_run_source(
+            db,
+            key="gias_accredited_customers",
+            name="ГИАС: аккредитованные заказчики",
+            table_name="gias_sync_runs",
+            sql="""
+                SELECT status,
+                       started_at,
+                       finished_at,
+                       error,
+                       records_fetched AS records_count,
+                       created_count,
+                       updated_count,
+                       unchanged_count,
+                       history_created_count
+                FROM gias_sync_runs
+                WHERE registry_name = 'accredited_customers'
+                ORDER BY started_at DESC
+                LIMIT 1
+            """,
+            data_table="gias_accredited_customers",
+            data_updated_column="last_seen_at",
+            records_count_column="id",
+            details_keys=("created_count", "updated_count", "unchanged_count", "history_created_count"),
+        ),
+        _latest_run_source(
+            db,
+            key="gias_locked_suppliers",
+            name="ГИАС: недобросовестные поставщики",
+            table_name="gias_sync_runs",
+            sql="""
+                SELECT status,
+                       started_at,
+                       finished_at,
+                       error,
+                       records_fetched AS records_count,
+                       created_count,
+                       updated_count,
+                       unchanged_count,
+                       history_created_count
+                FROM gias_sync_runs
+                WHERE registry_name = 'locked_suppliers'
+                ORDER BY started_at DESC
+                LIMIT 1
+            """,
+            data_table="locked_suppliers",
+            data_updated_column="last_seen_at",
+            records_count_column="id",
+            details_keys=("created_count", "updated_count", "unchanged_count", "history_created_count"),
+        ),
+        _table_snapshot_source(
+            db,
+            key="pvt_residents",
+            name="ПВТ: резиденты",
+            table_name="pvt_resident_records",
+            updated_column="last_seen_at",
+            records_count_column="id",
+        ),
+        _table_snapshot_source(
+            db,
+            key="eaeu_sez_residents",
+            name="ЕАЭС: резиденты СЭЗ",
+            table_name="eaeu_sez_resident_records",
+            updated_column="last_seen_at",
+            records_count_column="id",
+        ),
+        _table_snapshot_source(
+            db,
+            key="nalog_debt",
+            name="МНС: задолженности",
+            table_name="nalog_debt_records",
+            updated_column="created_at",
+            records_count_column="id",
+            source_date_column="slice_date",
+        ),
+        _latest_run_source(
+            db,
+            key="bankrot",
+            name="bankrot.gov.by: дела о банкротстве",
+            table_name="bankrot_sync_runs",
+            sql="""
+                SELECT status,
+                       started_at,
+                       finished_at,
+                       error,
+                       processed_cases AS records_count,
+                       total_cases,
+                       failed_cases,
+                       last_page
+                FROM bankrot_sync_runs
+                ORDER BY started_at DESC
+                LIMIT 1
+            """,
+            data_table="bankrot_cases",
+            data_updated_column="updated_at",
+            records_count_column="case_id",
+            details_keys=("total_cases", "failed_cases", "last_page"),
+        ),
+    ]
+    return {
+        "updated_at": datetime.utcnow().isoformat(),
+        "items": sources,
+    }
 
 
 @router.get("/companies")
