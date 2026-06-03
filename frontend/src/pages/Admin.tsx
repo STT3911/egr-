@@ -454,48 +454,49 @@ const Admin = () => {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="overflow-x-auto rounded-lg border border-border/70">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Источник</TableHead>
-                        <TableHead>Статус</TableHead>
-                        <TableHead>Обновлен</TableHead>
-                        <TableHead>Срез</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {dataSourcesLoading && dataSources.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
-                            <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                          </TableCell>
-                        </TableRow>
+                <div className="overflow-hidden rounded-lg border border-border/70">
+                  {dataSourcesLoading && dataSources.length === 0 && (
+                    <div className="flex h-20 items-center justify-center text-muted-foreground">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    </div>
+                  )}
+
+                  {dataSources.map((source) => (
+                    <div key={source.key} className="border-b border-border/70 p-3 last:border-b-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium leading-snug text-foreground">{source.name}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Записей: {source.records_count.toLocaleString("ru-RU")}
+                          </div>
+                        </div>
+                        <Badge variant={statusVariant(source.status)} className="shrink-0">
+                          {statusLabel(source.status)}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                        <div>
+                          <div className="font-medium text-foreground">Обновлен</div>
+                          <div>{formatDateTime(source.updated_at)}</div>
+                        </div>
+                        <div>
+                          <div className="font-medium text-foreground">Срез</div>
+                          <div>{formatDate(source.source_date)}</div>
+                        </div>
+                      </div>
+
+                      {source.error && (
+                        <p className="mt-2 line-clamp-2 text-xs text-destructive">{source.error}</p>
                       )}
-                      {dataSources.map((source) => (
-                        <TableRow key={source.key}>
-                          <TableCell className="min-w-[13rem]">
-                            <div className="font-medium text-foreground">{source.name}</div>
-                            <div className="text-xs text-muted-foreground">
-                              Записей: {source.records_count.toLocaleString("ru-RU")}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={statusVariant(source.status)}>{statusLabel(source.status)}</Badge>
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{formatDateTime(source.updated_at)}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{formatDate(source.source_date)}</TableCell>
-                        </TableRow>
-                      ))}
-                      {!dataSourcesLoading && dataSources.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
-                            Источники данных пока не найдены
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
+                    </div>
+                  ))}
+
+                  {!dataSourcesLoading && dataSources.length === 0 && (
+                    <div className="p-3 text-sm text-muted-foreground">
+                      Источники данных пока не найдены
+                    </div>
+                  )}
                 </div>
                 {dataSourcesError && <p className="text-sm text-destructive">{dataSourcesError}</p>}
               </CardContent>
