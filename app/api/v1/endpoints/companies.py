@@ -13,7 +13,7 @@ from app.core.logger import get_logger
 from app.core.database import get_db
 from app.core.security import verify_api_key
 from app.database.models import NalogDebtRecord, RawCompanyData
-from app.tasks.sync_tasks import process_pending_raw
+from app.tasks.sync_tasks import process_pending_raw as process_pending_raw_task
 from app.utils.search_normalizer import normalize_company_name as normalize_search_name
 from app.core.public_token import verify_public_token
 
@@ -660,9 +660,9 @@ async def parse_pending_raw(
 ):
     """Запустить парсинг необработанных сырых данных."""
     if async_run:
-        task = process_pending_raw.delay(limit)
+        task = process_pending_raw_task.delay(limit)
         return {"status": "queued", "task_id": task.id, "limit": limit}
-    processed = process_pending_raw(limit)
+    processed = process_pending_raw_task(limit)
     return {"status": "processed", "count": processed, "limit": limit}
 
 

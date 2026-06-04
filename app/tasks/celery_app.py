@@ -161,8 +161,8 @@ celery_app.conf.update(
     # ------------------------------------------------------------------
     # Маршрутизация задач по очередям
     #
-    # celery  — быстрые/частые задачи (search index, process_raw, daily)
-    # heavy   — долгие задачи (historical, gias, bankrot, pvt, egr_fetch)
+    # celery  — быстрые/частые задачи and EGR fetch/process pipeline
+    # heavy   — long-running external sync jobs (historical, gias, bankrot, pvt)
     #
     # Цель: быстрые задачи никогда не ждут пока закончится GIAS/historical
     # ------------------------------------------------------------------
@@ -170,8 +170,6 @@ celery_app.conf.update(
         # ── Heavy queue ────────────────────────────────────────────────
         "app.tasks.sync_tasks.auto_fetch_historical_data":    {"queue": "heavy"},
         "app.tasks.sync_tasks.sync_gias_directory_registries": {"queue": "heavy"},
-        "app.tasks.sync_tasks.egr_fetch_raw":                 {"queue": "heavy"},
-        "app.tasks.sync_tasks.egr_fetch_raw_one":             {"queue": "heavy"},
         "app.tasks.sync_tasks.grp_fetch_raw":                 {"queue": "heavy"},
         "app.tasks.sync_tasks.grp_monthly_export":            {"queue": "heavy"},
         "app.tasks.sync_tasks.reprocess_failed_rows":         {"queue": "heavy"},

@@ -1287,6 +1287,7 @@ def sync_daily_changes():
                 return
 
             process_date = current_cursor + timedelta(days=1)
+            total_fetched = 0
             while process_date <= target_date:
                 d_str = process_date.strftime("%d.%m.%Y")
                 unps = set()
@@ -1295,20 +1296,32 @@ def sync_daily_changes():
                 await asyncio.sleep(0.5)
                 base = await client.get_base_info_by_period(d_str, d_str)
                 for i in base:
-                    unps.add(i.get("ngrn"))
+                    unp = i.get("ngrn") or i.get("vunp")
+                    if unp:
+                        unps.add(int(unp))
 
                 await asyncio.sleep(0.5)
                 events = await client.get_events_by_period(d_str, d_str)
                 for e in events:
-                    unps.add(e.get("ngrn"))
-
-                logger.info(f"Found {len(unps)} companies for {d_str} (queue fetch raw)")
-                for unp in unps:
+                    unp = e.get("ngrn") or e.get("vunp")
                     if unp:
-                        egr_fetch_raw_one.delay(unp)
+                        unps.add(int(unp))
+
+                logger.info(f"Found {len(unps)} companies for {d_str} (fetch raw)")
+                fetched = 0
+                for unp in sorted(unps):
+                    result = egr_fetch_raw_one.apply(args=(unp,))
+                    if result.failed():
+                        raise RuntimeError(f"Failed to fetch EGR raw card for UNP {unp}: {result.result}")
+                    fetched += 1
 
                 update_last_sync_date(db, process_date)
+                total_fetched += fetched
+                logger.info(f"Synced EGR daily changes for {d_str}: fetched {fetched} raw cards")
                 process_date += timedelta(days=1)
+
+            if total_fetched:
+                egr_process_raw.delay(1000)
 
         finally:
             await client.close()

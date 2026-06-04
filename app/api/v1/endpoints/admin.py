@@ -217,6 +217,53 @@ def _table_snapshot_source(
     )
 
 
+def _egr_source(db: Session) -> dict:
+    if not _table_exists(db, "egr_companies"):
+        return _serialize_source_status(key="egr", name="ЕГР: карточки компаний")
+
+    companies = _first_mapping(
+        db,
+        """
+        SELECT max(updated_at) AS updated_at,
+               count(unp) AS records_count
+        FROM egr_companies
+        """,
+    )
+
+    details: dict[str, str | int | None] = {}
+    if _table_exists(db, "egr_raw_company_data"):
+        raw = _first_mapping(
+            db,
+            """
+            SELECT max(updated_at) AS raw_updated_at,
+                   count(unp) AS raw_records_count
+            FROM egr_raw_company_data
+            """,
+        )
+        details["raw_updated_at"] = _iso_datetime(raw.get("raw_updated_at"))
+        details["raw_records_count"] = int(raw.get("raw_records_count") or 0)
+
+    if _table_exists(db, "egr_system_state"):
+        state = _first_mapping(
+            db,
+            """
+            SELECT value AS last_sync_date
+            FROM egr_system_state
+            WHERE key = 'egr_last_sync_date'
+            LIMIT 1
+            """,
+        )
+        details["last_sync_date"] = state.get("last_sync_date")
+
+    return _serialize_source_status(
+        key="egr",
+        name="ЕГР: карточки компаний",
+        updated_at=companies.get("updated_at"),
+        records_count=companies.get("records_count") or 0,
+        details=details,
+    )
+
+
 def _safe_upload_name(filename: str | None) -> str:
     name = Path(filename or "").name.strip()
     return name or "trade_registry.csv"
@@ -819,14 +866,7 @@ async def list_data_sources(
     session: dict = Depends(require_admin),
 ):
     sources = [
-        _table_snapshot_source(
-            db,
-            key="egr",
-            name="ЕГР: карточки компаний",
-            table_name="egr_raw_company_data",
-            updated_column="updated_at",
-            records_count_column="unp",
-        ),
+        _egr_source(db),
         _table_snapshot_source(
             db,
             key="grp",
