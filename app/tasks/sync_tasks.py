@@ -91,12 +91,16 @@ def _needs_enrichment(raw_data: dict) -> bool:
     if not isinstance(raw_data, dict):
         return False
     if "base_info" not in raw_data and "common_info" not in raw_data:
-        # Flat base_info payloads from JSON dumps should be enriched too.
         if "ngrn" in raw_data or "NGRN" in raw_data or "nsi00211" in raw_data:
             return True
         return False
-    # If any of these are missing/empty, fetch full history
-    return not raw_data.get("addresses") or not raw_data.get("names") or not raw_data.get("ved")
+    # KEY is absent → ключ вообще не присутствует, данные не запрашивались → нужно обогащение.
+    # KEY present but empty list/None → API вернул пустой ответ (204/[]) → данных нет, но запрос был.
+    # Не нужно повторно обогащать компании, у которых EGR просто не даёт addresses/ved/names.
+    for key in ("addresses", "names", "ved"):
+        if key not in raw_data:
+            return True  # ключ отсутствует — ещё не запрашивали
+    return False
 
 
 def _data_hash(data: dict | None) -> bytes | None:
@@ -412,11 +416,11 @@ def egr_fetch_raw_one(self, unp: int):
             raw_entry.data = raw_data
             raw_entry.base_info = raw_data.get("base_info")
             raw_entry.base_info_fetched_at = now
-            raw_entry.addresses = raw_data.get("addresses")
+            raw_entry.addresses = raw_data.get("addresses") or []
             raw_entry.addresses_fetched_at = now
-            raw_entry.ved = raw_data.get("ved")
+            raw_entry.ved = raw_data.get("ved") or []
             raw_entry.ved_fetched_at = now
-            raw_entry.names = raw_data.get("names")
+            raw_entry.names = raw_data.get("names") or []
             raw_entry.names_fetched_at = now
             raw_entry.updated_at = now
             raw_entry.processed_at = None
@@ -427,11 +431,11 @@ def egr_fetch_raw_one(self, unp: int):
                 data=raw_data,
                 base_info=raw_data.get("base_info"),
                 base_info_fetched_at=now,
-                addresses=raw_data.get("addresses"),
+                addresses=raw_data.get("addresses") or [],
                 addresses_fetched_at=now,
-                ved=raw_data.get("ved"),
+                ved=raw_data.get("ved") or [],
                 ved_fetched_at=now,
-                names=raw_data.get("names"),
+                names=raw_data.get("names") or [],
                 names_fetched_at=now,
             ))
         service.db.commit()
@@ -443,7 +447,7 @@ def egr_fetch_raw_one(self, unp: int):
         service.close()
 
 
-@celery_app.task
+@celery_app.task(time_limit=14400, soft_time_limit=14100)  # 4 ч / 3 ч 55 мин
 def egr_fetch_raw(limit: int = 500):
     """
     Воркер 1 (EGR): только ходит в EGR API и сохраняет/обновляет сырые данные в egr_raw_company_data.
@@ -498,11 +502,12 @@ def egr_fetch_raw(limit: int = 500):
                         item.data = result
                         item.base_info = result.get("base_info")
                         item.base_info_fetched_at = now
-                        item.addresses = result.get("addresses")
+                        # None → [] чтобы колонка не оставалась NULL (NULL = "ещё не запрашивали")
+                        item.addresses = result.get("addresses") or []
                         item.addresses_fetched_at = now
-                        item.ved = result.get("ved")
+                        item.ved = result.get("ved") or []
                         item.ved_fetched_at = now
-                        item.names = result.get("names")
+                        item.names = result.get("names") or []
                         item.names_fetched_at = now
                         item.updated_at = now
                         item.processed_at = None
@@ -583,7 +588,7 @@ def egr_process_raw(limit: int = 1000):
         service.close()
 
 
-@celery_app.task
+@celery_app.task(time_limit=3600, soft_time_limit=3540)  # 1 ч
 def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
     """
     Воркер 1 (GRP): только ходит в GRP API и сохраняет сырые данные в grp_raw_data.
@@ -1267,7 +1272,7 @@ def update_last_sync_date(db, new_date):
     db.commit()
 
 
-@celery_app.task
+@celery_app.task(time_limit=3600, soft_time_limit=3540)  # 1 ч
 def sync_daily_changes():
     """Sync daily changes"""
     async def _run():
@@ -1869,7 +1874,7 @@ def auto_fetch_recent_to_json_and_db(days_back: int = 3):
         raise
 
 
-@celery_app.task
+@celery_app.task(time_limit=43200, soft_time_limit=42900)  # 12 ч
 def auto_fetch_historical_data(start_year: int = 1900, period_months: int = 12):
     """
     Automatically fetch ALL historical data from start_year to today.
