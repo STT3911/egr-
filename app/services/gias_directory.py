@@ -374,14 +374,7 @@ class GiasDirectoryService:
         logger.info("Company %s not found in EGR DB, trying to fetch it before linking GIAS data", unp)
         aggregator = AggregatorService()
         try:
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                fetched = loop.run_until_complete(aggregator.fetch_and_save_raw(unp))
-            finally:
-                loop.close()
-                asyncio.set_event_loop(None)
-
+            fetched = asyncio.run(aggregator.fetch_and_save_raw(unp))
             if fetched:
                 aggregator.process_raw_data(unp)
         except Exception as exc:

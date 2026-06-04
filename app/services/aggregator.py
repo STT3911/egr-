@@ -1,4 +1,5 @@
 """Aggregator service - main orchestration service"""
+import hashlib
 import json
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -67,9 +68,9 @@ class AggregatorService:
             now = datetime.now()
             raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
             if raw_entry:
-                old_data_json = json.dumps(raw_entry.data, sort_keys=True) if raw_entry.data else None
-                new_data_json = json.dumps(raw_data, sort_keys=True) if raw_data else None
-                data_changed = old_data_json != new_data_json
+                def _h(d):
+                    return hashlib.md5(json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).digest() if d else None
+                data_changed = _h(raw_entry.data) != _h(raw_data)
                 if data_changed or raw_entry.processed_at is None:
                     raw_entry.data = raw_data
                     raw_entry.base_info = raw_data.get("base_info")

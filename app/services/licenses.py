@@ -118,7 +118,7 @@ def fetch_license_snapshot(
         "items": items,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    output.write_text(json.dumps(snapshot, ensure_ascii=False, default=str), encoding="utf-8")
     return {
         "items": len(items),
         "count": total_count or len(items),

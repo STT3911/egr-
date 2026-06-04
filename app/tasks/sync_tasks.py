@@ -3,13 +3,16 @@ import asyncio
 import hashlib
 import json
 import os
+import traceback
 from datetime import date, timedelta, datetime
+from pathlib import Path
 
 import httpx
 
 # Порог размера файла (байт): выше — парсим потоково через ijson, чтобы не грузить весь файл в память
 _LARGE_JSON_BYTES = 50 * 1024 * 1024  # 50 MB
 from sqlalchemy import and_, or_, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.tasks.celery_app import celery_app
@@ -105,6 +108,13 @@ def _data_hash(data: dict | None) -> bytes | None:
     ).digest()
 
 
+def _row_data(row) -> dict | None:
+    """Extract data dict from a RawCompanyData row (handles both .data and .get_data())."""
+    if hasattr(row, "get_data") and callable(row.get_data):
+        return row.get_data()
+    return getattr(row, "data", None)
+
+
 async def _grp_one_with_retry(
     client,
     unp: int,
@@ -159,12 +169,7 @@ def sync_specific_company(self, unp: int):
         finally:
             service.close()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_sync())
-    finally:
-        loop.close()
+    asyncio.run(_sync())
 
 
 @celery_app.task
@@ -200,10 +205,8 @@ def process_pending_raw(limit: int = 1000):
     t0 = time.perf_counter()
     service = AggregatorService()
     client = EGRClient(settings.EGR_API_URL) if settings.EGR_API_URL else None
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     batch_size = 100  # Параллельных запросов к EGR API за один батч (увеличено для скорости; при 429 — уменьшить)
-    
+
     try:
         # Если справочники пусты — парсинг упадёт по FK. Заполняем из raw_data один раз.
         try:
@@ -214,8 +217,6 @@ def process_pending_raw(limit: int = 1000):
         except Exception as e:
             logger.warning(f"Проверка/заполнение справочников: {e}")
 
-        # Только реально необработанные или с неполными данными (без updated_at > processed_at,
-        # иначе уже обработанные строки снова попадают в очередь и тормозят парсинг)
         pending = (
             service.db.query(RawCompanyData)
             .filter(
@@ -228,76 +229,72 @@ def process_pending_raw(limit: int = 1000):
             .limit(limit)
             .all()
         )
-        
+
         if not pending:
             logger.info("No pending raw data to process")
             return 0
-        
+
         logger.info(f"📋 Found {len(pending)} pending records to process")
-        
-        # Separate: need enrichment vs ready to parse (get_data() учитывает и data, и base_info/addresses/ved/names)
-        def _row_data(row):
-            return row.get_data() if hasattr(row, "get_data") and callable(row.get_data) else getattr(row, "data", None)
+
         needs_enrich = [item for item in pending if _needs_enrichment(_row_data(item) or {})]
         ready_to_parse = [item for item in pending if not _needs_enrichment(_row_data(item) or {})]
-        
+
         logger.info(f"   Need enrichment: {len(needs_enrich)}, Ready to parse: {len(ready_to_parse)}")
-        
+
         if needs_enrich and not client:
             logger.warning("EGR_API_URL is not set — enrichment skipped. Set EGR_API_URL in .env so data can be enriched.")
-        
-        # Step 1: Enrich in batches (parallel API calls)
+
+        # Step 1: Enrich in batches (parallel API calls) — single event loop for all batches
         enriched = 0
         if needs_enrich and client:
-            for batch_start in range(0, len(needs_enrich), batch_size):
-                batch = needs_enrich[batch_start:batch_start + batch_size]
-                logger.info(f"   📥 Enriching batch {batch_start//batch_size + 1}: {len(batch)} companies...")
-                
-                # Parallel API calls
-                async def enrich_batch():
-                    tasks = [client.get_full_company_history(item.unp) for item in batch]
-                    return await asyncio.gather(*tasks, return_exceptions=True)
-                
-                results = loop.run_until_complete(enrich_batch())
-                
-                # Update data (single commit per batch)
-                for item, result in zip(batch, results):
-                    if isinstance(result, Exception):
-                        item.last_error = f"enrich_failed:{str(result)[:200]}"
-                        continue
-                    if not result:
-                        item.last_error = "enrich_failed:no_data"
-                        continue
-                    
-                    item.data = result
-                    item.updated_at = datetime.now()
-                    item.processed_at = None
-                    item.last_error = None
-                    enriched += 1
-                
+            async def _enrich_all():
+                nonlocal enriched
                 try:
-                    service.db.commit()
-                    logger.info(f"      ✅ Enriched {enriched} companies")
-                except Exception as e:
-                    service.db.rollback()
-                    logger.error(f"Failed to commit enrichment batch: {e}")
-        
+                    for batch_start in range(0, len(needs_enrich), batch_size):
+                        batch = needs_enrich[batch_start:batch_start + batch_size]
+                        logger.info(f"   📥 Enriching batch {batch_start//batch_size + 1}: {len(batch)} companies...")
+                        results = await asyncio.gather(
+                            *[client.get_full_company_history(item.unp) for item in batch],
+                            return_exceptions=True,
+                        )
+                        for item, result in zip(batch, results):
+                            if isinstance(result, Exception):
+                                item.last_error = f"enrich_failed:{str(result)[:200]}"
+                                continue
+                            if not result:
+                                item.last_error = "enrich_failed:no_data"
+                                continue
+                            item.data = result
+                            item.updated_at = datetime.now()
+                            item.processed_at = None
+                            item.last_error = None
+                            enriched += 1
+                        try:
+                            service.db.commit()
+                            logger.info(f"      ✅ Enriched {enriched} companies")
+                        except Exception as e:
+                            service.db.rollback()
+                            logger.error(f"Failed to commit enrichment batch: {e}")
+                finally:
+                    await client.close()
+
+            asyncio.run(_enrich_all())
+
         # Step 2: Parse into structured tables (sequential for data integrity)
         to_parse = ready_to_parse + [item for item in needs_enrich if item.last_error is None]
         processed = 0
-        
+
         for item in to_parse:
             try:
                 service.process_raw_data(item.unp)
                 processed += 1
-                
                 if processed % 100 == 0:
                     logger.info(f"   ⚙️  Parsed {processed}/{len(to_parse)} companies...")
             except Exception as e:
                 item.last_error = f"parse_failed:{str(e)[:500]}"
                 service.db.commit()
                 logger.error(f"Error processing UNP {item.unp}: {e}")
-        
+
         if processed == 0 and to_parse:
             first_err = (to_parse[0].last_error or "none")[:300]
             logger.warning(
@@ -308,11 +305,8 @@ def process_pending_raw(limit: int = 1000):
         rate = processed / elapsed if elapsed > 0 else 0
         logger.info(f"✅ Processed {processed}/{len(pending)} pending raw rows in {elapsed:.1f}s ({rate:.1f} rows/s)")
         return processed
-        
+
     finally:
-        if client:
-            loop.run_until_complete(client.close())
-        loop.close()
         service.close()
 
 
@@ -325,10 +319,8 @@ def enrich_missing_raw(limit: int = 200):
         return 0
     
     client = EGRClient(settings.EGR_API_URL)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     enriched = 0
-    
+
     try:
         to_enrich = (
             service.db.query(RawCompanyData)
@@ -348,40 +340,35 @@ def enrich_missing_raw(limit: int = 200):
         if not to_enrich:
             logger.info("No rows need enrichment")
             return 0
-        
+
         logger.info(f"📥 Enriching {len(to_enrich)} companies in parallel...")
-        
-        # Parallel enrichment with asyncio
-        async def enrich_batch():
-            tasks = []
-            for item in to_enrich:
-                tasks.append(client.get_full_company_history(item.unp))
-            
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            return results
-        
-        results = loop.run_until_complete(enrich_batch())
-        
-        # Save results (single commit for batch)
+
+        async def _run():
+            try:
+                return await asyncio.gather(
+                    *[client.get_full_company_history(item.unp) for item in to_enrich],
+                    return_exceptions=True,
+                )
+            finally:
+                await client.close()
+
+        results = asyncio.run(_run())
+
         for item, result in zip(to_enrich, results):
             if isinstance(result, Exception):
                 item.last_error = f"enrich_failed:{str(result)[:200]}"
                 logger.warning(f"Enrichment failed for UNP {item.unp}: {result}")
                 continue
-            
             if not result:
                 item.last_error = "enrich_failed:no_data"
                 logger.warning(f"No data returned for UNP {item.unp}")
                 continue
-            
-            # Update with enriched data
             item.data = result
             item.updated_at = datetime.now()
-            item.processed_at = None  # Will be processed in next step
+            item.processed_at = None
             item.last_error = None
             enriched += 1
-        
-        # Single commit for entire batch
+
         try:
             service.db.commit()
             logger.info(f"✅ Enriched {enriched}/{len(to_enrich)} raw rows")
@@ -389,12 +376,10 @@ def enrich_missing_raw(limit: int = 200):
             service.db.rollback()
             logger.error(f"Failed to commit batch: {e}")
             return 0
-        
+
         return enriched
-        
+
     finally:
-        loop.run_until_complete(client.close())
-        loop.close()
         service.close()
 
 
@@ -411,11 +396,14 @@ def egr_fetch_raw_one(self, unp: int):
     if not settings.EGR_API_URL:
         return
     client = EGRClient(settings.EGR_API_URL)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        raw_data = loop.run_until_complete(client.get_full_company_history(unp))
-        loop.run_until_complete(client.close())
+        async def _fetch():
+            try:
+                return await client.get_full_company_history(unp)
+            finally:
+                await client.close()
+
+        raw_data = asyncio.run(_fetch())
         if not raw_data:
             return
         now = datetime.now()
@@ -452,7 +440,6 @@ def egr_fetch_raw_one(self, unp: int):
         logger.error("egr_fetch_raw_one %s: %s", unp, e)
         raise self.retry(exc=e, countdown=60)
     finally:
-        loop.close()
         service.close()
 
 
@@ -469,11 +456,8 @@ def egr_fetch_raw(limit: int = 500):
         return 0
     service = AggregatorService()
     client = EGRClient(settings.EGR_API_URL)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     batch_size = 30
     try:
-        # Кандидаты: не обработаны или нет данных по какому-то эндпоинту (без updated_at > processed_at)
         candidates = (
             service.db.query(RawCompanyData)
             .filter(
@@ -487,54 +471,59 @@ def egr_fetch_raw(limit: int = 500):
             .limit(limit)
             .all()
         )
-        def _row_data(r):
-            return r.get_data() if hasattr(r, "get_data") and callable(r.get_data) else getattr(r, "data", None)
         to_fetch = [c for c in candidates if _needs_enrichment(_row_data(c) or {})][:limit]
         if not to_fetch:
             logger.info("egr_fetch_raw: no rows need fetch/enrich")
             return 0
+
         fetched = 0
-        for batch_start in range(0, len(to_fetch), batch_size):
-            batch = to_fetch[batch_start : batch_start + batch_size]
-            async def _batch():
-                tasks = [client.get_full_company_history(item.unp) for item in batch]
-                return await asyncio.gather(*tasks, return_exceptions=True)
-            results = loop.run_until_complete(_batch())
-            now = datetime.now()
-            for item, result in zip(batch, results):
-                if isinstance(result, Exception):
-                    item.last_error = f"fetch_failed:{str(result)[:200]}"
-                    continue
-                if not result:
-                    item.last_error = "fetch_failed:no_data"
-                    continue
-                item.data = result
-                item.base_info = result.get("base_info")
-                item.base_info_fetched_at = now
-                item.addresses = result.get("addresses")
-                item.addresses_fetched_at = now
-                item.ved = result.get("ved")
-                item.ved_fetched_at = now
-                item.names = result.get("names")
-                item.names_fetched_at = now
-                item.updated_at = now
-                item.processed_at = None
-                item.last_error = None
-                fetched += 1
+
+        async def _run():
+            nonlocal fetched
             try:
-                service.db.commit()
-            except Exception as e:
-                service.db.rollback()
-                logger.error("egr_fetch_raw commit error: %s", e)
-            if batch_start + batch_size < len(to_fetch):
-                loop.run_until_complete(asyncio.sleep(0.5))
+                for batch_start in range(0, len(to_fetch), batch_size):
+                    batch = to_fetch[batch_start : batch_start + batch_size]
+                    results = await asyncio.gather(
+                        *[client.get_full_company_history(item.unp) for item in batch],
+                        return_exceptions=True,
+                    )
+                    now = datetime.now()
+                    for item, result in zip(batch, results):
+                        if isinstance(result, Exception):
+                            item.last_error = f"fetch_failed:{str(result)[:200]}"
+                            continue
+                        if not result:
+                            item.last_error = "fetch_failed:no_data"
+                            continue
+                        item.data = result
+                        item.base_info = result.get("base_info")
+                        item.base_info_fetched_at = now
+                        item.addresses = result.get("addresses")
+                        item.addresses_fetched_at = now
+                        item.ved = result.get("ved")
+                        item.ved_fetched_at = now
+                        item.names = result.get("names")
+                        item.names_fetched_at = now
+                        item.updated_at = now
+                        item.processed_at = None
+                        item.last_error = None
+                        fetched += 1
+                    try:
+                        service.db.commit()
+                    except Exception as e:
+                        service.db.rollback()
+                        logger.error("egr_fetch_raw commit error: %s", e)
+                    if batch_start + batch_size < len(to_fetch):
+                        await asyncio.sleep(0.5)
+            finally:
+                await client.close()
+
+        asyncio.run(_run())
         elapsed = time.perf_counter() - t0
         rate = fetched / elapsed if elapsed > 0 else 0
         logger.info("egr_fetch_raw: fetched %s rows in %.1fs (%.1f rows/s)", fetched, elapsed, rate)
         return fetched
     finally:
-        loop.run_until_complete(client.close())
-        loop.close()
         service.close()
 
 
@@ -573,8 +562,6 @@ def egr_process_raw(limit: int = 1000):
             .limit(limit)
             .all()
         )
-        def _row_data(r):
-            return r.get_data() if hasattr(r, "get_data") and callable(r.get_data) else getattr(r, "data", None)
         ready = [p for p in pending if _row_data(p) and not _needs_enrichment(_row_data(p) or {})]
         if not ready:
             logger.info("egr_process_raw: no rows ready to parse (need enrich first)")
@@ -649,35 +636,38 @@ def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
             concurrency,
         )
 
-        async def _fetch_batch(batch_unps):
-            client = GRPClient()
-            sem = asyncio.Semaphore(concurrency)
-            try:
-                return await asyncio.gather(*(
-                    _grp_one_with_retry(client, u, sem, max_retries, retry_base_delay, success_delay)
-                    for u in batch_unps
-                ))
-            finally:
-                await client.close()
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         fetched = 0
         success_rows = 0
         error_rows = 0
-        try:
-            for i in range(0, len(unps), batch_size):
-                batch = unps[i : i + batch_size]
-                results = loop.run_until_complete(_fetch_batch(batch))
-                for u, payload, status, err in results:
-                    crud.save_raw_data(unp=u, raw_json=payload if isinstance(payload, dict) else None, http_status=status, error=err)
-                    fetched += 1
-                    if payload:
-                        success_rows += 1
-                    else:
-                        error_rows += 1
-                db.commit()
-        finally:
-            loop.close()
+
+        async def _run():
+            nonlocal fetched, success_rows, error_rows
+            client = GRPClient()
+            sem = asyncio.Semaphore(concurrency)
+            try:
+                for i in range(0, len(unps), batch_size):
+                    batch = unps[i : i + batch_size]
+                    results = await asyncio.gather(*(
+                        _grp_one_with_retry(client, u, sem, max_retries, retry_base_delay, success_delay)
+                        for u in batch
+                    ))
+                    for u, payload, status, err in results:
+                        crud.save_raw_data(
+                            unp=u,
+                            raw_json=payload if isinstance(payload, dict) else None,
+                            http_status=status,
+                            error=err,
+                        )
+                        fetched += 1
+                        if payload:
+                            success_rows += 1
+                        else:
+                            error_rows += 1
+                    db.commit()
+            finally:
+                await client.close()
+
+        asyncio.run(_run())
         logger.info(
             "grp_fetch_raw: processed=%s success=%s errors=%s",
             fetched,
@@ -723,8 +713,6 @@ def export_raw_to_json(batch_size: int = 50000):
     В контейнере монтируется .:/app, поэтому /app/data/db_export = ./data/db_export на хосте.
     Файлы: egr_raw_YYYY-MM-DD_000.json, egr_raw_YYYY-MM-DD_001.json, ...
     """
-    from pathlib import Path
-    from datetime import date
     db = SessionLocal()
     try:
         # В контейнере WORKDIR=/app → data/db_export = /app/data/db_export (volume = папка проекта на хосте)
@@ -801,13 +789,11 @@ def export_companies_to_json(batch_size: int = 50000):
     Выгружает egr_companies в JSON для бэкапа (в ту же папку data/db_export на хосте).
     Файлы: egr_companies_YYYY-MM-DD_000.json, ...
     """
-    from pathlib import Path
-    from datetime import date as date_type
     db = SessionLocal()
     try:
         export_dir = Path(settings.DB_EXPORT_DIR)
         export_dir.mkdir(parents=True, exist_ok=True)
-        today = date_type.today().isoformat()
+        today = date.today().isoformat()
         total = db.query(Company).count()
         written = 0
         offset = 0
@@ -845,13 +831,11 @@ def export_grp_raw_to_json(batch_size: int = 50000):
     Выгружает grp_raw_data в JSON в data/db_export (для бэкапа). Только ручной запуск.
     Файлы: grp_raw_YYYY-MM-DD_000.json, ...
     """
-    from pathlib import Path
-    from datetime import date as date_type
     db = SessionLocal()
     try:
         export_dir = Path(settings.DB_EXPORT_DIR)
         export_dir.mkdir(parents=True, exist_ok=True)
-        today = date_type.today().isoformat()
+        today = date.today().isoformat()
         total = db.query(GrpRawData).count()
         written = 0
         offset = 0
@@ -918,13 +902,11 @@ def export_grp_taxpayers_to_json(batch_size: int = 50000):
     Выгружает grp_taxpayer_data в JSON в data/db_export (для бэкапа). Только ручной запуск.
     Файлы: grp_taxpayer_YYYY-MM-DD_000.json, ...
     """
-    from pathlib import Path
-    from datetime import date as date_type
     db = SessionLocal()
     try:
         export_dir = Path(settings.DB_EXPORT_DIR)
         export_dir.mkdir(parents=True, exist_ok=True)
-        today = date_type.today().isoformat()
+        today = date.today().isoformat()
         total = db.query(GrpTaxpayerData).count()
         written = 0
         offset = 0
@@ -1017,6 +999,7 @@ def restore_grp_raw_from_export_json(input_dir: str | None = None):
 
     db = SessionLocal()
     restored = 0
+    _batch_size = 1000
     try:
         for file_idx, file_path in enumerate(files, 1):
             try:
@@ -1038,24 +1021,38 @@ def restore_grp_raw_from_export_json(input_dir: str | None = None):
                 os.path.basename(file_path),
             )
 
-            for item in payload:
-                unp = item.get("unp")
-                if not unp:
-                    continue
+            rows = [
+                {
+                    "unp": item["unp"],
+                    "raw_json": item.get("raw_json") or {},
+                    "http_status": item.get("http_status"),
+                    "last_error": item.get("last_error"),
+                    "fetched_at": _parse_iso_datetime(item.get("fetched_at")),
+                    "updated_at": _parse_iso_datetime(item.get("updated_at")),
+                    "parsed": bool(item.get("parsed")),
+                    "parsed_at": _parse_iso_datetime(item.get("parsed_at")),
+                }
+                for item in payload
+                if item.get("unp")
+            ]
 
-                row = db.query(GrpRawData).filter(GrpRawData.unp == unp).first()
-                if not row:
-                    row = GrpRawData(unp=unp)
-                    db.add(row)
-
-                row.raw_json = item.get("raw_json") or {}
-                row.http_status = item.get("http_status")
-                row.last_error = item.get("last_error")
-                row.fetched_at = _parse_iso_datetime(item.get("fetched_at"))
-                row.updated_at = _parse_iso_datetime(item.get("updated_at"))
-                row.parsed = bool(item.get("parsed"))
-                row.parsed_at = _parse_iso_datetime(item.get("parsed_at"))
-                restored += 1
+            for i in range(0, len(rows), _batch_size):
+                batch = rows[i : i + _batch_size]
+                stmt = pg_insert(GrpRawData).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["unp"],
+                    set_={
+                        "raw_json":    stmt.excluded.raw_json,
+                        "http_status": stmt.excluded.http_status,
+                        "last_error":  stmt.excluded.last_error,
+                        "fetched_at":  stmt.excluded.fetched_at,
+                        "updated_at":  stmt.excluded.updated_at,
+                        "parsed":      stmt.excluded.parsed,
+                        "parsed_at":   stmt.excluded.parsed_at,
+                    },
+                )
+                db.execute(stmt)
+                restored += len(batch)
 
             db.commit()
 
@@ -1093,6 +1090,7 @@ def restore_grp_taxpayers_from_export_json(input_dir: str | None = None):
 
     db = SessionLocal()
     restored = 0
+    _batch_size = 1000
     try:
         for file_idx, file_path in enumerate(files, 1):
             try:
@@ -1114,27 +1112,44 @@ def restore_grp_taxpayers_from_export_json(input_dir: str | None = None):
                 os.path.basename(file_path),
             )
 
-            for item in payload:
-                unp = item.get("unp")
-                if not unp:
-                    continue
+            rows = [
+                {
+                    "unp":               item["unp"],
+                    "full_name":         item.get("full_name"),
+                    "short_name":        item.get("short_name"),
+                    "registration_date": _parse_iso_date(item.get("registration_date")),
+                    "inspectorate_code": item.get("inspectorate_code"),
+                    "inspectorate_name": item.get("inspectorate_name"),
+                    "status_code":       item.get("status_code"),
+                    "status_date":       _parse_iso_date(item.get("status_date")),
+                    "address":           item.get("address"),
+                    "fetched_at":        _parse_iso_datetime(item.get("fetched_at")),
+                    "updated_at":        _parse_iso_datetime(item.get("updated_at")),
+                }
+                for item in payload
+                if item.get("unp")
+            ]
 
-                row = db.query(GrpTaxpayerData).filter(GrpTaxpayerData.unp == unp).first()
-                if not row:
-                    row = GrpTaxpayerData(unp=unp)
-                    db.add(row)
-
-                row.full_name = item.get("full_name")
-                row.short_name = item.get("short_name")
-                row.registration_date = _parse_iso_date(item.get("registration_date"))
-                row.inspectorate_code = item.get("inspectorate_code")
-                row.inspectorate_name = item.get("inspectorate_name")
-                row.status_code = item.get("status_code")
-                row.status_date = _parse_iso_date(item.get("status_date"))
-                row.address = item.get("address")
-                row.fetched_at = _parse_iso_datetime(item.get("fetched_at"))
-                row.updated_at = _parse_iso_datetime(item.get("updated_at"))
-                restored += 1
+            for i in range(0, len(rows), _batch_size):
+                batch = rows[i : i + _batch_size]
+                stmt = pg_insert(GrpTaxpayerData).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["unp"],
+                    set_={
+                        "full_name":         stmt.excluded.full_name,
+                        "short_name":        stmt.excluded.short_name,
+                        "registration_date": stmt.excluded.registration_date,
+                        "inspectorate_code": stmt.excluded.inspectorate_code,
+                        "inspectorate_name": stmt.excluded.inspectorate_name,
+                        "status_code":       stmt.excluded.status_code,
+                        "status_date":       stmt.excluded.status_date,
+                        "address":           stmt.excluded.address,
+                        "fetched_at":        stmt.excluded.fetched_at,
+                        "updated_at":        stmt.excluded.updated_at,
+                    },
+                )
+                db.execute(stmt)
+                restored += len(batch)
 
             db.commit()
 
@@ -1232,12 +1247,7 @@ def process_period_range(start_str, end_str):
         finally:
             pass
     
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_run())
-    finally:
-        loop.close()
+    asyncio.run(_run())
 
 
 def get_last_sync_date(db) -> date:
@@ -1266,7 +1276,7 @@ def sync_daily_changes():
         try:
             target_date = date.today() - timedelta(days=1)
             current_cursor = get_last_sync_date(db)
-            
+
             if current_cursor >= target_date:
                 logger.info(f"Already synced up to {current_cursor}")
                 return
@@ -1275,35 +1285,31 @@ def sync_daily_changes():
             while process_date <= target_date:
                 d_str = process_date.strftime("%d.%m.%Y")
                 unps = set()
-                
+
                 # Rate limit delay
                 await asyncio.sleep(0.5)
                 base = await client.get_base_info_by_period(d_str, d_str)
                 for i in base:
                     unps.add(i.get("ngrn"))
-                
+
                 await asyncio.sleep(0.5)
                 events = await client.get_events_by_period(d_str, d_str)
                 for e in events:
                     unps.add(e.get("ngrn"))
-                
+
                 logger.info(f"Found {len(unps)} companies for {d_str} (queue fetch raw)")
                 for unp in unps:
                     if unp:
                         egr_fetch_raw_one.delay(unp)
-                
+
                 update_last_sync_date(db, process_date)
                 process_date += timedelta(days=1)
-                
+
         finally:
+            await client.close()
             db.close()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_run())
-    finally:
-        loop.close()
+    asyncio.run(_run())
 
 
 @celery_app.task
@@ -1793,12 +1799,7 @@ def fetch_period_to_json(start_date: str, end_date: str, output_dir: str = "data
         finally:
             await client.close()
     
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(_fetch())
-    finally:
-        loop.close()
+    return asyncio.run(_fetch())
 
 
 @celery_app.task
@@ -1842,8 +1843,6 @@ def auto_fetch_recent_to_json_and_db(days_back: int = 3):
     Args:
         days_back: Number of days to fetch (default: 3)
     """
-    from datetime import date, timedelta
-    
     end_date = date.today()
     start_date = end_date - timedelta(days=days_back)
     
@@ -1867,8 +1866,6 @@ def auto_fetch_recent_to_json_and_db(days_back: int = 3):
         return result
     except Exception as e:
         logger.error(f"❌ AUTO UPDATE FAILED: {e}")
-        import traceback
-        traceback.print_exc()
         raise
 
 
@@ -1886,7 +1883,6 @@ def auto_fetch_historical_data(start_year: int = 1900, period_months: int = 12):
     Returns:
         Total number of companies processed
     """
-    from datetime import date, timedelta
     from dateutil.relativedelta import relativedelta
     
     logger.info("")
@@ -1943,8 +1939,6 @@ def auto_fetch_historical_data(start_year: int = 1900, period_months: int = 12):
         
     except Exception as e:
         logger.error(f"❌ HISTORICAL LOAD FAILED: {e}")
-        import traceback
-        traceback.print_exc()
         raise
 
 
@@ -2023,41 +2017,37 @@ def sync_grp_for_all(self, limit: int = 5000, only_missing: bool = True, batch_s
 
         logger.info(f"GRP sync: starting for {len(unps)} companies (only_missing={only_missing})")
 
-        async def _fetch_batch(batch_unps):
+        processed = 0
+        errors = 0
+        crud = GrpCRUD(db)
+
+        async def _run():
+            nonlocal processed, errors
             client = GRPClient()
             sem = asyncio.Semaphore(3)
             try:
-                return await asyncio.gather(*(
-                    _grp_one_with_retry(client, u, sem, max_retries=3, base_delay=1.5, success_delay=1.5)
-                    for u in batch_unps
-                ))
+                for i in range(0, len(unps), batch_size):
+                    batch = unps[i:i + batch_size]
+                    results = await asyncio.gather(*(
+                        _grp_one_with_retry(client, u, sem, max_retries=3, base_delay=1.5, success_delay=1.5)
+                        for u in batch
+                    ))
+                    for u, payload, status, err in results:
+                        if err:
+                            errors += 1
+                        crud.upsert_from_api(
+                            unp=u,
+                            payload=payload if isinstance(payload, dict) else None,
+                            http_status=status,
+                            error=err,
+                        )
+                        processed += 1
+                    db.commit()
+                    logger.info(f"GRP sync: processed {processed}/{len(unps)}")
             finally:
                 await client.close()
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        processed = 0
-        errors = 0
-
-        crud = GrpCRUD(db)
-
-        try:
-            for i in range(0, len(unps), batch_size):
-                batch = unps[i:i + batch_size]
-                results = loop.run_until_complete(_fetch_batch(batch))
-
-                for u, payload, status, err in results:
-                    if err:
-                        errors += 1
-                    crud.upsert_from_api(unp=u, payload=payload if isinstance(payload, dict) else None, http_status=status, error=err)
-                    processed += 1
-
-                db.commit()
-                logger.info(f"GRP sync: processed {processed}/{len(unps)}")
-
-        finally:
-            loop.close()
+        asyncio.run(_run())
 
         logger.info(f"GRP sync finished: processed={processed}, errors={errors}")
         return {"processed": processed, "errors": errors, "limit": limit, "only_missing": only_missing}
@@ -2235,12 +2225,7 @@ def fetch_grp_to_json(limit: int = 10000, only_missing: bool = True, output_dir:
         finally:
             await client.close()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(_fetch())
-    finally:
-        loop.close()
+    return asyncio.run(_fetch())
 
 
 @celery_app.task

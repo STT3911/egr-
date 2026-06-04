@@ -1,5 +1,7 @@
 """EGR API clients"""
+import asyncio
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -194,8 +196,6 @@ class EGRClient(BaseClient):
         Returns:
             Complete list of companies for the period
         """
-        from datetime import datetime, timedelta
-        
         result = await self.get_base_info_by_period_raw(start_date, end_date)
         
         if not result or len(result) < 2500 or not auto_split:
@@ -271,8 +271,6 @@ class EGRClient(BaseClient):
 
     async def get_full_company_history(self, unp: int) -> Optional[Dict[str, Any]]:
         """Get full company history with all data"""
-        import asyncio
-        
         base_info = await self.get_base_info(unp)
         if not base_info:
             return None
