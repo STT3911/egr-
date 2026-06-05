@@ -87,8 +87,8 @@ _beat_schedule = {
         "task": "app.tasks.sync_tasks.process_search_index_queue",
         "schedule": timedelta(seconds=settings.ELASTICSEARCH_QUEUE_SCHEDULE_SECONDS),
         "args": (settings.ELASTICSEARCH_QUEUE_BATCH_SIZE,),
-        # expires = интервал расписания: не имеет смысла обрабатывать устаревшие копии
-        "options": {"expires": settings.ELASTICSEARCH_QUEUE_SCHEDULE_SECONDS},
+        # expires = 80% интервала: старые копии отбрасываются, но есть слак под нагрузку
+        "options": {"expires": int(settings.ELASTICSEARCH_QUEUE_SCHEDULE_SECONDS * 0.8)},
     },
 }
 
@@ -98,13 +98,13 @@ if settings.GRP_SCHEDULE_ENABLED:
         "task": "app.tasks.sync_tasks.grp_fetch_raw",
         "schedule": timedelta(seconds=settings.GRP_FETCH_SCHEDULE_SECONDS),
         "args": (settings.GRP_FETCH_LIMIT, settings.GRP_FETCH_BATCH_SIZE),
-        "options": {"expires": settings.GRP_FETCH_SCHEDULE_SECONDS},
+        "options": {"expires": int(settings.GRP_FETCH_SCHEDULE_SECONDS * 0.8)},
     }
     _beat_schedule["grp-process-raw"] = {
         "task": "app.tasks.sync_tasks.grp_process_raw",
         "schedule": timedelta(seconds=settings.GRP_PROCESS_SCHEDULE_SECONDS),
         "args": (settings.GRP_PROCESS_LIMIT,),
-        "options": {"expires": settings.GRP_PROCESS_SCHEDULE_SECONDS},
+        "options": {"expires": int(settings.GRP_PROCESS_SCHEDULE_SECONDS * 0.8)},
     }
 
 if settings.PVT_SCHEDULE_ENABLED:

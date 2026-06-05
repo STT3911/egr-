@@ -94,12 +94,14 @@ def _needs_enrichment(raw_data: dict) -> bool:
         if "ngrn" in raw_data or "NGRN" in raw_data or "nsi00211" in raw_data:
             return True
         return False
-    # KEY is absent → ключ вообще не присутствует, данные не запрашивались → нужно обогащение.
-    # KEY present but empty list/None → API вернул пустой ответ (204/[]) → данных нет, но запрос был.
-    # Не нужно повторно обогащать компании, у которых EGR просто не даёт addresses/ved/names.
+    # Семантика хранения:
+    #   key absent    → никогда не запрашивали → нужно обогащение
+    #   key = None    → старые данные / API вернул null → нужно обогащение
+    #   key = []      → API подтвердил: у компании нет данных → повторно не запрашиваем
+    #   key = [...]   → данные есть → не нужно обогащение
     for key in ("addresses", "names", "ved"):
-        if key not in raw_data:
-            return True  # ключ отсутствует — ещё не запрашивали
+        if raw_data.get(key) is None:   # отсутствует (get → None) или явно None
+            return True
     return False
 
 
@@ -1310,9 +1312,7 @@ def sync_daily_changes():
                 logger.info(f"Found {len(unps)} companies for {d_str} (fetch raw)")
                 fetched = 0
                 for unp in sorted(unps):
-                    result = egr_fetch_raw_one.apply(args=(unp,))
-                    if result.failed():
-                        raise RuntimeError(f"Failed to fetch EGR raw card for UNP {unp}: {result.result}")
+                    egr_fetch_raw_one.delay(unp)
                     fetched += 1
 
                 update_last_sync_date(db, process_date)

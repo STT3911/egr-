@@ -3,6 +3,15 @@ import hashlib
 import json
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+
+def _data_hash(data: dict | None) -> bytes | None:
+    """MD5 fingerprint for change detection (not for security)."""
+    if not data:
+        return None
+    return hashlib.md5(
+        json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    ).digest()
 from app.services.egr_client import EGRClient, MobileEGRClient
 from app.services.mapper_service import CompanyMapper
 from app.crud.company import CompanyCRUD
@@ -68,18 +77,16 @@ class AggregatorService:
             now = datetime.now()
             raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
             if raw_entry:
-                def _h(d):
-                    return hashlib.md5(json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).digest() if d else None
-                data_changed = _h(raw_entry.data) != _h(raw_data)
+                data_changed = _data_hash(raw_entry.data) != _data_hash(raw_data)
                 if data_changed or raw_entry.processed_at is None:
                     raw_entry.data = raw_data
                     raw_entry.base_info = raw_data.get("base_info")
                     raw_entry.base_info_fetched_at = now
-                    raw_entry.addresses = raw_data.get("addresses")
+                    raw_entry.addresses = raw_data.get("addresses") or []
                     raw_entry.addresses_fetched_at = now
-                    raw_entry.ved = raw_data.get("ved")
+                    raw_entry.ved = raw_data.get("ved") or []
                     raw_entry.ved_fetched_at = now
-                    raw_entry.names = raw_data.get("names")
+                    raw_entry.names = raw_data.get("names") or []
                     raw_entry.names_fetched_at = now
                     raw_entry.updated_at = now
                     raw_entry.processed_at = None
@@ -91,11 +98,11 @@ class AggregatorService:
                     data=raw_data,
                     base_info=raw_data.get("base_info"),
                     base_info_fetched_at=now,
-                    addresses=raw_data.get("addresses"),
+                    addresses=raw_data.get("addresses") or [],
                     addresses_fetched_at=now,
-                    ved=raw_data.get("ved"),
+                    ved=raw_data.get("ved") or [],
                     ved_fetched_at=now,
-                    names=raw_data.get("names"),
+                    names=raw_data.get("names") or [],
                     names_fetched_at=now,
                 )
                 self.db.add(raw_entry)
