@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import and_, text
+from sqlalchemy import and_, text, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.models import (
     BankrotCase,
@@ -100,9 +100,14 @@ class CompanyCRUD:
         # Надёжный upsert по UNP без гонок:
         # всегда выполняем INSERT ... ON CONFLICT (unp) DO UPDATE.
         # При обновлении не трогаем поле id, чтобы не ломать внешние ключи.
+        # set_ для DO UPDATE: все поля кроме unp/id + принудительно updated_at=now().
+        # Core INSERT ... ON CONFLICT не триггерит ORM-овский onupdate=func.now(),
+        # поэтому без явного updated_at дата обновления существующих карточек "замерзает".
+        update_set = {k: v for k, v in company_data.items() if k not in ("unp", "id")}
+        update_set["updated_at"] = func.now()
         stmt = pg_insert(Company).values(**company_data).on_conflict_do_update(
             index_elements=[Company.unp],
-            set_={k: v for k, v in company_data.items() if k not in ("unp", "id")},
+            set_=update_set,
         )
         self.db.execute(stmt)
         self.db.flush()
