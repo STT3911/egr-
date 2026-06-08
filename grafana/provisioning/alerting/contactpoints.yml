@@ -1,0 +1,17 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram-egr
+    receivers:
+      - uid: telegram_egr_1
+        type: telegram
+        settings:
+          bottoken: ${ALERT_TELEGRAM_BOT_TOKEN}
+          chatid: ${ALERT_TELEGRAM_CHAT_ID}
+          # Текст алерта (Go-шаблон Grafana). Шлём заголовок + аннотацию summary.
+          message: |
+            🔴 EGR ALERT: {{ .CommonLabels.alertname }}
+            {{ range .Alerts }}{{ .Annotations.summary }}
+            {{ end }}
+        disableResolveMessage: false

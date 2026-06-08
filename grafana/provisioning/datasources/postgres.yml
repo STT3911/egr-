@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: EGR-Postgres
+    uid: egr-postgres
+    type: postgres
+    access: proxy
+    url: db:5432
+    user: ${DB_USER}
+    database: ${DB_NAME}
+    secureJsonData:
+      password: ${DB_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    isDefault: true
+    editable: false

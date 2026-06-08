@@ -1,0 +1,88 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "ЕГР — статус источников (парсинг)",
+  "uid": "egr-sources",
+  "version": 1,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "ЕГР: карточек компаний",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT count(*) AS value FROM egr_companies" } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "ЕГР: raw в очереди (не обработано)",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5000 }, { "color": "red", "value": 50000 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT count(*) AS value FROM egr_raw_company_data WHERE processed_at IS NULL" } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "ЕГР: отставание ежедневной синхронизации (дней)",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "d", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "red", "value": 4 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT (current_date - value::date) AS value FROM egr_system_state WHERE key = 'egr_last_sync_date'" } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "ЕГР: raw с ошибками забора",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 10000 }, { "color": "red", "value": 50000 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT count(*) AS value FROM egr_raw_company_data WHERE last_error IS NOT NULL" } ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Источники данных — объём и свежесть (age_hours: зелёный <24ч, жёлтый <48ч, красный >48ч)",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 6 },
+      "options": { "showHeader": true, "sortBy": [ { "displayName": "age_hours", "desc": true } ] },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "age_hours" },
+            "properties": [
+              { "id": "unit", "value": "h" },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 24 }, { "color": "red", "value": 48 } ] } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "records" },
+            "properties": [ { "id": "custom.align", "value": "right" } ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "datasource": { "type": "postgres", "uid": "egr-postgres" },
+          "rawSql": "SELECT source, records, last_update, round(EXTRACT(EPOCH FROM (now() - last_update))/3600, 1) AS age_hours FROM ( SELECT 'ЕГР: карточки компаний' AS source, count(*)::bigint AS records, max(updated_at) AS last_update FROM egr_companies UNION ALL SELECT 'ЕГР: raw (не обработано)', count(*) FILTER (WHERE processed_at IS NULL)::bigint, max(updated_at) FROM egr_raw_company_data UNION ALL SELECT 'ГРП: плательщики', count(unp)::bigint, max(fetched_at) FROM grp_taxpayer_data UNION ALL SELECT 'ЕГР Mobile: адреса', count(unp)::bigint, max(fetched_at) FROM egr_company_place_locations UNION ALL SELECT 'МАРТ: торговый реестр', count(id)::bigint, max(last_seen_at) FROM trade_registry_records UNION ALL SELECT 'Лицензии (license.gov.by)', count(id)::bigint, max(last_seen_at) FROM license_records UNION ALL SELECT 'ГИАС: аккред. заказчики', count(id)::bigint, max(last_seen_at) FROM gias_accredited_customers UNION ALL SELECT 'ГИАС: недобросов. поставщики', count(id)::bigint, max(last_seen_at) FROM locked_suppliers UNION ALL SELECT 'ПВТ: резиденты', count(id)::bigint, max(last_seen_at) FROM pvt_resident_records UNION ALL SELECT 'ЕАЭС: резиденты СЭЗ', count(id)::bigint, max(last_seen_at) FROM eaeu_sez_resident_records UNION ALL SELECT 'МНС: задолженности', count(id)::bigint, max(created_at) FROM nalog_debt_records UNION ALL SELECT 'Банкротство: дела', count(case_id)::bigint, max(updated_at) FROM bankrot_cases ) t ORDER BY age_hours DESC NULLS FIRST"
+        }
+      ]
+    }
+  ]
+}

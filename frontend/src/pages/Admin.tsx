@@ -269,6 +269,24 @@ const Admin = () => {
     }).format(date);
   };
 
+  // Свежесть данных источника: возраст max(updated_at) → метка + цвет.
+  // Зелёный <24ч, жёлтый <48ч, красный >48ч (или нет данных).
+  const freshness = (value?: string | null) => {
+    if (!value) return { hours: Infinity, label: "нет данных", cls: "bg-muted text-muted-foreground" };
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return { hours: Infinity, label: "—", cls: "bg-muted text-muted-foreground" };
+    const hours = (Date.now() - date.getTime()) / 3_600_000;
+    const label =
+      hours < 1 ? "только что" :
+      hours < 24 ? `${Math.round(hours)} ч назад` :
+      `${Math.floor(hours / 24)} дн назад`;
+    const cls =
+      hours < 24 ? "bg-green-500/15 text-green-600 dark:text-green-400" :
+      hours < 48 ? "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400" :
+      "bg-red-500/15 text-red-600 dark:text-red-400";
+    return { hours, label, cls };
+  };
+
   if (sessionLoading) {
     return (
       <div className="min-h-screen bg-background px-4 py-10">
@@ -461,7 +479,9 @@ const Admin = () => {
                     </div>
                   )}
 
-                  {dataSources.map((source) => (
+                  {[...dataSources]
+                    .sort((a, b) => freshness(b.updated_at).hours - freshness(a.updated_at).hours)
+                    .map((source) => (
                     <div key={source.key} className="border-b border-border/70 p-3 last:border-b-0">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -478,7 +498,12 @@ const Admin = () => {
                       <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                         <div>
                           <div className="font-medium text-foreground">Обновлен</div>
-                          <div>{formatDateTime(source.updated_at)}</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span>{formatDateTime(source.updated_at)}</span>
+                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${freshness(source.updated_at).cls}`}>
+                              {freshness(source.updated_at).label}
+                            </span>
+                          </div>
                         </div>
                         <div>
                           <div className="font-medium text-foreground">Срез</div>
