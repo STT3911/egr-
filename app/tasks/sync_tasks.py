@@ -576,7 +576,7 @@ def egr_process_raw(limit: int = 1000):
         processed = 0
         for item in ready:
             try:
-                service.process_raw_data(item.unp)
+                service.process_raw_data(item.unp, raw_entry=item)
                 processed += 1
             except Exception as e:
                 item.last_error = f"parse_failed:{str(e)[:500]}"

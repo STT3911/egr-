@@ -24,7 +24,10 @@ from app.database.models import (
     BeltppOwnCertificate,
 )
 from datetime import datetime
+import logging
 from app.utils.search_normalizer import normalize_company_name
+
+logger = logging.getLogger(__name__)
 
 # Ref tables used by egr_companies FK — insert placeholder if missing to avoid ForeignKeyViolation
 _REF_TABLE_NAMES = (
@@ -130,88 +133,96 @@ class CompanyCRUD:
 
             enqueue_company_for_indexing(self.db, unp)
         except Exception as search_error:
-            raise RuntimeError(f"Failed to enqueue company {unp} for search indexing: {search_error}") from search_error
+            # Сбой постановки в поисковую очередь не должен валить запись компании:
+            # карточка уже сохранена в БД, переиндексацию подхватит process_search_index_queue.
+            logger.warning(f"Failed to enqueue company {unp} for search indexing: {search_error}")
         
         self.db.commit()
         return company
 
     def _save_names_history(self, company: Company, names: List[Dict]):
         """Save names history with automatic search_name generation"""
+        # Одним запросом тянем существующие ключи (company_id, full_name_ru, valid_from),
+        # чтобы не делать SELECT на каждую запись (N+1).
+        existing_keys = {
+            (r.full_name_ru, r.valid_from)
+            for r in self.db.query(
+                CompanyNameHistory.full_name_ru, CompanyNameHistory.valid_from
+            ).filter(CompanyNameHistory.company_id == company.id).all()
+        }
         for name_data in names:
-            # Check if exists
-            existing = self.db.query(CompanyNameHistory).filter(
-                and_(
-                    CompanyNameHistory.company_id == company.id,
-                    CompanyNameHistory.full_name_ru == name_data.get("full_name_ru"),
-                    CompanyNameHistory.valid_from == name_data.get("valid_from")
-                )
-            ).first()
-            
-            if not existing:
-                # Автоматически генерируем search_name для умного поиска
-                full_name = name_data.get("full_name_ru") or name_data.get("short_name_ru") or name_data.get("full_name_by")
-                search_name = normalize_company_name(full_name) if full_name else None
-                
-                name_entry = CompanyNameHistory(
-                    company_id=company.id,
-                    search_name=search_name,  # Умный поиск
-                    **name_data
-                )
-                self.db.add(name_entry)
+            key = (name_data.get("full_name_ru"), name_data.get("valid_from"))
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)  # дедуп и внутри входящего списка
+
+            # Автоматически генерируем search_name для умного поиска
+            full_name = name_data.get("full_name_ru") or name_data.get("short_name_ru") or name_data.get("full_name_by")
+            search_name = normalize_company_name(full_name) if full_name else None
+
+            name_entry = CompanyNameHistory(
+                company_id=company.id,
+                search_name=search_name,  # Умный поиск
+                **name_data
+            )
+            self.db.add(name_entry)
 
     def _save_addresses_history(self, company: Company, addresses: List[Dict]):
         """Save addresses history"""
+        existing_keys = {
+            (r.full_address, r.valid_from)
+            for r in self.db.query(
+                CompanyAddressHistory.full_address, CompanyAddressHistory.valid_from
+            ).filter(CompanyAddressHistory.company_id == company.id).all()
+        }
         for addr_data in addresses:
-            existing = self.db.query(CompanyAddressHistory).filter(
-                and_(
-                    CompanyAddressHistory.company_id == company.id,
-                    CompanyAddressHistory.full_address == addr_data.get("full_address"),
-                    CompanyAddressHistory.valid_from == addr_data.get("valid_from")
-                )
-            ).first()
-            
-            if not existing:
-                addr_entry = CompanyAddressHistory(
-                    company_id=company.id,
-                    **addr_data
-                )
-                self.db.add(addr_entry)
+            key = (addr_data.get("full_address"), addr_data.get("valid_from"))
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            addr_entry = CompanyAddressHistory(
+                company_id=company.id,
+                **addr_data
+            )
+            self.db.add(addr_entry)
 
     def _save_ved_history(self, company: Company, ved_list: List[Dict]):
         """Save VED history"""
+        existing_keys = {
+            (r.ved_code, r.valid_from)
+            for r in self.db.query(
+                CompanyVEDHistory.ved_code, CompanyVEDHistory.valid_from
+            ).filter(CompanyVEDHistory.company_id == company.id).all()
+        }
         for ved_data in ved_list:
-            existing = self.db.query(CompanyVEDHistory).filter(
-                and_(
-                    CompanyVEDHistory.company_id == company.id,
-                    CompanyVEDHistory.ved_code == ved_data.get("ved_code"),
-                    CompanyVEDHistory.valid_from == ved_data.get("valid_from")
-                )
-            ).first()
-            
-            if not existing:
-                ved_entry = CompanyVEDHistory(
-                    company_id=company.id,
-                    **ved_data
-                )
-                self.db.add(ved_entry)
+            key = (ved_data.get("ved_code"), ved_data.get("valid_from"))
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            ved_entry = CompanyVEDHistory(
+                company_id=company.id,
+                **ved_data
+            )
+            self.db.add(ved_entry)
 
     def _save_contacts_history(self, company: Company, contacts: List[Dict]):
         """Save contacts history"""
+        existing_keys = {
+            (r.email, r.valid_from)
+            for r in self.db.query(
+                CompanyContactHistory.email, CompanyContactHistory.valid_from
+            ).filter(CompanyContactHistory.company_id == company.id).all()
+        }
         for contact_data in contacts:
-            existing = self.db.query(CompanyContactHistory).filter(
-                and_(
-                    CompanyContactHistory.company_id == company.id,
-                    CompanyContactHistory.email == contact_data.get("email"),
-                    CompanyContactHistory.valid_from == contact_data.get("valid_from")
-                )
-            ).first()
-            
-            if not existing:
-                contact_entry = CompanyContactHistory(
-                    company_id=company.id,
-                    **contact_data
-                )
-                self.db.add(contact_entry)
+            key = (contact_data.get("email"), contact_data.get("valid_from"))
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            contact_entry = CompanyContactHistory(
+                company_id=company.id,
+                **contact_data
+            )
+            self.db.add(contact_entry)
 
     def _pick_current_name(self, name_items) -> Dict[str, Optional[str]]:
         if not name_items:

@@ -115,10 +115,15 @@ class AggregatorService:
             logger.error(f"Raw save error {unp}: {e}")
             raise
 
-    def process_raw_data(self, unp: int):
-        """Parse JSON from DB into clean tables"""
+    def process_raw_data(self, unp: int, raw_entry=None):
+        """Parse JSON from DB into clean tables.
+
+        raw_entry можно передать заранее загруженным (из egr_process_raw),
+        чтобы не делать повторный SELECT по UNP.
+        """
         try:
-            raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
+            if raw_entry is None:
+                raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
             if not raw_entry:
                 logger.warning(f"No raw data found for {unp}")
                 return
@@ -136,13 +141,9 @@ class AggregatorService:
             raw_entry.last_error = None
             self.db.commit()
 
-            try:
-                from app.services.search_index import index_company_by_unp
-
-                index_company_by_unp(self.db, unp)
-            except Exception as search_error:
-                logger.warning(f"Search index update skipped for {unp}: {search_error}")
-            
+            # Индексацию НЕ делаем синхронно здесь: save_full_company_data уже поставил
+            # компанию в search_index_queue, пачкой её обработает process_search_index_queue.
+            # Это убирает обращение к ES из горячего пути обработки каждой строки.
             logger.info(f"Successfully processed {unp}")
             
         except Exception as e:
