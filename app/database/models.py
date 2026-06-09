@@ -619,6 +619,63 @@ class ApiLog(Base):
 
 
 # =====================================================
+# Подписки пользователей на события компаний
+# =====================================================
+
+class User(Base):
+    """Аккаунт подписчика (вход через сайт; telegram_id — для будущей привязки бота)."""
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    email = Column(String(255), unique=True, nullable=True, index=True)
+    password_hash = Column(String(255), nullable=True)
+    telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    subscriptions = relationship("CompanySubscription", back_populates="user", cascade="all, delete-orphan")
+
+
+class CompanySubscription(Base):
+    """Подписка пользователя на изменения конкретной компании (по UNP)."""
+    __tablename__ = "company_subscriptions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    unp = Column(BigInteger, nullable=False, index=True)
+    # Список интересующих типов событий; пустой список = все типы.
+    event_types = Column(JSONB, nullable=False, server_default="[]")
+    source = Column(String(16), nullable=False, server_default="web")  # web | api
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="subscriptions")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "unp", name="uq_company_subscriptions_user_unp"),
+    )
+
+
+class SubscriptionEvent(Base):
+    """
+    Очередь сработавших событий по подпискам.
+    Пишется при обработке данных, когда у компании произошло изменение,
+    на которое кто-то подписан. processed_at — задел под доставку/пулинг (позже).
+    """
+    __tablename__ = "subscription_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    unp = Column(BigInteger, nullable=False, index=True)
+    event_type = Column(String(64), nullable=False, index=True)
+    payload = Column(JSONB, nullable=True)
+    occurred_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    processed_at = Column(DateTime, nullable=True, index=True)
+
+
+# =====================================================
 # Reference Tables (Справочники NSI)
 # =====================================================
 

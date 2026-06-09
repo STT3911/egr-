@@ -100,6 +100,16 @@ class CompanyCRUD:
         self._ensure_ref_ids_for_company(company_data)
         self.db.flush()
         
+        # Снимок старого состояния ДО upsert — для детекции событий подписок.
+        old = (
+            self.db.query(Company.current_status_code, Company.liquidation_date)
+            .filter(Company.unp == unp)
+            .first()
+        )
+        is_new_company = old is None
+        old_status = old.current_status_code if old else None
+        old_liquidation = old.liquidation_date if old else None
+
         # Надёжный upsert по UNP без гонок:
         # всегда выполняем INSERT ... ON CONFLICT (unp) DO UPDATE.
         # При обновлении не трогаем поле id, чтобы не ломать внешние ключи.
@@ -115,18 +125,25 @@ class CompanyCRUD:
         self.db.execute(stmt)
         self.db.flush()
         company = self.get_by_unp(unp)
-        
-        # Save names history
-        self._save_names_history(company, data.get("names", []))
-        
-        # Save addresses history
-        self._save_addresses_history(company, data.get("addresses", []))
-        
-        # Save VED history
-        self._save_ved_history(company, data.get("ved", []))
-        
-        # Save contacts history
+
+        # История: методы возвращают список добавленных записей (для детекции событий).
+        added_names = self._save_names_history(company, data.get("names", []))
+        added_addresses = self._save_addresses_history(company, data.get("addresses", []))
+        added_ved = self._save_ved_history(company, data.get("ved", []))
         self._save_contacts_history(company, data.get("contacts", []))
+
+        # Эмиссия событий подписок (в ту же сессию, до commit).
+        self._emit_subscription_events(
+            unp=unp,
+            is_new_company=is_new_company,
+            old_status=old_status,
+            new_status=company_data.get("current_status_code"),
+            old_liquidation=old_liquidation,
+            new_liquidation=company_data.get("liquidation_date"),
+            added_names=added_names,
+            added_addresses=added_addresses,
+            added_ved=added_ved,
+        )
 
         try:
             from app.services.search_index import enqueue_company_for_indexing
@@ -136,9 +153,42 @@ class CompanyCRUD:
             # Сбой постановки в поисковую очередь не должен валить запись компании:
             # карточка уже сохранена в БД, переиндексацию подхватит process_search_index_queue.
             logger.warning(f"Failed to enqueue company {unp} for search indexing: {search_error}")
-        
+
         self.db.commit()
         return company
+
+    def _emit_subscription_events(self, *, unp, is_new_company, old_status, new_status,
+                                  old_liquidation, new_liquidation,
+                                  added_names, added_addresses, added_ved):
+        """Поставить в очередь subscription_events изменения, на которые кто-то подписан."""
+        try:
+            from app.services.subscription_events import (
+                emit_company_event,
+                EVENT_NEW_REGISTRATION, EVENT_STATUS_CHANGED, EVENT_LIQUIDATION,
+                EVENT_NAME_CHANGED, EVENT_ADDRESS_CHANGED, EVENT_VED_CHANGED,
+            )
+            if is_new_company:
+                # Для новой компании прочие «изменения» — это первичный налив, не события.
+                emit_company_event(self.db, unp, EVENT_NEW_REGISTRATION, None)
+                return
+            if old_status != new_status:
+                emit_company_event(self.db, unp, EVENT_STATUS_CHANGED,
+                                   {"old": old_status, "new": new_status})
+            if not old_liquidation and new_liquidation:
+                emit_company_event(self.db, unp, EVENT_LIQUIDATION,
+                                   {"liquidation_date": str(new_liquidation)})
+            if added_names:
+                emit_company_event(self.db, unp, EVENT_NAME_CHANGED,
+                                   {"names": [n.get("full_name_ru") or n.get("short_name_ru") for n in added_names]})
+            if added_addresses:
+                emit_company_event(self.db, unp, EVENT_ADDRESS_CHANGED,
+                                   {"addresses": [a.get("full_address") for a in added_addresses]})
+            if added_ved:
+                emit_company_event(self.db, unp, EVENT_VED_CHANGED,
+                                   {"ved": [v.get("ved_code") for v in added_ved]})
+        except Exception as e:
+            # Эмиссия событий не должна валить сохранение карточки.
+            logger.warning(f"subscription event emit failed for {unp}: {e}")
 
     def _save_names_history(self, company: Company, names: List[Dict]):
         """Save names history with automatic search_name generation"""
@@ -150,6 +200,7 @@ class CompanyCRUD:
                 CompanyNameHistory.full_name_ru, CompanyNameHistory.valid_from
             ).filter(CompanyNameHistory.company_id == company.id).all()
         }
+        added: List[Dict] = []
         for name_data in names:
             key = (name_data.get("full_name_ru"), name_data.get("valid_from"))
             if key in existing_keys:
@@ -166,6 +217,8 @@ class CompanyCRUD:
                 **name_data
             )
             self.db.add(name_entry)
+            added.append(name_data)
+        return added
 
     def _save_addresses_history(self, company: Company, addresses: List[Dict]):
         """Save addresses history"""
@@ -175,6 +228,7 @@ class CompanyCRUD:
                 CompanyAddressHistory.full_address, CompanyAddressHistory.valid_from
             ).filter(CompanyAddressHistory.company_id == company.id).all()
         }
+        added: List[Dict] = []
         for addr_data in addresses:
             key = (addr_data.get("full_address"), addr_data.get("valid_from"))
             if key in existing_keys:
@@ -185,6 +239,8 @@ class CompanyCRUD:
                 **addr_data
             )
             self.db.add(addr_entry)
+            added.append(addr_data)
+        return added
 
     def _save_ved_history(self, company: Company, ved_list: List[Dict]):
         """Save VED history"""
@@ -194,6 +250,7 @@ class CompanyCRUD:
                 CompanyVEDHistory.ved_code, CompanyVEDHistory.valid_from
             ).filter(CompanyVEDHistory.company_id == company.id).all()
         }
+        added: List[Dict] = []
         for ved_data in ved_list:
             key = (ved_data.get("ved_code"), ved_data.get("valid_from"))
             if key in existing_keys:
@@ -204,6 +261,8 @@ class CompanyCRUD:
                 **ved_data
             )
             self.db.add(ved_entry)
+            added.append(ved_data)
+        return added
 
     def _save_contacts_history(self, company: Company, contacts: List[Dict]):
         """Save contacts history"""
