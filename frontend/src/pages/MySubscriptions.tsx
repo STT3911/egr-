@@ -57,7 +57,7 @@ const MySubscriptions = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      <main className="container mx-auto max-w-3xl px-4 pt-32 pb-16">
+      <main className="mx-auto w-full max-w-4xl px-4 pt-32 pb-16">
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-foreground sm:text-3xl">Мои подписки</h1>
