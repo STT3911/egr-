@@ -169,23 +169,26 @@ class CompanyCRUD:
             )
             if is_new_company:
                 # Для новой компании прочие «изменения» — это первичный налив, не события.
-                emit_company_event(self.db, unp, EVENT_NEW_REGISTRATION, None)
+                emit_company_event(self.db, unp, EVENT_NEW_REGISTRATION)
                 return
             if old_status != new_status:
                 emit_company_event(self.db, unp, EVENT_STATUS_CHANGED,
-                                   {"old": old_status, "new": new_status})
+                                   old_value=old_status, new_value=new_status)
             if not old_liquidation and new_liquidation:
                 emit_company_event(self.db, unp, EVENT_LIQUIDATION,
-                                   {"liquidation_date": str(new_liquidation)})
+                                   new_value=new_liquidation)
             if added_names:
+                names = [n.get("full_name_ru") or n.get("short_name_ru") for n in added_names]
                 emit_company_event(self.db, unp, EVENT_NAME_CHANGED,
-                                   {"names": [n.get("full_name_ru") or n.get("short_name_ru") for n in added_names]})
+                                   new_value="; ".join(x for x in names if x))
             if added_addresses:
+                addrs = [a.get("full_address") for a in added_addresses]
                 emit_company_event(self.db, unp, EVENT_ADDRESS_CHANGED,
-                                   {"addresses": [a.get("full_address") for a in added_addresses]})
+                                   new_value="; ".join(x for x in addrs if x))
             if added_ved:
+                veds = [v.get("ved_code") for v in added_ved]
                 emit_company_event(self.db, unp, EVENT_VED_CHANGED,
-                                   {"ved": [v.get("ved_code") for v in added_ved]})
+                                   new_value="; ".join(x for x in veds if x))
         except Exception as e:
             # Эмиссия событий не должна валить сохранение карточки.
             logger.warning(f"subscription event emit failed for {unp}: {e}")

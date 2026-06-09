@@ -1,5 +1,5 @@
 """Database models"""
-from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, UniqueConstraint, false
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -669,10 +669,12 @@ class SubscriptionEvent(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     unp = Column(BigInteger, nullable=False, index=True)
     event_type = Column(String(64), nullable=False, index=True)
-    payload = Column(JSONB, nullable=True)
+    old_value = Column(Text, nullable=True)   # было
+    new_value = Column(Text, nullable=True)   # стало
     occurred_at = Column(DateTime, nullable=False, server_default=func.now())
     created_at = Column(DateTime, nullable=False, server_default=func.now())
-    processed_at = Column(DateTime, nullable=True, index=True)
+    # Флаг обработки для пулинга-потребителей (тг/сайт/др.)
+    processed = Column(Boolean, nullable=False, server_default=false(), index=True)
 
 
 # =====================================================

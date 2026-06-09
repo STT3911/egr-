@@ -56,11 +56,18 @@ def _subscribed_unps(db) -> frozenset:
     return _cache["unps"]
 
 
-def emit_company_event(db, unp, event_type: str, payload: dict | None = None) -> int:
+def _as_text(value) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def emit_company_event(db, unp, event_type: str, old_value=None, new_value=None) -> int:
     """
     Поставить событие в очередь для всех подписчиков этой компании,
     у кого event_type попадает в их подписку (пустой список event_types = все).
 
+    old_value / new_value — значения "было / стало" (приводятся к тексту).
     НЕ коммитит — записи добавляются в текущую сессию, коммит делает вызывающий код.
     Возвращает число созданных записей.
     """
@@ -87,7 +94,8 @@ def emit_company_event(db, unp, event_type: str, payload: dict | None = None) ->
             user_id=s.user_id,
             unp=unp_int,
             event_type=event_type,
-            payload=payload,
+            old_value=_as_text(old_value),
+            new_value=_as_text(new_value),
             occurred_at=datetime.now(),
         ))
         created += 1
