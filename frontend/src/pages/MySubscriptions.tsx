@@ -5,7 +5,7 @@ import { Loader2, Trash2, Building2 } from "lucide-react";
 
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -76,16 +76,16 @@ const MySubscriptions = () => {
 
         {subsQ.data && items.length === 0 && (
           <Card className="surface-card">
-            <CardContent className="p-6 text-center text-muted-foreground">
+            <div className="p-6 text-center text-muted-foreground">
               У вас пока нет подписок. Откройте карточку компании и нажмите «Подписаться».
-            </CardContent>
+            </div>
           </Card>
         )}
 
         <div className="space-y-3">
           {items.map((s) => (
             <Card key={s.id} className="surface-card">
-              <CardContent className="flex items-start justify-between gap-3 p-4">
+              <div className="flex items-start justify-between gap-3 p-4">
                 <div className="min-w-0">
                   <Link
                     to={`/company/${s.unp}`}
@@ -112,7 +112,7 @@ const MySubscriptions = () => {
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
-              </CardContent>
+              </div>
             </Card>
           ))}
         </div>
