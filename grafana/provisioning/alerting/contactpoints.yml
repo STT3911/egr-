@@ -7,7 +7,7 @@ contactPoints:
         type: telegram
         settings:
           bottoken: "${ALERT_TELEGRAM_BOT_TOKEN}"
-          chatid: "${ALERT_TELEGRAM_CHAT_ID}"
+          chatid: "5464642461"
           parse_mode: "HTML"
           message: |
             {{ if eq .Status "firing" }}🔴 <b>EGR · сбой парсинга</b>{{ else }}✅ <b>EGR · восстановлено</b>{{ end }}
