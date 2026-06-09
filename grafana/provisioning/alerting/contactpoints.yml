@@ -1,5 +1,4 @@
 apiVersion: 1
-
 contactPoints:
   - orgId: 1
     name: telegram-egr
@@ -8,9 +7,8 @@ contactPoints:
         type: telegram
         settings:
           bottoken: "${ALERT_TELEGRAM_BOT_TOKEN}"
-          chatid: "${ALERT_TELEGRAM_CHAT_ID}"
+          chatid: "5464642461"
           parse_mode: "HTML"
-          # Компактный шаблон: статус + название правила + буллеты по каждому источнику.
           message: |
             {{ if eq .Status "resolved" }}✅ <b>EGR · норма</b>{{ else if eq (index .CommonLabels "severity") "critical" }}🔴 <b>EGR · сбой</b>{{ else }}⚠️ <b>EGR · внимание</b>{{ end }}
             <b>{{ .CommonLabels.alertname }}</b>
