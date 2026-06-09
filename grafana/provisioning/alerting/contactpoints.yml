@@ -7,11 +7,13 @@ contactPoints:
       - uid: telegram_egr_1
         type: telegram
         settings:
-          bottoken: ${ALERT_TELEGRAM_BOT_TOKEN}
-          chatid: ${ALERT_TELEGRAM_CHAT_ID}
-          # Текст алерта (Go-шаблон Grafana). Шлём заголовок + аннотацию summary.
+          bottoken: "${ALERT_TELEGRAM_BOT_TOKEN}"
+          chatid: "${ALERT_TELEGRAM_CHAT_ID}"
+          parse_mode: "HTML"
+          # Компактный шаблон: статус + название правила + буллеты по каждому источнику.
           message: |
-            🔴 EGR ALERT: {{ .CommonLabels.alertname }}
-            {{ range .Alerts }}{{ .Annotations.summary }}
+            {{ if eq .Status "firing" }}🔴 <b>EGR · сбой парсинга</b>{{ else }}✅ <b>EGR · восстановлено</b>{{ end }}
+            <b>{{ .CommonLabels.alertname }}</b>
+            {{ range .Alerts }}• {{ .Annotations.summary }}
             {{ end }}
         disableResolveMessage: false

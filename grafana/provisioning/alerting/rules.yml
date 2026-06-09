@@ -16,7 +16,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "ЕГР daily sync отстаёт на {{ index $$values \"A\" }} дн. Проверь egr_celery_worker / egr_last_sync_date."
+          summary: "ЕГР daily sync отстаёт на {{ index $values \"A\" }} дн. Проверь egr_celery_worker / egr_last_sync_date."
         data:
           - refId: A
             relativeTimeRange:
@@ -54,7 +54,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "В очереди обработки {{ index $$values \"A\" }} необработанных raw-строк (порог 50000)."
+          summary: "В очереди обработки {{ index $values \"A\" }} необработанных raw-строк (порог 50000)."
         data:
           - refId: A
             relativeTimeRange:
@@ -93,7 +93,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Источник {{ index $$labels \"source\" }} не обновлялся {{ index $$values \"A\" }} ч."
+          summary: "Источник {{ index $labels \"source\" }} молчит {{ index $values \"A\" }} дн."
         data:
           - refId: A
             relativeTimeRange:
@@ -106,7 +106,7 @@ groups:
                 type: postgres
                 uid: egr-postgres
               format: table
-              rawSql: "SELECT source, age_hours::float8 FROM ( SELECT 'ЕГР: карточки' AS source, EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 AS age_hours FROM egr_companies UNION ALL SELECT 'ГРП: плательщики', EXTRACT(EPOCH FROM (now() - max(fetched_at)))/3600 FROM grp_taxpayer_data UNION ALL SELECT 'ЕГР Mobile: адреса', EXTRACT(EPOCH FROM (now() - max(fetched_at)))/3600 FROM egr_company_place_locations UNION ALL SELECT 'МАРТ: торговый реестр', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM trade_registry_records UNION ALL SELECT 'Лицензии', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM license_records UNION ALL SELECT 'ГИАС: аккред. заказчики', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM gias_accredited_customers UNION ALL SELECT 'ГИАС: недобросов. поставщики', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM locked_suppliers UNION ALL SELECT 'ПВТ: резиденты', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM pvt_resident_records UNION ALL SELECT 'ЕАЭС: резиденты СЭЗ', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM eaeu_sez_resident_records UNION ALL SELECT 'МНС: задолженности', EXTRACT(EPOCH FROM (now() - max(created_at)))/3600 FROM nalog_debt_records UNION ALL SELECT 'Банкротство: дела', EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 FROM bankrot_cases ) t WHERE age_hours IS NOT NULL"
+              rawSql: "SELECT source, round(age_hours/24.0)::float8 AS age_days FROM ( SELECT 'ЕГР: карточки' AS source, EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 AS age_hours FROM egr_companies UNION ALL SELECT 'ГРП: плательщики', EXTRACT(EPOCH FROM (now() - max(fetched_at)))/3600 FROM grp_taxpayer_data UNION ALL SELECT 'ЕГР Mobile: адреса', EXTRACT(EPOCH FROM (now() - max(fetched_at)))/3600 FROM egr_company_place_locations UNION ALL SELECT 'МАРТ: торговый реестр', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM trade_registry_records UNION ALL SELECT 'Лицензии', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM license_records UNION ALL SELECT 'ГИАС: аккред. заказчики', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM gias_accredited_customers UNION ALL SELECT 'ГИАС: недобросов. поставщики', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM locked_suppliers UNION ALL SELECT 'ПВТ: резиденты', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM pvt_resident_records UNION ALL SELECT 'ЕАЭС: резиденты СЭЗ', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM eaeu_sez_resident_records UNION ALL SELECT 'МНС: задолженности', EXTRACT(EPOCH FROM (now() - max(created_at)))/3600 FROM nalog_debt_records UNION ALL SELECT 'Банкротство: дела', EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 FROM bankrot_cases ) t WHERE age_hours IS NOT NULL"
           - refId: C
             datasourceUid: __expr__
             model:
@@ -119,4 +119,4 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [168]
+                    params: [7]

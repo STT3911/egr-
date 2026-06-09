@@ -79,6 +79,9 @@ def fetch_license_snapshot(
     start_page: int = 1,
     max_pages: int | None = None,
     delay: float | None = None,
+    timeout: float | None = None,
+    retries: int = 3,
+    retry_delay: float = 2.0,
     verify_tls: bool | None = None,
 ) -> dict[str, Any]:
     resolved_page_size = page_size or settings.LICENSE_PAGE_SIZE
@@ -89,7 +92,34 @@ def fetch_license_snapshot(
     total_count: int | None = None
 
     while True:
-        payload = fetch_license_page(page, resolved_page_size, verify_tls=verify_tls)
+        last_error: Exception | None = None
+        for attempt in range(max(0, retries) + 1):
+            try:
+                payload = fetch_license_page(
+                    page,
+                    resolved_page_size,
+                    timeout=timeout,
+                    verify_tls=verify_tls,
+                )
+                break
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt >= max(0, retries):
+                    raise
+                wait_seconds = max(0.0, retry_delay) * (attempt + 1)
+                logger.warning(
+                    "Failed to fetch license page %s (attempt %s/%s): %s; retrying in %.1fs",
+                    page,
+                    attempt + 1,
+                    max(0, retries) + 1,
+                    exc,
+                    wait_seconds,
+                )
+                if wait_seconds > 0:
+                    time.sleep(wait_seconds)
+        else:
+            raise RuntimeError(f"Failed to fetch license page {page}") from last_error
+
         page_items = payload.get("items") or []
         items.extend(page_items)
         page_count = int(payload.get("pageCount") or page_count or page)

@@ -19,6 +19,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-page", type=int, default=1)
     parser.add_argument("--max-pages", type=int, default=None)
     parser.add_argument("--delay", type=float, default=None)
+    parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--retry-delay", type=float, default=2.0)
     parser.add_argument("--no-verify-tls", action="store_true")
     return parser.parse_args()
 
@@ -33,6 +36,9 @@ def main() -> int:
         start_page=args.start_page,
         max_pages=args.max_pages,
         delay=args.delay,
+        timeout=args.timeout,
+        retries=args.retries,
+        retry_delay=args.retry_delay,
         verify_tls=False if args.no_verify_tls else None,
     )
     print(json.dumps(stats, ensure_ascii=False, indent=2))
