@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from app.api.v1.endpoints import admin, companies, references, grp, gias
+from app.api.v1.endpoints import admin, companies, references, grp, gias, auth, subscriptions
 from app.core.config import settings
 from app.core.logger import logger
 from app.core.error_handlers import (
@@ -89,6 +89,8 @@ app.include_router(references.router, prefix="/api/v1/references", tags=["Refere
 app.include_router(grp.router, prefix="/api/v1/grp", tags=["GRP"])
 app.include_router(gias.router, prefix="/api/v1/gias", tags=["GIAS"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
+app.include_router(subscriptions.router, prefix="/api/v1/subscriptions", tags=["Subscriptions"])
 
 # Умный поиск интегрирован в companies.router (/api/v1/companies/lookup)
 

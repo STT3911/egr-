@@ -635,6 +635,22 @@ class User(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     subscriptions = relationship("CompanySubscription", back_populates="user", cascade="all, delete-orphan")
+    api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
+
+
+class ApiKey(Base):
+    """API-ключ аккаунта для программного доступа (подписки по API)."""
+    __tablename__ = "api_keys"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    key_hash = Column(String(64), unique=True, nullable=False, index=True)  # sha256(raw_key)
+    label = Column(String(255), nullable=True)
+    revoked = Column(Boolean, nullable=False, server_default=false())
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="api_keys")
 
 
 class CompanySubscription(Base):
@@ -671,10 +687,11 @@ class SubscriptionEvent(Base):
     event_type = Column(String(64), nullable=False, index=True)
     old_value = Column(Text, nullable=True)   # было
     new_value = Column(Text, nullable=True)   # стало
-    occurred_at = Column(DateTime, nullable=False, server_default=func.now())
+    occurred_at = Column(DateTime, nullable=False, server_default=func.now())  # когда событие возникло
     created_at = Column(DateTime, nullable=False, server_default=func.now())
-    # Флаг обработки для пулинга-потребителей (тг/сайт/др.)
-    processed = Column(Boolean, nullable=False, server_default=false(), index=True)
+    # Когда обработано (доставлено). NULL = ещё не обработано;
+    # можно сбросить в NULL, чтобы обработать заново.
+    processed_at = Column(DateTime, nullable=True, index=True)
 
 
 # =====================================================
