@@ -631,6 +631,8 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)
     telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Заполнится, когда появится SMTP/верификация email (сейчас не используется).
+    email_verified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

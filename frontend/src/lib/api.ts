@@ -481,3 +481,71 @@ export const listTradeRegistryImports = async (limit = 10) => {
 export const getTradeRegistryImport = async (id: string) => {
   return adminRequest<TradeRegistryImportRun>(`/api/v1/admin/trade-registry/imports/${encodeURIComponent(id)}`);
 };
+
+// ---------------------------------------------------------------------------
+// Auth (пользователи-подписчики) + подписки на события компаний
+// ---------------------------------------------------------------------------
+export type AuthUser = {
+  id: string;
+  email: string | null;
+  telegram_id: number | null;
+};
+
+export type SubscriptionItem = {
+  id: string;
+  unp: number;
+  event_types: string[];
+  source: string;
+  created_at?: string | null;
+};
+
+// Человекочитаемые названия типов событий (совпадают с бэкендом)
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  status_changed: "Смена статуса",
+  liquidation_started: "Ликвидация / реорганизация",
+  bankruptcy: "Банкротство",
+  locked_supplier: "Недобросовестный поставщик",
+  tax_debt: "Налоговая задолженность",
+  name_changed: "Смена наименования",
+  address_changed: "Смена юр. адреса",
+  director_changed: "Смена руководителя / учредителей",
+  license_changed: "Лицензия (выдача / отзыв)",
+  ved_changed: "Изменение видов деятельности (ВЭД)",
+  registry_appearance: "Появление в реестрах (МАРТ/ПВТ/ЕАЭС)",
+  new_registration: "Новая регистрация",
+};
+
+export const registerUser = async (email: string, password: string) =>
+  adminRequest<AuthUser>("/api/v1/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+
+export const loginUser = async (email: string, password: string) =>
+  adminRequest<AuthUser>("/api/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+
+export const logoutUser = async () =>
+  adminRequest<{ ok: boolean }>("/api/v1/auth/logout", { method: "POST" });
+
+export const getCurrentUser = async () =>
+  adminRequest<AuthUser>("/api/v1/auth/me");
+
+export const listSubscriptions = async () =>
+  adminRequest<{ items: SubscriptionItem[] }>("/api/v1/subscriptions/");
+
+export const createSubscription = async (unp: number, eventTypes: string[]) =>
+  adminRequest<SubscriptionItem>("/api/v1/subscriptions/", {
+    method: "POST",
+    body: JSON.stringify({ unp, event_types: eventTypes }),
+  });
+
+export const deleteSubscription = async (id: string) =>
+  adminRequest<{ ok: boolean }>(`/api/v1/subscriptions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+export const getSubscriptionEventTypes = async () =>
+  request<{ event_types: string[] }>("/api/v1/subscriptions/event-types");

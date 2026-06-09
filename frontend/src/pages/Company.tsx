@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SubscribeButton } from "@/components/SubscribeButton";
 import { motion, useScroll, useSpring } from "framer-motion";
 import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
 import {
@@ -383,6 +384,7 @@ const Company = () => {
                   Сравнение API
                 </Button>
               </Link>
+              <SubscribeButton unp={unp} />
             </div>
           )}
         </div>
