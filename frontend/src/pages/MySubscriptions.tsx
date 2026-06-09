@@ -89,10 +89,10 @@ const MySubscriptions = () => {
                 <div className="min-w-0">
                   <Link
                     to={`/company/${s.unp}`}
-                    className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+                    className="inline-flex items-center gap-2 font-medium text-foreground hover:text-primary"
                   >
-                    <Building2 className="h-4 w-4 shrink-0" />
-                    УНП {s.unp}
+                    <Building2 className="h-4 w-4 shrink-0 text-primary" />
+                    <span>УНП {s.unp}</span>
                   </Link>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {(s.event_types.length ? s.event_types : ["__all__"]).map((t) => (
