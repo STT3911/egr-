@@ -21,10 +21,6 @@ export const Footer = () => {
                 </div>
               </Link>
 
-              <p className="max-w-xl text-sm leading-7 text-muted-foreground sm:text-base">
-                Аккуратный и быстрый интерфейс для поиска компаний, проверки карточек
-                и работы со справочниками ЕГР без перегруженного визуального шума.
-              </p>
             </div>
 
             <div className="space-y-4">
@@ -45,14 +41,6 @@ export const Footer = () => {
             </div>
 
             <div className="space-y-4">
-              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                Фокус
-              </div>
-              <div className="space-y-3 text-sm text-muted-foreground">
-                <div>Быстрый поиск по УНП и названию</div>
-                <div>Карточка компании и связанные данные</div>
-                <div>Чистый минималистичный интерфейс</div>
-              </div>
             </div>
           </div>
 
