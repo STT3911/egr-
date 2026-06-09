@@ -12,7 +12,7 @@ contactPoints:
           parse_mode: "HTML"
           # Компактный шаблон: статус + название правила + буллеты по каждому источнику.
           message: |
-            {{ if eq .Status "firing" }}🔴 <b>EGR · сбой парсинга</b>{{ else }}✅ <b>EGR · восстановлено</b>{{ end }}
+            {{ if eq .Status "resolved" }}✅ <b>EGR · норма</b>{{ else if eq (index .CommonLabels "severity") "critical" }}🔴 <b>EGR · сбой</b>{{ else }}⚠️ <b>EGR · внимание</b>{{ end }}
             <b>{{ .CommonLabels.alertname }}</b>
             {{ range .Alerts }}• {{ .Annotations.summary }}
             {{ end }}
