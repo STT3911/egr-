@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # Security - API Authentication
     API_KEY: Optional[str] = None
     PUBLIC_API_TOKEN: Optional[str] = None
+    # Отдельный токен ТОЛЬКО для замороженного внешнего эндпоинта /api/v1/stable/* .
+    # Нигде больше не используется (по требованию прод-интеграции tenders.by).
+    STABLE_API_TOKEN: Optional[str] = None
     ALLOWED_API_KEYS: str = ""  # Comma-separated list of API keys
     ALLOWED_HOSTS: str = "test.tendex.by,localhost,127.0.0.1,egr-api,egr_api"
 
