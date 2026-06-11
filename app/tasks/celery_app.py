@@ -14,6 +14,7 @@ celery_app = Celery(
         "app.tasks.park_tasks",
         "app.tasks.bankrot_tasks",
         "app.tasks.license_tasks",
+        "app.tasks.webhook_tasks",
     ],
 )
 
@@ -23,6 +24,7 @@ from app.tasks import trade_registry_tasks
 from app.tasks import park_tasks
 from app.tasks import bankrot_tasks
 from app.tasks import license_tasks
+from app.tasks import webhook_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {
@@ -83,12 +85,27 @@ _beat_schedule = {
         "args": (),
         "options": {"expires": 7 * 24 * 3600},
     },
+    # Self-healing ретрай ошибочных raw-строк каждые 30 мин (backoff + лимит попыток),
+    # чтобы хвост no_data/fetch_failed/parse_failed разгребался сам, без ручных прогонов.
+    "retry-failed-rows": {
+        "task": "app.tasks.sync_tasks.retry_failed_rows",
+        "schedule": crontab(minute="*/30"),
+        "args": (300,),
+        "options": {"expires": 25 * 60},
+    },
     "process-search-index-queue": {
         "task": "app.tasks.sync_tasks.process_search_index_queue",
         "schedule": timedelta(seconds=settings.ELASTICSEARCH_QUEUE_SCHEDULE_SECONDS),
         "args": (settings.ELASTICSEARCH_QUEUE_BATCH_SIZE,),
         # expires = 80% интервала: старые копии отбрасываются, но есть слак под нагрузку
         "options": {"expires": int(settings.ELASTICSEARCH_QUEUE_SCHEDULE_SECONDS * 0.8)},
+    },
+    # Push-доставка событий подписок на webhook клиента (каждые 60с)
+    "deliver-subscription-events": {
+        "task": "app.tasks.webhook_tasks.deliver_subscription_events",
+        "schedule": timedelta(seconds=60),
+        "args": (),
+        "options": {"expires": 55},
     },
 }
 
@@ -173,6 +190,7 @@ celery_app.conf.update(
         "app.tasks.sync_tasks.grp_fetch_raw":                 {"queue": "heavy"},
         "app.tasks.sync_tasks.grp_monthly_export":            {"queue": "heavy"},
         "app.tasks.sync_tasks.reprocess_failed_rows":         {"queue": "heavy"},
+        "app.tasks.sync_tasks.retry_failed_rows":             {"queue": "heavy"},
         "app.tasks.sync_tasks.reindex_elasticsearch":         {"queue": "heavy"},
         "app.tasks.sync_tasks.enrich_missing_raw":            {"queue": "heavy"},
         "app.tasks.bankrot_tasks.sync_bankrot_cases":         {"queue": "heavy"},

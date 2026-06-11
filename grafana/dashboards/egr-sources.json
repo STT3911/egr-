@@ -43,12 +43,12 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "ЕГР: raw с ошибками забора",
+      "title": "ЕГР: raw с реальными ошибками (без no_data)",
       "datasource": { "type": "postgres", "uid": "egr-postgres" },
       "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
-      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 10000 }, { "color": "red", "value": 50000 } ] } }, "overrides": [] },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 500 } ] } }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT count(*) AS value FROM egr_raw_company_data WHERE last_error IS NOT NULL" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT count(*) AS value FROM egr_raw_company_data WHERE last_error IS NOT NULL AND last_error NOT ILIKE '%no_data%'" } ]
     },
     {
       "id": 10,

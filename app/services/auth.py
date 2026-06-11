@@ -97,6 +97,16 @@ def hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
+def generate_webhook_secret() -> str:
+    """Секрет для подписи webhook-доставки (64 hex)."""
+    return secrets.token_hex(32)
+
+
+def sign_payload(secret: str, body: bytes) -> str:
+    """HMAC-SHA256 подпись тела webhook-запроса (заголовок X-EGR-Signature)."""
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+
 # --- Зависимость текущего пользователя -----------------------------------
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     """

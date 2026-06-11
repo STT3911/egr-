@@ -18,6 +18,7 @@ from app.services.auth import (
     create_user_session,
     generate_api_key,
     hash_api_key,
+    generate_webhook_secret,
     get_current_user,
 )
 
@@ -124,3 +125,41 @@ def revoke_api_key(key_id: str, user: User = Depends(get_current_user), db: Sess
     ak.revoked = True
     db.commit()
     return {"ok": True}
+
+
+# --- Webhook (push-доставка событий на адрес клиента) --------------------
+class WebhookIn(BaseModel):
+    url: str
+
+
+def _webhook_out(u: User) -> dict:
+    return {
+        "webhook_url": u.webhook_url,
+        "webhook_secret": u.webhook_secret,  # нужен клиенту для проверки подписи X-EGR-Signature
+        "enabled": bool(u.webhook_url),
+    }
+
+
+@router.put("/webhook")
+def set_webhook(body: WebhookIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    url = body.url.strip()
+    if not (url.startswith("https://") or url.startswith("http://")):
+        raise HTTPException(status_code=422, detail="URL должен начинаться с http:// или https://")
+    user.webhook_url = url
+    if not user.webhook_secret:
+        user.webhook_secret = generate_webhook_secret()
+    db.commit()
+    db.refresh(user)
+    return _webhook_out(user)
+
+
+@router.get("/webhook")
+def get_webhook(user: User = Depends(get_current_user)):
+    return _webhook_out(user)
+
+
+@router.delete("/webhook")
+def delete_webhook(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    user.webhook_url = None
+    db.commit()
+    return {"ok": True, "enabled": False}

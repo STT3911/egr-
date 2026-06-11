@@ -63,6 +63,9 @@ class RawCompanyData(Base):
     
     # Error text if parsing failed
     last_error = Column(Text, nullable=True)
+    # Самозалечивающийся ретрай: счётчик попыток + время следующей попытки (backoff).
+    error_attempts = Column(Integer, nullable=False, server_default="0")
+    next_retry_at = Column(DateTime, nullable=True, index=True)
 
     def get_data(self):
         """
@@ -633,6 +636,9 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     # Заполнится, когда появится SMTP/верификация email (сейчас не используется).
     email_verified_at = Column(DateTime, nullable=True)
+    # Webhook: «адрес клиента» для push-доставки событий + секрет для подписи (HMAC).
+    webhook_url = Column(Text, nullable=True)
+    webhook_secret = Column(String(64), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -694,6 +700,9 @@ class SubscriptionEvent(Base):
     # Когда обработано (доставлено). NULL = ещё не обработано;
     # можно сбросить в NULL, чтобы обработать заново.
     processed_at = Column(DateTime, nullable=True, index=True)
+    # Webhook-доставка: счётчик попыток и последняя ошибка (для ретраев/дед-леттера).
+    delivery_attempts = Column(Integer, nullable=False, server_default="0")
+    last_delivery_error = Column(Text, nullable=True)
 
 
 # =====================================================

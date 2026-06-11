@@ -204,6 +204,121 @@ def reprocess_failed_rows():
         service.close()
 
 
+@celery_app.task(time_limit=1800, soft_time_limit=1740)
+def retry_failed_rows(limit: int = 300):
+    """
+    Self-healing ретрай ошибочных raw-строк с backoff и лимитом попыток,
+    чтобы хвост ошибок (no_data/fetch_failed/parse_failed) не копился и не
+    требовал ручных прогонов.
+
+      • parse_failed, но данные на месте → только переразбор (без API);
+      • no_data / fetch_failed / enrich_failed / пустые данные → дозабор из
+        EGR API, затем разбор.
+
+    На неудаче: error_attempts++ и next_retry_at = now + backoff (2^attempts ч,
+    максимум 7 дней). После MAX_ATTEMPTS строку больше не трогаем — «мёртвый»
+    UNP (нет в ЕГР), чтобы не долбить API впустую.
+    """
+    MAX_ATTEMPTS = 8
+    BACKOFF_CAP_HOURS = 168  # 7 дней
+    now = datetime.now()
+
+    def _backoff(attempts: int):
+        return now + timedelta(hours=min(2 ** attempts, BACKOFF_CAP_HOURS))
+
+    service = AggregatorService()
+    client = EGRClient(settings.EGR_API_URL) if settings.EGR_API_URL else None
+    try:
+        rows = (
+            service.db.query(RawCompanyData)
+            .filter(
+                RawCompanyData.processed_at == None,
+                RawCompanyData.last_error != None,
+                RawCompanyData.error_attempts < MAX_ATTEMPTS,
+                or_(RawCompanyData.next_retry_at == None, RawCompanyData.next_retry_at <= now),
+            )
+            .order_by(RawCompanyData.next_retry_at.asc().nullsfirst())
+            .limit(limit)
+            .all()
+        )
+        if not rows:
+            logger.info("retry_failed_rows: nothing due")
+            return 0
+
+        need_fetch, reparse_only = [], []
+        for r in rows:
+            err = r.last_error or ""
+            if err.startswith("parse_failed") and _row_data(r) and not _needs_enrichment(_row_data(r) or {}):
+                reparse_only.append(r)
+            else:
+                need_fetch.append(r)
+
+        results = [None] * len(need_fetch)
+        if need_fetch and client:
+            async def _fetch():
+                try:
+                    return await asyncio.gather(
+                        *[client.get_full_company_history(it.unp) for it in need_fetch],
+                        return_exceptions=True,
+                    )
+                finally:
+                    await client.close()
+            results = asyncio.run(_fetch())
+        elif client:
+            try:
+                asyncio.run(client.close())
+            except Exception:
+                pass
+
+        recovered = failed = 0
+
+        # 1) Строки, которым нужен дозабор из API
+        for item, res in zip(need_fetch, results):
+            if not isinstance(res, Exception) and res:
+                item.data = res
+                item.processed_at = None
+                item.last_error = None
+                item.error_attempts = 0
+                item.next_retry_at = None
+                item.updated_at = now
+                service.db.commit()
+                try:
+                    service.process_raw_data(item.unp, raw_entry=item)
+                    recovered += 1
+                except Exception as e:
+                    item.last_error = f"parse_failed:{str(e)[:300]}"
+                    item.error_attempts = (item.error_attempts or 0) + 1
+                    item.next_retry_at = _backoff(item.error_attempts)
+                    service.db.commit()
+                    failed += 1
+            else:
+                item.error_attempts = (item.error_attempts or 0) + 1
+                item.last_error = "enrich_failed:no_data" if not res else f"enrich_failed:{str(res)[:200]}"
+                item.next_retry_at = _backoff(item.error_attempts)
+                service.db.commit()
+                failed += 1
+
+        # 2) Строки только на переразбор (без API)
+        for item in reparse_only:
+            try:
+                service.process_raw_data(item.unp, raw_entry=item)
+                recovered += 1
+            except Exception as e:
+                service.db.rollback()
+                fresh = service.db.query(RawCompanyData).filter(RawCompanyData.unp == item.unp).first()
+                if fresh:
+                    fresh.error_attempts = (fresh.error_attempts or 0) + 1
+                    fresh.last_error = f"parse_failed:{str(e)[:300]}"
+                    fresh.next_retry_at = _backoff(fresh.error_attempts)
+                    service.db.commit()
+                failed += 1
+
+        logger.info("retry_failed_rows: recovered=%s failed=%s (of %s due)", recovered, failed, len(rows))
+        return recovered
+    finally:
+        service.close()
+
+
 @celery_app.task
 def process_pending_raw(limit: int = 1000):
     """Обогащение по API (если нет names/addresses/ved) + парсинг в структурные таблицы."""
