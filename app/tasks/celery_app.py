@@ -107,6 +107,13 @@ _beat_schedule = {
         "args": (),
         "options": {"expires": 55},
     },
+    # Push-доставка событий подписок в Telegram (каждые 60с)
+    "deliver-telegram-events": {
+        "task": "app.tasks.webhook_tasks.deliver_telegram_events",
+        "schedule": timedelta(seconds=60),
+        "args": (),
+        "options": {"expires": 55},
+    },
 }
 
 # GRP в расписании только если включено (по умолчанию — ручной запуск)

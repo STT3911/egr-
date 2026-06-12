@@ -11,6 +11,7 @@ Push-доставка событий подписок на webhook клиент�
 import json
 import logging
 from datetime import datetime
+from html import escape
 
 import requests
 
@@ -24,6 +25,35 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 10
 BATCH_PER_USER = 100
 HTTP_TIMEOUT = 8
+
+_EVENT_LABELS = {
+    "status_changed": "Изменение статуса",
+    "liquidation_started": "Начата ликвидация/реорганизация",
+    "bankruptcy": "Дело о банкротстве",
+    "locked_supplier": "Реестр недобросовестных поставщиков",
+    "tax_debt": "Налоговая задолженность",
+    "name_changed": "Изменение наименования",
+    "address_changed": "Изменение адреса",
+    "director_changed": "Изменение руководителя/учредителей",
+    "license_changed": "Изменение лицензии",
+    "ved_changed": "Изменение видов деятельности",
+    "registry_appearance": "Появление в реестрах МАРТ/ПВТ/ЕАЭС",
+    "new_registration": "Новая регистрация",
+}
+
+
+def _format_event_telegram(e: SubscriptionEvent) -> str:
+    label = _EVENT_LABELS.get(e.event_type, escape(e.event_type))
+    lines = [
+        "<b>Изменение в ЕГР</b>",
+        f"УНП: <code>{e.unp}</code>",
+        f"Событие: {label}",
+    ]
+    if e.old_value:
+        lines.append(f"Было: {escape(str(e.old_value)[:300])}")
+    if e.new_value:
+        lines.append(f"Стало: {escape(str(e.new_value)[:300])}")
+    return "\n".join(lines)
 
 
 def _event_dict(e: SubscriptionEvent) -> dict:
@@ -98,6 +128,84 @@ def deliver_subscription_events():
                     e.delivery_attempts += 1
                     e.last_delivery_error = str(ex)[:300]
                 logger.warning("webhook user %s failed: %s", uid, ex)
+
+            db.commit()
+
+        return delivered
+    finally:
+        db.close()
+
+
+@celery_app.task
+def deliver_telegram_events():
+    """Доставка событий подписок в Telegram (пользователи с заданным telegram_id)."""
+    from app.core.config import settings
+
+    if not settings.TELEGRAM_BOT_TOKEN:
+        return 0
+
+    tg_url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
+    db = SessionLocal()
+    delivered = 0
+    try:
+        user_ids = [
+            r[0]
+            for r in db.query(SubscriptionEvent.user_id)
+            .join(User, User.id == SubscriptionEvent.user_id)
+            .filter(
+                SubscriptionEvent.processed_at.is_(None),
+                SubscriptionEvent.delivery_attempts < MAX_ATTEMPTS,
+                User.telegram_id.isnot(None),
+            )
+            .distinct()
+            .all()
+        ]
+
+        for uid in user_ids:
+            user = db.get(User, uid)
+            if not user or not user.telegram_id:
+                continue
+
+            events = (
+                db.query(SubscriptionEvent)
+                .filter(
+                    SubscriptionEvent.user_id == uid,
+                    SubscriptionEvent.processed_at.is_(None),
+                    SubscriptionEvent.delivery_attempts < MAX_ATTEMPTS,
+                )
+                .order_by(SubscriptionEvent.id.asc())
+                .limit(BATCH_PER_USER)
+                .all()
+            )
+            if not events:
+                continue
+
+            now = datetime.now()
+            for event in events:
+                text = _format_event_telegram(event)
+                try:
+                    resp = requests.post(
+                        tg_url,
+                        json={
+                            "chat_id": user.telegram_id,
+                            "text": text[:4096],
+                            "parse_mode": "HTML",
+                            "disable_web_page_preview": True,
+                        },
+                        timeout=HTTP_TIMEOUT,
+                    )
+                    if 200 <= resp.status_code < 300:
+                        event.processed_at = now
+                        delivered += 1
+                        logger.info("telegram: delivered event %s to user %s", event.id, uid)
+                    else:
+                        event.delivery_attempts += 1
+                        event.last_delivery_error = f"http {resp.status_code}: {resp.text[:200]}"
+                        logger.warning("telegram: user %s event %s → http %s", uid, event.id, resp.status_code)
+                except Exception as ex:
+                    event.delivery_attempts += 1
+                    event.last_delivery_error = str(ex)[:300]
+                    logger.warning("telegram: user %s event %s failed: %s", uid, event.id, ex)
 
             db.commit()
 
