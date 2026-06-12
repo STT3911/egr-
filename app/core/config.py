@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     ELASTICSEARCH_ENABLED: bool = False
     ELASTICSEARCH_URL: str = "http://elasticsearch:9200"
     ELASTICSEARCH_INDEX: str = "egr_companies"
-    ELASTICSEARCH_REQUEST_TIMEOUT_SECONDS: float = 2.0
+    # Таймаут ES-запросов. 2с было слишком жёстко — тяжёлый _search не успевал и
+    # клиент его убивал, поиск падал на медленный Postgres. 5с — страховка; сам
+    # запрос после упрощения должен укладываться в сотни мс.
+    ELASTICSEARCH_REQUEST_TIMEOUT_SECONDS: float = 5.0
     ELASTICSEARCH_REQUIRE_SYNCED: bool = True
     # Сколько непроиндексированных записей в очереди допустимо, прежде чем lookup
     # перестаёт использовать ES (мягкий гейт). Лёгкая рассинхронизация индекса для

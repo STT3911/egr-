@@ -715,45 +715,38 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
             ]
         )
 
-    should.extend(
-        [
-            # Точное совпадение фразы — выше всего (без fuzzy-шума).
-            {"match_phrase": {"all_names": {"query": query, "boost": 16}}},
-            {"match_phrase": {"search_name": {"query": normalized_query, "boost": 14}}},
-            # Префиксное (автокомплит) совпадение.
-            {"match_phrase_prefix": {"all_names": {"query": query, "boost": 8}}},
-            # Полнотекстовое с опечатками. prefix_length=1 убирает шум от AUTO+ngram.
-            {
-                "multi_match": {
-                    "query": normalized_query,
-                    "fields": _NAME_FIELDS,
-                    "type": "best_fields",
-                    "fuzziness": "AUTO",
-                    "prefix_length": 1,
-                    "max_expansions": 30,
-                }
-            },
-        ]
+    # Поля уже проиндексированы edge-ngram, поэтому обычный multi_match даёт
+    # префиксный автокомплит дёшево. Фразовые запросы (match_phrase/_prefix) по
+    # ngram-полям убраны — они дорогие и приводили к таймауту _search.
+    # best_fields с keyword-подполем full_name_ru поднимает точные совпадения.
+    should.append(
+        {
+            "multi_match": {
+                "query": normalized_query,
+                "fields": _NAME_FIELDS,
+                "type": "best_fields",
+                "fuzziness": "AUTO",
+                "prefix_length": 2,
+                "max_expansions": 10,
+            }
+        }
     )
 
     # Транслитерация лат<->кир: "minsk" -> "минск" и наоборот.
     translit = transliterate_query(query)
     if translit:
         translit_normalized = normalize_company_name(translit) or translit
-        should.extend(
-            [
-                {"match_phrase_prefix": {"all_names": {"query": translit, "boost": 7}}},
-                {
-                    "multi_match": {
-                        "query": translit_normalized,
-                        "fields": _NAME_FIELDS,
-                        "type": "best_fields",
-                        "fuzziness": "AUTO",
-                        "prefix_length": 1,
-                        "max_expansions": 30,
-                    }
-                },
-            ]
+        should.append(
+            {
+                "multi_match": {
+                    "query": translit_normalized,
+                    "fields": _NAME_FIELDS,
+                    "type": "best_fields",
+                    "fuzziness": "AUTO",
+                    "prefix_length": 2,
+                    "max_expansions": 10,
+                }
+            }
         )
 
     # function_score: действующие компании (без даты ликвидации) поднимаем над
