@@ -696,6 +696,18 @@ _NAME_FIELDS = [
 ]
 
 
+def _name_multi_match(query_text: str) -> dict[str, Any]:
+    """multi_match по name-полям. Fuzzy добавляется только если включён в настройках."""
+    clause: dict[str, Any] = {
+        "query": query_text,
+        "fields": _NAME_FIELDS,
+        "type": "best_fields",
+    }
+    if settings.ELASTICSEARCH_FUZZY_SEARCH:
+        clause.update(fuzziness="AUTO", prefix_length=2, max_expansions=10)
+    return {"multi_match": clause}
+
+
 def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None:
     # Горячий путь: переиспользуемый клиент (keep-alive), НЕ закрываем его.
     client = _get_shared_es_client()
@@ -718,36 +730,15 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
     # Поля уже проиндексированы edge-ngram, поэтому обычный multi_match даёт
     # префиксный автокомплит дёшево. Фразовые запросы (match_phrase/_prefix) по
     # ngram-полям убраны — они дорогие и приводили к таймауту _search.
-    # best_fields с keyword-подполем full_name_ru поднимает точные совпадения.
-    should.append(
-        {
-            "multi_match": {
-                "query": normalized_query,
-                "fields": _NAME_FIELDS,
-                "type": "best_fields",
-                "fuzziness": "AUTO",
-                "prefix_length": 2,
-                "max_expansions": 10,
-            }
-        }
-    )
+    # Fuzzy опционален (settings.ELASTICSEARCH_FUZZY_SEARCH): дорого и нестабильно
+    # поверх ngram, по умолчанию выключен ради скорости.
+    should.append(_name_multi_match(normalized_query))
 
     # Транслитерация лат<->кир: "minsk" -> "минск" и наоборот.
     translit = transliterate_query(query)
     if translit:
         translit_normalized = normalize_company_name(translit) or translit
-        should.append(
-            {
-                "multi_match": {
-                    "query": translit_normalized,
-                    "fields": _NAME_FIELDS,
-                    "type": "best_fields",
-                    "fuzziness": "AUTO",
-                    "prefix_length": 2,
-                    "max_expansions": 10,
-                }
-            }
-        )
+        should.append(_name_multi_match(translit_normalized))
 
     # function_score: действующие компании (без даты ликвидации) поднимаем над
     # ликвидированными, не меняя базовую релевантность лексики.
