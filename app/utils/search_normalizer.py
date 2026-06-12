@@ -127,25 +127,100 @@ def is_similar_search_term(search_term: str, normalized_name: str, threshold: fl
     return search_words.issubset(name_words)
 
 
+# --- Транслитерация латиница <-> кириллица --------------------------------
+# Используем для поиска: "minsk" должен находить "минск" и наоборот.
+# Порядок важен: многобуквенные сочетания идут раньше однобуквенных.
+
+# Латиница -> кириллица (для запросов на латинице)
+_LAT_TO_CYR = [
+    ("shch", "щ"), ("sch", "щ"),
+    ("yo", "ё"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"), ("ch", "ч"),
+    ("sh", "ш"), ("yu", "ю"), ("ya", "я"), ("ye", "е"), ("yi", "и"),
+    ("iy", "ий"), ("ij", "ий"),
+    ("a", "а"), ("b", "б"), ("v", "в"), ("g", "г"), ("d", "д"),
+    ("e", "е"), ("z", "з"), ("i", "и"), ("j", "й"), ("k", "к"),
+    ("l", "л"), ("m", "м"), ("n", "н"), ("o", "о"), ("p", "п"),
+    ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"), ("f", "ф"),
+    ("h", "х"), ("c", "ц"), ("y", "ы"), ("w", "в"), ("x", "кс"),
+    ("'", ""), ("`", ""),
+]
+
+# Кириллица -> латиница (для запросов на кириллице)
+_CYR_TO_LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    # Беларускія літары
+    "і": "i", "ў": "u",
+}
+
+_HAS_CYRILLIC = re.compile(r"[а-яёіў]")
+_HAS_LATIN = re.compile(r"[a-z]")
+
+
+def transliterate_lat_to_cyr(text: str) -> str:
+    """Грубая транслитерация латиницы в кириллицу (для поиска)."""
+    result = text.lower()
+    for lat, cyr in _LAT_TO_CYR:
+        result = result.replace(lat, cyr)
+    return result
+
+
+def transliterate_cyr_to_lat(text: str) -> str:
+    """Грубая транслитерация кириллицы в латиницу (для поиска)."""
+    return "".join(_CYR_TO_LAT.get(ch, ch) for ch in text.lower())
+
+
+def transliterate_query(query: Optional[str]) -> Optional[str]:
+    """
+    Подобрать транслитерированный вариант запроса:
+    - есть латиница (и нет кириллицы) -> переводим в кириллицу;
+    - есть кириллица -> переводим в латиницу.
+    Возвращает None, если вариант совпадает с исходным или пуст.
+    """
+    if not query:
+        return None
+    q = query.lower().strip()
+    if not q:
+        return None
+    if _HAS_LATIN.search(q) and not _HAS_CYRILLIC.search(q):
+        variant = transliterate_lat_to_cyr(q)
+    elif _HAS_CYRILLIC.search(q):
+        variant = transliterate_cyr_to_lat(q)
+    else:
+        return None
+    variant = variant.strip()
+    return variant if variant and variant != q else None
+
+
 def generate_search_variants(name: Optional[str]) -> list[str]:
     """
-    Генерирует варианты для поиска (для будущего расширения).
-    
-    Может включать:
-    - Транслитерацию (лат <-> кир)
-    - Синонимы
-    - Аббревиатуры
+    Генерирует варианты запроса для поиска:
+    - нормализованное название (без ОПФ/спецсимволов);
+    - без пробелов;
+    - транслитерированный вариант (лат<->кир) и его нормализация.
     """
-    variants = []
-    
+    variants: list[str] = []
+
+    def _add(value: Optional[str]) -> None:
+        if value:
+            v = value.strip()
+            if v and v not in variants:
+                variants.append(v)
+
     if name:
         normalized = normalize_company_name(name)
+        _add(normalized)
         if normalized:
-            variants.append(normalized)
-            
-            # Можно добавить варианты без пробелов
-            variants.append(normalized.replace(' ', ''))
-    
+            _add(normalized.replace(" ", ""))
+
+        translit = transliterate_query(name)
+        _add(translit)
+        if translit:
+            _add(normalize_company_name(translit))
+
     return variants
 
 

@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     ELASTICSEARCH_INDEX: str = "egr_companies"
     ELASTICSEARCH_REQUEST_TIMEOUT_SECONDS: float = 2.0
     ELASTICSEARCH_REQUIRE_SYNCED: bool = True
+    # Сколько непроиндексированных записей в очереди допустимо, прежде чем lookup
+    # перестаёт использовать ES (мягкий гейт). Лёгкая рассинхронизация индекса для
+    # поиска допустима — несколько pending-записей не должны ронять поиск на медленный
+    # Postgres LIKE. 0 = старое строгое поведение (любой pending → ES пропускается).
+    ELASTICSEARCH_SYNC_MAX_OUTSTANDING: int = 5000
     ELASTICSEARCH_REINDEX_BATCH_SIZE: int = 1000
     ELASTICSEARCH_QUEUE_BATCH_SIZE: int = 500
     ELASTICSEARCH_QUEUE_MAX_ATTEMPTS: int = 10

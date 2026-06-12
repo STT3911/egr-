@@ -13,11 +13,19 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.utils.search_normalizer import normalize_company_name
+from app.utils.search_normalizer import normalize_company_name, transliterate_query
 
 logger = get_logger("services.search_index")
 
 _LAST_ES_RESOLUTION_WARNING_AT = 0.0
+
+# Кэш результата DNS-резолва хоста ES (TTL), чтобы не дёргать getaddrinfo на каждый поиск.
+_RESOLUTION_TTL_SECONDS = 30.0
+_resolution_cache = {"ok": False, "ts": 0.0}
+
+# Переиспользуемый ES-клиент для горячего пути чтения (search_companies):
+# строится один раз → keep-alive, без TCP/TLS-хендшейка на каждый запрос.
+_shared_client = None
 
 try:
     from elasticsearch import Elasticsearch, helpers
@@ -122,17 +130,25 @@ def _is_elasticsearch_host_resolvable() -> bool:
     if not settings.ELASTICSEARCH_ENABLED:
         return False
 
+    # Кэшируем результат на _RESOLUTION_TTL_SECONDS, чтобы не делать getaddrinfo
+    # на каждый поисковый запрос (это заметная per-request латентность).
+    now = time.monotonic()
+    if now - _resolution_cache["ts"] < _RESOLUTION_TTL_SECONDS:
+        return _resolution_cache["ok"]
+
     parsed = urlparse(settings.ELASTICSEARCH_URL)
     hostname = parsed.hostname
     if not hostname:
+        _resolution_cache.update(ok=False, ts=now)
         return False
 
     try:
         socket.getaddrinfo(hostname, parsed.port or 9200, type=socket.SOCK_STREAM)
+        _resolution_cache.update(ok=True, ts=now)
         return True
     except OSError as exc:
+        _resolution_cache.update(ok=False, ts=now)
         global _LAST_ES_RESOLUTION_WARNING_AT
-        now = time.monotonic()
         if now - _LAST_ES_RESOLUTION_WARNING_AT >= 60:
             logger.warning(
                 "Elasticsearch host %s is not resolvable right now: %s",
@@ -144,6 +160,7 @@ def _is_elasticsearch_host_resolvable() -> bool:
 
 
 def get_es_client():
+    """Эфемерный клиент (для фоновых задач индексации; вызывающий код делает close())."""
     if (
         not settings.ELASTICSEARCH_ENABLED
         or Elasticsearch is None
@@ -154,6 +171,26 @@ def get_es_client():
         settings.ELASTICSEARCH_URL,
         request_timeout=settings.ELASTICSEARCH_REQUEST_TIMEOUT_SECONDS,
     )
+
+
+def _get_shared_es_client():
+    """
+    Долгоживущий клиент для горячего пути поиска. Переиспользуется между запросами
+    (keep-alive). НЕ закрывать после использования. Тред-безопасен.
+    """
+    global _shared_client
+    if (
+        not settings.ELASTICSEARCH_ENABLED
+        or Elasticsearch is None
+        or not _is_elasticsearch_host_resolvable()
+    ):
+        return None
+    if _shared_client is None:
+        _shared_client = Elasticsearch(
+            settings.ELASTICSEARCH_URL,
+            request_timeout=settings.ELASTICSEARCH_REQUEST_TIMEOUT_SECONDS,
+        )
+    return _shared_client
 
 
 def enqueue_company_for_indexing(db: Session, unp: int, operation: str = "index") -> None:
@@ -648,8 +685,20 @@ def process_search_index_queue(db: Session, limit: int | None = None) -> dict[st
         client.close()
 
 
+_NAME_FIELDS = [
+    "search_name^8",
+    "full_name_ru^6",
+    "short_name_ru^5",
+    "full_name_by^4",
+    "all_names^3",
+    "historical_names^2",
+    "historical_search_names^2",
+]
+
+
 def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None:
-    client = get_es_client()
+    # Горячий путь: переиспользуемый клиент (keep-alive), НЕ закрываем его.
+    client = _get_shared_es_client()
     if client is None:
         return None
 
@@ -668,30 +717,63 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
 
     should.extend(
         [
+            # Точное совпадение фразы — выше всего (без fuzzy-шума).
+            {"match_phrase": {"all_names": {"query": query, "boost": 16}}},
+            {"match_phrase": {"search_name": {"query": normalized_query, "boost": 14}}},
+            # Префиксное (автокомплит) совпадение.
             {"match_phrase_prefix": {"all_names": {"query": query, "boost": 8}}},
+            # Полнотекстовое с опечатками. prefix_length=1 убирает шум от AUTO+ngram.
             {
                 "multi_match": {
                     "query": normalized_query,
-                    "fields": [
-                        "search_name^8",
-                        "full_name_ru^6",
-                        "short_name_ru^5",
-                        "full_name_by^4",
-                        "all_names^3",
-                        "historical_names^2",
-                        "historical_search_names^2",
-                    ],
+                    "fields": _NAME_FIELDS,
                     "type": "best_fields",
                     "fuzziness": "AUTO",
+                    "prefix_length": 1,
+                    "max_expansions": 30,
                 }
             },
         ]
     )
 
+    # Транслитерация лат<->кир: "minsk" -> "минск" и наоборот.
+    translit = transliterate_query(query)
+    if translit:
+        translit_normalized = normalize_company_name(translit) or translit
+        should.extend(
+            [
+                {"match_phrase_prefix": {"all_names": {"query": translit, "boost": 7}}},
+                {
+                    "multi_match": {
+                        "query": translit_normalized,
+                        "fields": _NAME_FIELDS,
+                        "type": "best_fields",
+                        "fuzziness": "AUTO",
+                        "prefix_length": 1,
+                        "max_expansions": 30,
+                    }
+                },
+            ]
+        )
+
+    # function_score: действующие компании (без даты ликвидации) поднимаем над
+    # ликвидированными, не меняя базовую релевантность лексики.
+    scored_query = {
+        "function_score": {
+            "query": {"bool": {"should": should, "minimum_should_match": 1}},
+            "functions": [
+                {"filter": {"bool": {"must_not": {"exists": {"field": "liquidation_date"}}}},
+                 "weight": 1.5},
+            ],
+            "score_mode": "multiply",
+            "boost_mode": "multiply",
+        }
+    }
+
     body = {
         "size": limit,
         "track_total_hits": False,
-        "query": {"bool": {"should": should, "minimum_should_match": 1}},
+        "query": scored_query,
         "highlight": {
             "pre_tags": [""],
             "post_tags": [""],
@@ -707,8 +789,6 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
     except Exception as exc:
         logger.warning("Elasticsearch search failed: %s", exc)
         return None
-    finally:
-        client.close()
 
     results: list[dict[str, Any]] = []
     for hit in response.get("hits", {}).get("hits", []):

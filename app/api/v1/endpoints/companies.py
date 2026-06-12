@@ -14,7 +14,10 @@ from app.core.database import get_db
 from app.core.security import verify_api_key
 from app.database.models import NalogDebtRecord, RawCompanyData
 from app.tasks.sync_tasks import process_pending_raw as process_pending_raw_task
-from app.utils.search_normalizer import normalize_company_name as normalize_search_name
+from app.utils.search_normalizer import (
+    normalize_company_name as normalize_search_name,
+    transliterate_query,
+)
 from app.core.public_token import verify_public_token
 
 
@@ -242,13 +245,38 @@ def lookup_companies(
             if len(search_normalized) < 2:
                 raise HTTPException(status_code=400, detail="Слишком короткий поисковый запрос")
         
+        # Транслит-вариант (лат<->кир) для fallback; если нет — дублируем основной,
+        # чтобы доп. условие LIKE было безвредным (ничего нового не находит).
+        translit_variant = transliterate_query(query)
+        translit_normalized = (
+            normalize_search_name(translit_variant) or translit_variant
+            if translit_variant else search_normalized
+        )
+
         logger.info(f"Smart name search: '{query}' -> '{search_normalized}'")
 
         try:
-            from app.services.search_index import has_pending_index_work, search_companies
+            from app.services.search_index import (
+                get_queue_status,
+                has_pending_index_work,
+                search_companies,
+            )
 
-            if settings.ELASTICSEARCH_REQUIRE_SYNCED and has_pending_index_work(db):
-                logger.info("Elasticsearch lookup skipped: search index queue is not synced")
+            # Мягкий гейт: ES пропускаем только если очередь индексации сильно отстаёт,
+            # а не из-за нескольких pending-записей (иначе поиск всегда падает на медленный
+            # Postgres LIKE). MAX_OUTSTANDING=0 -> старое строгое поведение.
+            skip_es = False
+            if settings.ELASTICSEARCH_REQUIRE_SYNCED:
+                max_outstanding = settings.ELASTICSEARCH_SYNC_MAX_OUTSTANDING
+                if max_outstanding <= 0:
+                    skip_es = has_pending_index_work(db)
+                else:
+                    status = get_queue_status(db)
+                    outstanding = status["outstanding"] if status else 0
+                    skip_es = outstanding > max_outstanding
+
+            if skip_es:
+                logger.info("Elasticsearch lookup skipped: index queue too far behind")
                 es_rows = None
             else:
                 es_rows = search_companies(query, limit)
@@ -287,17 +315,19 @@ def lookup_companies(
                 LENGTH(COALESCE(n.search_name, n.full_name_ru, '')) as name_length
             FROM egr_company_names_history n
             JOIN egr_companies c ON c.id = n.company_id
-            WHERE n.search_name LIKE :normalized_contains
+            WHERE (n.search_name LIKE :normalized_contains
+                   OR n.search_name LIKE :translit_contains)
               AND n.valid_to IS NULL
             ORDER BY relevance_rank ASC, name_length ASC
             LIMIT :limit
         """)
-        
+
         try:
             rows = db.execute(sql, {
                 "normalized_exact": search_normalized,
                 "normalized_start": f"{search_normalized}%",
                 "normalized_contains": f"%{search_normalized}%",
+                "translit_contains": f"%{translit_normalized}%",
                 "limit": limit,
             }).mappings().all()
 
@@ -327,7 +357,8 @@ def lookup_companies(
                     WHERE hist_n.valid_to IS NOT NULL
                       AND hist_n.search_name IS NOT NULL
                       AND hist_n.search_name != ''
-                      AND hist_n.search_name LIKE :normalized_contains
+                      AND (hist_n.search_name LIKE :normalized_contains
+                           OR hist_n.search_name LIKE :translit_contains)
                     ORDER BY relevance_rank ASC, name_length ASC, hist_n.valid_to DESC NULLS LAST
                     LIMIT :limit
                 """)
@@ -338,6 +369,7 @@ def lookup_companies(
                         "normalized_exact": search_normalized,
                         "normalized_start": f"{search_normalized}%",
                         "normalized_contains": f"%{search_normalized}%",
+                        "translit_contains": f"%{translit_normalized}%",
                         "limit": remaining_limit,
                     },
                 ).mappings().all()
