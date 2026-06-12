@@ -626,6 +626,34 @@ def load_json_file_to_db(json_path: Path, session) -> int:
     if not to_insert:
         return 0
 
+    # Событие подписки tax_debt: УНП, появившиеся в этом срезе, но отсутствовавшие
+    # в предыдущем (новые должники). emit_company_event отсекает неотслеживаемых.
+    try:
+        from sqlalchemy import func as _sa_func
+        from app.services.subscription_events import emit_company_event, EVENT_TAX_DEBT
+
+        current_unps = {row["debtor_unp"] for row in to_insert}
+        prev_slice = (
+            session.query(_sa_func.max(NalogDebtRecord.slice_date))
+            .filter(NalogDebtRecord.slice_date < slice_d)
+            .scalar()
+        )
+        prev_unps: set[int] = set()
+        if prev_slice is not None:
+            prev_unps = {
+                r[0]
+                for r in session.query(NalogDebtRecord.debtor_unp)
+                .filter(NalogDebtRecord.slice_date == prev_slice)
+                .distinct()
+                .all()
+            }
+        for unp in current_unps - prev_unps:
+            emit_company_event(session, unp, EVENT_TAX_DEBT,
+                               new_value=f"задолженность на {slice_d.isoformat()}")
+    except Exception:
+        # Эмиссия событий не должна валить импорт задолженностей.
+        pass
+
     stmt = insert(NalogDebtRecord).values(to_insert)
     stmt = stmt.on_conflict_do_nothing(
         index_elements=[

@@ -183,6 +183,46 @@ def _build_row(
 # DB upsert
 # ---------------------------------------------------------------------------
 
+def _emit_bankruptcy_events(db: Session, rows: List[Dict[str, Any]]) -> None:
+    """Поставить события подписки bankruptcy: новое дело или смена статуса по UNP.
+
+    Сравниваем входящие строки с текущим состоянием bankrot_cases (case_id → status)
+    одним запросом. emit_company_event сам отсекает неотслеживаемые UNP.
+    НЕ коммитит — коммит делает _upsert_cases ниже.
+    """
+    try:
+        from app.services.subscription_events import emit_company_event, EVENT_BANKRUPTCY
+
+        case_ids = [r["case_id"] for r in rows if r.get("case_id") is not None]
+        if not case_ids:
+            return
+        existing = {
+            cid: status
+            for cid, status in db.query(BankrotCase.case_id, BankrotCase.status)
+            .filter(BankrotCase.case_id.in_(case_ids))
+            .all()
+        }
+        for r in rows:
+            unp = r.get("debtor_unp")
+            if unp is None:
+                continue
+            case_id = r.get("case_id")
+            new_status = r.get("status")
+            if case_id not in existing:
+                emit_company_event(
+                    db, unp, EVENT_BANKRUPTCY,
+                    new_value=f"дело {r.get('number')}, статус {new_status}",
+                )
+            elif existing[case_id] != new_status:
+                emit_company_event(
+                    db, unp, EVENT_BANKRUPTCY,
+                    old_value=existing[case_id], new_value=new_status,
+                )
+    except Exception:
+        # Эмиссия событий не должна валить синхронизацию банкротства.
+        pass
+
+
 def _upsert_cases(db: Session, rows: List[Dict[str, Any]]) -> None:
     """Bulk INSERT … ON CONFLICT (case_id) DO UPDATE для bankrot_cases.
 
@@ -190,6 +230,9 @@ def _upsert_cases(db: Session, rows: List[Dict[str, Any]]) -> None:
     """
     if not rows:
         return
+
+    # До upsert: детект новых дел / смены статуса для подписчиков.
+    _emit_bankruptcy_events(db, rows)
 
     stmt = pg_insert(BankrotCase).values(rows)
 

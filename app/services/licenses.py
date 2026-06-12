@@ -249,6 +249,20 @@ def upsert_license_rows(db: Any, payloads: list[dict[str, Any]]) -> None:
     db.execute(stmt)
 
 
+def _emit_license_event(db: Any, payload: dict[str, Any]) -> None:
+    """Поставить событие подписки license_changed (если на УНП кто-то подписан)."""
+    holder_unp = payload.get("holder_unp")
+    if holder_unp is None:
+        return
+    try:
+        from app.services.subscription_events import emit_company_event, EVENT_LICENSE_CHANGED
+        emit_company_event(db, holder_unp, EVENT_LICENSE_CHANGED,
+                           new_value=payload.get("activity_type_name"))
+    except Exception:
+        # Эмиссия событий не должна валить импорт лицензий.
+        pass
+
+
 def import_license_rows(db: Any, rows: list[dict[str, Any]], batch_size: int | None = None) -> dict[str, int]:
     resolved_batch_size = batch_size or settings.LICENSE_SAVE_EVERY
     stats = {
@@ -303,10 +317,12 @@ def import_license_rows(db: Any, rows: list[dict[str, Any]], batch_size: int | N
         current_hash = known_hashes.get(payload["license_id"])
         if current_hash is None:
             stats["created"] += 1
+            _emit_license_event(db, payload)
         elif current_hash == payload["sync_hash"]:
             stats["unchanged"] += 1
         else:
             stats["updated"] += 1
+            _emit_license_event(db, payload)
 
         pending.append(payload)
         stats["saved"] += 1

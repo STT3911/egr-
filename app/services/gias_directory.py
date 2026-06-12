@@ -172,6 +172,7 @@ class GiasDirectoryService:
                     self._append_locked_history(supplier, "create", history_payload, raw_json)
                     stats.created += 1
                     stats.history_created += 1
+                    self._emit_locked_supplier_event(normalized)
                     continue
 
                 existing.last_seen_at = datetime.utcnow()
@@ -189,6 +190,7 @@ class GiasDirectoryService:
                 self._append_locked_history(existing, "update", history_payload, raw_json, changed_fields)
                 stats.updated += 1
                 stats.history_created += 1
+                self._emit_locked_supplier_event(normalized)
 
             run.status = "success"
             self._finish_run(run, stats)
@@ -283,6 +285,21 @@ class GiasDirectoryService:
                 raw_json=raw_json,
             )
         )
+
+    def _emit_locked_supplier_event(self, normalized: dict[str, Any]) -> None:
+        """Поставить событие подписки locked_supplier (если на УНП кто-то подписан)."""
+        provider_unp = normalized.get("provider_unp")
+        if provider_unp is None:
+            return
+        try:
+            from app.services.subscription_events import emit_company_event, EVENT_LOCKED_SUPPLIER
+            emit_company_event(
+                self.db, provider_unp, EVENT_LOCKED_SUPPLIER,
+                new_value=normalized.get("state") or normalized.get("name"),
+            )
+        except Exception:
+            # Эмиссия событий не должна валить синхронизацию реестра.
+            pass
 
     def _append_locked_history(
         self,
