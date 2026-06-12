@@ -29,26 +29,36 @@ HTTP_TIMEOUT = 8
 _EVENT_LABELS = {
     "status_changed": "Изменение статуса",
     "liquidation_started": "Начата ликвидация/реорганизация",
-    "bankruptcy": "Дело о банкротстве",
-    "locked_supplier": "Реестр недобросовестных поставщиков",
-    "tax_debt": "Налоговая задолженность",
     "name_changed": "Изменение наименования",
     "address_changed": "Изменение адреса",
     "director_changed": "Изменение руководителя/учредителей",
-    "license_changed": "Изменение лицензии",
     "ved_changed": "Изменение видов деятельности",
-    "registry_appearance": "Появление в реестрах МАРТ/ПВТ/ЕАЭС",
     "new_registration": "Новая регистрация",
+}
+
+# События ядра ЕГР (госреестр юрлиц/ИП). Для остальных источник — отдельный реестр.
+_EGR_EVENTS = set(_EVENT_LABELS)
+
+# Заголовок по источнику (реестру) для событий вне ЕГР.
+_EVENT_SOURCE_TITLE = {
+    "license_changed": "📜 Реестр лицензий (license.gov.by)",
+    "locked_supplier": "⛔ Реестр недобросовестных поставщиков (МАРТ)",
+    "bankruptcy": "⚖️ Реестр дел о банкротстве (bankrot.gov.by)",
+    "tax_debt": "💰 Налоговая задолженность (МНС)",
+    "registry_appearance": "🏛 Реестры МАРТ/ПВТ/ЕАЭС",
 }
 
 
 def _format_event_telegram(e: SubscriptionEvent) -> str:
-    label = _EVENT_LABELS.get(e.event_type, escape(e.event_type))
-    lines = [
-        "<b>Изменение в ЕГР</b>",
-        f"УНП: <code>{e.unp}</code>",
-        f"Событие: {label}",
-    ]
+    is_egr = e.event_type in _EGR_EVENTS
+    if is_egr:
+        title = "📋 Изменение в ЕГР"
+    else:
+        title = _EVENT_SOURCE_TITLE.get(e.event_type, "🔔 Изменение")
+    lines = [f"<b>{title}</b>", f"УНП: <code>{e.unp}</code>"]
+    # Для ЕГР заголовок общий — уточняем что именно изменилось.
+    if is_egr:
+        lines.append(f"Событие: {_EVENT_LABELS[e.event_type]}")
     if e.old_value:
         lines.append(f"Было: {escape(str(e.old_value)[:300])}")
     if e.new_value:
