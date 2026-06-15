@@ -193,6 +193,7 @@ def search_candidates(
     limit: int,
     min_similarity: float,
     use_trgm: bool,
+    trgm_variant_limit: int,
 ) -> list[dict[str, Any]]:
     if not query_variants:
         return []
@@ -222,7 +223,7 @@ def search_candidates(
                 f"CASE WHEN n.search_name LIKE :{prefix_key} THEN 0.94 ELSE 0.0 END",
             ]
         )
-        if use_trgm:
+        if use_trgm and idx < trgm_variant_limit and len(variant) <= 40:
             conditions.append(
                 f"""
                 n.search_name % :{key}
@@ -302,6 +303,7 @@ def resolve_line(
     auto_threshold: float,
     review_threshold: float,
     use_trgm: bool,
+    trgm_variant_limit: int,
 ) -> tuple[str, list[str], list[Candidate]]:
     variants = make_query_variants(line)
     rows = search_candidates(
@@ -310,6 +312,7 @@ def resolve_line(
         limit=max(limit * 4, 20),
         min_similarity=min_similarity,
         use_trgm=use_trgm,
+        trgm_variant_limit=trgm_variant_limit,
     )
     candidates: list[Candidate] = []
     for row in rows:
@@ -345,7 +348,14 @@ def read_input_lines(path: Path) -> list[str]:
 
 
 def write_report(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Cannot create output directory {path.parent}. "
+            "Use a writable path, for example /tmp/company_unp_matches.csv "
+            "or /app/data/company_unp_matches.csv."
+        ) from exc
     fieldnames = [
         "row_no",
         "status",
@@ -383,6 +393,7 @@ def main() -> None:
     parser.add_argument("--max-rows", type=int, default=None, help="Process only first N input rows")
     parser.add_argument("--progress-every", type=int, default=10, help="Print progress every N rows")
     parser.add_argument("--statement-timeout", type=int, default=20, help="Per-query timeout in seconds")
+    parser.add_argument("--trgm-variant-limit", type=int, default=2, help="Use pg_trgm only for first N variants")
     args = parser.parse_args()
 
     if args.limit < 1:
@@ -418,13 +429,15 @@ def main() -> None:
                     auto_threshold=args.auto_threshold,
                     review_threshold=args.review_threshold,
                     use_trgm=use_trgm,
+                    trgm_variant_limit=args.trgm_variant_limit,
                 )
             except Exception as exc:
                 db.rollback()
                 status = "not_found"
                 variants = make_query_variants(line)
                 candidates = []
-                print(f"row {row_no} skipped after query error: {exc}", flush=True)
+                error_text = str(exc).splitlines()[0]
+                print(f"row {row_no} skipped after query error: {type(exc).__name__}: {error_text}", flush=True)
             stats["total"] += 1
             stats[status] += 1
 
