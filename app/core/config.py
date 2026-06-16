@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     # GIAS Directory: ежедневная синхронизация реестров
     GIAS_SYNC_ENABLED: bool = True
 
+    # Подписки: периодический ПРЯМОЙ перезабор отслеживаемых компаний.
+    # Обходит лимит дневного фида (getEventByPeriod ~2500/день без пагинации) —
+    # гарантирует, что изменения по подписанным компаниям не теряются.
+    REFRESH_SUBSCRIBED_SCHEDULE_SECONDS: int = 21600   # каждые 6 часов
+    REFRESH_SUBSCRIBED_BATCH_SIZE: int = 30
+
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"
     

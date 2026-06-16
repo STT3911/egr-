@@ -10,7 +10,7 @@ contactPoints:
           chatid: "5464642461"
           parse_mode: "HTML"
           message: |
-            {{ if eq .Status "resolved" }}✅ <b>EGR · норма</b>{{ else if eq (index .CommonLabels "severity") "critical" }}🔴 <b>EGR · сбой</b>{{ else }}⚠️ <b>EGR · внимание</b>{{ end }}
+            {{ if eq .Status "resolved" }}✅ <b>Норма</b>{{ else if eq (index .CommonLabels "severity") "critical" }}🔴 <b>Сбой</b>{{ else }}⚠️ <b>Внимание</b>{{ end }}
             <b>{{ .CommonLabels.alertname }}</b>
             {{ range .Alerts }}• {{ .Annotations.summary }}
             {{ end }}

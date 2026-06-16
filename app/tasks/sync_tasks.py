@@ -705,6 +705,72 @@ def egr_process_raw(limit: int = 1000):
         service.close()
 
 
+@celery_app.task(time_limit=1800, soft_time_limit=1740)
+def refresh_subscribed_companies(batch_size: int | None = None):
+    """
+    Прямой перезабор всех компаний, на которые есть подписки.
+
+    Зачем: дневной фид (getEventByPeriod ~2500/день без пагинации) теряет
+    изменения в загруженные дни. Подписок мало → дёшево перезабрать их напрямую
+    из EGR API и прогнать через обычную обработку. Детекция в save_full_company_data
+    сама эмитит события подписки при изменении статуса/имени/адреса/ВЭД/ликвидации.
+    """
+    from app.database.models import CompanySubscription
+
+    if not settings.EGR_API_URL:
+        logger.warning("refresh_subscribed_companies: EGR_API_URL not set; skipped")
+        return 0
+
+    batch_size = batch_size or settings.REFRESH_SUBSCRIBED_BATCH_SIZE
+    service = AggregatorService()
+    client = EGRClient(settings.EGR_API_URL)
+    refreshed = 0
+    try:
+        unps = [r[0] for r in service.db.query(CompanySubscription.unp).distinct().all()]
+        if not unps:
+            logger.info("refresh_subscribed_companies: no subscriptions")
+            return 0
+
+        async def _run():
+            nonlocal refreshed
+            try:
+                for start in range(0, len(unps), batch_size):
+                    batch = unps[start:start + batch_size]
+                    results = await asyncio.gather(
+                        *[client.get_full_company_history(u) for u in batch],
+                        return_exceptions=True,
+                    )
+                    for u, res in zip(batch, results):
+                        if isinstance(res, Exception) or not res:
+                            continue
+                        row = service.db.query(RawCompanyData).filter(RawCompanyData.unp == u).first()
+                        if not row:
+                            row = RawCompanyData(unp=u)
+                            service.db.add(row)
+                        row.data = res
+                        row.processed_at = None
+                        row.last_error = None
+                        row.updated_at = datetime.now()
+                        service.db.commit()
+                        try:
+                            # process_raw_data → save_full_company_data → эмиссия событий подписки
+                            service.process_raw_data(u, raw_entry=row)
+                            refreshed += 1
+                        except Exception as e:
+                            service.db.rollback()
+                            logger.error("refresh_subscribed_companies UNP %s: %s", u, e)
+                    if start + batch_size < len(unps):
+                        await asyncio.sleep(0.5)
+            finally:
+                await client.close()
+
+        asyncio.run(_run())
+        logger.info("refresh_subscribed_companies: refreshed %s of %s subscribed UNPs", refreshed, len(unps))
+        return refreshed
+    finally:
+        service.close()
+
+
 @celery_app.task(time_limit=3600, soft_time_limit=3540)  # 1 ч
 def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
     """

@@ -114,6 +114,14 @@ _beat_schedule = {
         "args": (),
         "options": {"expires": 55},
     },
+    # Прямой перезабор подписанных компаний — надёжная детекция изменений по подпискам
+    # в обход лимита дневного фида (getEventByPeriod ~2500/день).
+    "refresh-subscribed-companies": {
+        "task": "app.tasks.sync_tasks.refresh_subscribed_companies",
+        "schedule": timedelta(seconds=settings.REFRESH_SUBSCRIBED_SCHEDULE_SECONDS),
+        "args": (),
+        "options": {"expires": int(settings.REFRESH_SUBSCRIBED_SCHEDULE_SECONDS * 0.8)},
+    },
 }
 
 # GRP в расписании только если включено (по умолчанию — ручной запуск)
@@ -198,6 +206,7 @@ celery_app.conf.update(
         "app.tasks.sync_tasks.grp_monthly_export":            {"queue": "heavy"},
         "app.tasks.sync_tasks.reprocess_failed_rows":         {"queue": "heavy"},
         "app.tasks.sync_tasks.retry_failed_rows":             {"queue": "heavy"},
+        "app.tasks.sync_tasks.refresh_subscribed_companies":  {"queue": "heavy"},
         "app.tasks.sync_tasks.reindex_elasticsearch":         {"queue": "heavy"},
         "app.tasks.sync_tasks.enrich_missing_raw":            {"queue": "heavy"},
         "app.tasks.bankrot_tasks.sync_bankrot_cases":         {"queue": "heavy"},
