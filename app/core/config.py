@@ -130,6 +130,11 @@ class Settings(BaseSettings):
     REFRESH_SUBSCRIBED_SCHEDULE_SECONDS: int = 21600   # каждые 6 часов
     REFRESH_SUBSCRIBED_BATCH_SIZE: int = 30
 
+    # Полнота базы: сверка по состояниям (getRegNumByState) — находит новые компании
+    # и сменившие статус по ВСЕЙ базе, минуя кап дневного фида 2500.
+    EGR_RECONCILE_SCHEDULE_SECONDS: int = 86400        # раз в сутки
+    EGR_RECONCILE_LIMIT: int = 20000                   # сколько (пере)заборов ставить за прогон
+
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"
     

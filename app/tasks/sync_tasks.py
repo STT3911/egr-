@@ -771,6 +771,76 @@ def refresh_subscribed_companies(batch_size: int | None = None):
         service.close()
 
 
+@celery_app.task(time_limit=3600, soft_time_limit=3540)
+def egr_reconcile_states(limit: int | None = None):
+    """
+    Полнота базы через перечисление по состояниям (getRegNumByState).
+
+    Закрывает дыры дневного фида (кап ~2500/день): перечисляем UNP по всем
+    13 состояниям и сравниваем с БД:
+      • UNP, которых нет у нас        → новые компании;
+      • UNP, у кого состояние ≠ нашему current_status_code → сменился статус.
+    Для найденных ставим egr_fetch_raw_one (свежий перезабор → обработка →
+    детекция событий подписок). Лимит на запуск, чтобы не залить очередь;
+    остаток догонится на следующих запусках (delta сходится).
+    """
+    if not settings.EGR_API_URL:
+        logger.warning("egr_reconcile_states: EGR_API_URL not set; skipped")
+        return {}
+
+    limit = limit or settings.EGR_RECONCILE_LIMIT
+    states = list(range(1, 14))
+    service = AggregatorService()
+    client = EGRClient(settings.EGR_API_URL)
+
+    async def _enumerate():
+        out = {}
+        try:
+            for s in states:
+                try:
+                    out[s] = await client.get_reg_nums_by_state(s)
+                except Exception as e:
+                    logger.warning("egr_reconcile_states: state %s enum failed: %s", s, e)
+                    out[s] = []
+                await asyncio.sleep(0.3)
+        finally:
+            await client.close()
+        return out
+
+    try:
+        by_state = asyncio.run(_enumerate())
+
+        targets: list[int] = []
+        seen: set[int] = set()
+        for s, unps in by_state.items():
+            if not unps:
+                continue
+            ints = [int(u) for u in unps]
+            rows = service.db.execute(text("""
+                SELECT api.unp
+                FROM unnest(CAST(:unps AS bigint[])) AS api(unp)
+                LEFT JOIN egr_raw_company_data r ON r.unp = api.unp
+                LEFT JOIN egr_companies c ON c.unp = api.unp
+                WHERE r.unp IS NULL
+                   OR c.current_status_code IS DISTINCT FROM :state
+            """), {"unps": ints, "state": s}).fetchall()
+            for (u,) in rows:
+                if u not in seen:
+                    seen.add(u)
+                    targets.append(u)
+
+        logger.info("egr_reconcile_states: %s UNP требуют (пере)забора (cap %s)", len(targets), limit)
+
+        enqueued = 0
+        for u in targets[:limit]:
+            egr_fetch_raw_one.delay(u)
+            enqueued += 1
+
+        return {"delta": len(targets), "enqueued": enqueued}
+    finally:
+        service.close()
+
+
 @celery_app.task(time_limit=3600, soft_time_limit=3540)  # 1 ч
 def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
     """
