@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 
 # Порог размера файла (байт): выше — парсим потоково через ijson, чтобы не грузить весь файл в память
-_LARGE_JSON_BYTES = 50 * 1024 * 1024  # 50 MB
+_LARGE_JSON_BYTES = 3 * 1024 * 1024  # 3 MB — почти все файлы дампа читаем стримингом (ijson), экономим память воркера
 from sqlalchemy import and_, or_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.config import settings
