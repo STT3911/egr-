@@ -199,6 +199,14 @@ async def save_settings(request: Request, db: AsyncSession = Depends(get_db)):
     await db.commit()
     logger.info(f"Settings saved successfully for {domain}")
 
+    # Самовосстановление подписки: гарантируем, что обработчик ONCRMCOMPANYUPDATE
+    # зарегистрирован, даже если Битрикс не вызвал установочный путь /bitrix/install.
+    try:
+        from app.bitrix.install import _bind_company_update_event
+        await _bind_company_update_event(domain, auth_id)
+    except Exception as e:
+        logger.error(f"Failed to ensure event subscription on save: {e}")
+
     # Загружаем списки заново для отображения успешной страницы
     presets, userfields = [], []
     try:
