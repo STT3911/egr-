@@ -3,41 +3,25 @@
 {% block title %}Установка приложения{% endblock %}
 
 {% block content %}
-<div class="flex flex-col items-center justify-center min-h-[60vh]">
-    <div class="text-center">
-        {% if error %}
-        <div class="text-6xl mb-4">❌</div>
-        <h1 class="text-2xl font-semibold text-gray-800 mb-4">Ошибка установки</h1>
-        <div class="b24-alert b24-alert--error max-w-md">
-            {{ error }}
-        </div>
-        {% else %}
-        <div class="text-6xl mb-4">✅</div>
-        <h1 class="text-2xl font-semibold text-gray-800 mb-4">Приложение установлено!</h1>
-        <div class="b24-alert b24-alert--success max-w-md">
-            Приложение успешно подключено к порталу {{ domain }}
-        </div>
-        <p class="text-gray-600 mt-4">
-            Теперь вы можете настроить параметры автозаполнения реквизитов в разделе настроек.
-        </p>
-
-        <script src="//api.bitrix24.com/api/v1/"></script>
-        <script>
-            // Инициализация JS SDK Битрикса
-            BX24.init(function(){
-                console.log("Инициализация завершена. Сообщаем Битриксу о финале установки...");
-                
-                // Это САМАЯ важная команда
-                BX24.installFinish();
-
-                // Автоматически перенаправляем в админку через 3 секунды, 
-                // чтобы пользователю не пришлось кликать заново
-                setTimeout(function() {
-                    window.location.href = "/bitrix/admin/";
-                }, 3000);
-            });
-        </script>
-        {% endif %}
-    </div>
+{% if error %}
+<h1 class="ui-page__title">Ошибка установки</h1>
+<div class="ui-alert ui-alert-danger">{{ error }}</div>
+{% else %}
+<h1 class="ui-page__title">Приложение установлено</h1>
+<div class="ui-alert ui-alert-success">Приложение успешно подключено к порталу {{ domain }}.</div>
+<div class="ui-section">
+    <p class="ui-meta">Сейчас откроются настройки автозаполнения реквизитов…</p>
 </div>
+
+<script src="//api.bitrix24.com/api/v1/"></script>
+<script>
+    BX24.init(function () {
+        // Сообщаем Битриксу о завершении установки.
+        BX24.installFinish();
+        setTimeout(function () {
+            window.location.href = "/bitrix/admin/";
+        }, 2000);
+    });
+</script>
+{% endif %}
 {% endblock %}

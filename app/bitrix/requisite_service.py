@@ -39,18 +39,21 @@ class RequisiteService:
                 logger.info(f"[Company {company_id}] No data from EGR to write")
                 return
 
-            # --- Шаг 5: УМНОЕ ОПРЕДЕЛЕНИЕ ИП И ФОРМИРОВАНИЕ ПОЛЕЙ ---
-            name_upper = (egr_info.full_name or "").upper()
-            
-            is_ip = False
-            if "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ" in name_upper or "ИП " in name_upper:
-                is_ip = True
-            # Если в УНП есть буквы — это 100% физлицо/ИП (правило налоговой РБ)
-            elif not unp.isdigit():
-                is_ip = True
-            # Подстраховка: если в названии нет маркеров юрлица
-            elif not any(org_type in name_upper for org_type in ["ООО", "ЗАО", "ОАО", "ЧУП", "ОДО", "УП ", "РУП", "ТОВАРИЩЕСТВО"]):
-                is_ip = True
+            # --- Шаг 5: ОПРЕДЕЛЕНИЕ ИП И ФОРМИРОВАНИЕ ПОЛЕЙ ---
+            # Тип плательщика отдаёт тонкий эндпоинт сервиса; локальная эвристика — фолбэк.
+            if egr_info.is_ip is not None:
+                is_ip = egr_info.is_ip
+            else:
+                name_upper = (egr_info.full_name or "").upper()
+                is_ip = (
+                    "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ" in name_upper
+                    or name_upper.startswith("ИП ")
+                    or not unp.isdigit()
+                    or not any(
+                        org_type in name_upper
+                        for org_type in ["ООО", "ЗАО", "ОАО", "ЧУП", "ОДО", "УП ", "РУП", "ТОВАРИЩЕСТВО"]
+                    )
+                )
 
             fields_to_write = {}
             
@@ -70,6 +73,9 @@ class RequisiteService:
                 fields_to_write["RQ_COMPANY_NAME"] = short_name_masked
                 fields_to_write["RQ_COMPANY_FULL_NAME"] = full_name_masked
                 fields_to_write["RQ_LEGAL_FORM"] = basis_masked
+                # Для ИП директора тоже заполняем — это ФИО самого предпринимателя.
+                if egr_info.director:
+                    fields_to_write["RQ_DIRECTOR"] = egr_info.director
             else:
                 name = egr_info.short_name or egr_info.full_name
                 fields_to_write["NAME"] = name
@@ -77,6 +83,8 @@ class RequisiteService:
                 fields_to_write["RQ_COMPANY_FULL_NAME"] = egr_info.full_name
                 if egr_info.authority:
                     fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority[:80]
+                if egr_info.director:
+                    fields_to_write["RQ_DIRECTOR"] = egr_info.director
                     
             # Добавляем ОКЭД
             if egr_info.ved_code:
@@ -90,14 +98,15 @@ class RequisiteService:
                 except ValueError:
                     pass
 
-            # Добавляем адрес (Тип 6 - Юридический)
+            # Добавляем адрес (тип «Юридический» — ID получаем через crm.enum.addresstype)
             if egr_info.full_address:
                 address_fields = {"ADDRESS_1": egr_info.full_address}
                 if egr_info.postal_code:
                     address_fields["ZIP_CODE"] = str(egr_info.postal_code)
                 if egr_info.region:
                     address_fields["REGION"] = egr_info.region
-                fields_to_write["RQ_ADDR"] = {"6": address_fields}
+                legal_address_type_id = await self.bitrix.get_address_type_id()
+                fields_to_write["RQ_ADDR"] = {str(legal_address_type_id): address_fields}
 
             # Шаг 6: Получаем старые реквизиты компании
             try:
@@ -123,7 +132,7 @@ class RequisiteService:
             if is_new:
                 needs_req_update = True
             else:
-                for key in ["NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED", "RQ_LEGAL_FORM", "RQ_OGRNIP"]:
+                for key in ["NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED", "RQ_LEGAL_FORM", "RQ_OGRNIP", "RQ_DIRECTOR"]:
                     if key in fields_to_write:
                         # Приводим к строке, чтобы None не триггерил обновление при сравнении с ""
                         old_val = str(requisite.get(key) or "").strip()
@@ -175,19 +184,18 @@ class RequisiteService:
                 # 2. Бухгалтерия (Реквизиты)
                 if needs_req_update:
                     if is_new:
-                        PRESET_ID_LEGAL = cfg.requisite_preset_id if cfg and cfg.requisite_preset_id else 1
-                        PRESET_ID_IP = 5 
-                        
-                        correct_preset_id = PRESET_ID_IP if is_ip else PRESET_ID_LEGAL
+                        # Единый Preset для ИП и организаций — для ИП отличаются только
+                        # значения полей (по маскам), а не шаблон реквизита.
+                        preset_id = cfg.requisite_preset_id if cfg and cfg.requisite_preset_id else 1
 
                         requisite_id = await self.bitrix.create_requisite(
                             entity_id=company_id,
-                            preset_id=correct_preset_id,
+                            preset_id=preset_id,
                             unp=unp,
                             fields=fields_to_write,
                         )
 
-                        logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} using preset {correct_preset_id}")
+                        logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} using preset {preset_id}")
                     else:
                         requisite_id = int(requisite["ID"])
                         await self.bitrix.update_requisite(requisite_id, unp, fields_to_write)

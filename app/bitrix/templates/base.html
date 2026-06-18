@@ -4,220 +4,206 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{% endblock %}</title>
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Vue 3 -->
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    
-    <!-- b24ui-inspired styles -->
+
+    <!--
+        Нативный вид Битрикс24 (Bitrix UI Kit: ui-ctl / ui-btn / ui-alert).
+        Стили самодостаточные, без внешних CDN — повторяют палитру и формы
+        стандартных настроек портала, чтобы приложение не выглядело чужеродным.
+    -->
     <style>
         :root {
-            --b24-primary: #4a6cf7;
-            --b24-primary-hover: #3a5cd7;
-            --b24-success: #2e7d32;
-            --b24-error: #c62828;
-            --b24-warning: #f57c00;
-            --b24-bg: #f5f6fa;
-            --b24-card: #ffffff;
-            --b24-text: #333333;
-            --b24-text-secondary: #666666;
-            --b24-border: #e0e0e0;
-            --b24-radius: 8px;
-            --b24-shadow: 0 1px 4px rgba(0,0,0,0.12);
+            --ui-bg: #eef2f4;            /* фон слайдера настроек */
+            --ui-card: #ffffff;
+            --ui-text: #333333;
+            --ui-text-secondary: #828b95;
+            --ui-border: #c6cdd3;
+            --ui-border-focus: #2fc6f6;
+            --ui-primary: #2fc6f6;       /* фирменный голубой Битрикс24 */
+            --ui-primary-hover: #00a2e8;
+            --ui-success: #9dcf00;       /* «Сохранить/Применить» — лаймовый */
+            --ui-success-hover: #8bb900;
+            --ui-danger: #f1361d;
+            --ui-radius: 6px;
         }
-        
+
+        * { box-sizing: border-box; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background-color: var(--b24-bg);
-            color: var(--b24-text);
-            line-height: 1.5;
+            font-family: 'Helvetica Neue', Helvetica, Arial, -apple-system, sans-serif;
+            font-size: 14px;
+            background-color: var(--ui-bg);
+            color: var(--ui-text);
+            line-height: 1.4;
+            margin: 0;
         }
-        
-        .b24-card {
-            background: var(--b24-card);
-            border-radius: var(--b24-radius);
-            box-shadow: var(--b24-shadow);
-            padding: 24px;
-            margin-bottom: 20px;
+
+        .ui-page {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 20px;
         }
-        
-        .b24-card__title {
-            font-size: 15px;
-            color: var(--b24-text-secondary);
-            margin-bottom: 16px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+
+        .ui-page__title {
+            font-size: 20px;
             font-weight: 600;
+            color: var(--ui-text);
+            margin: 4px 0 2px;
         }
-        
-        .b24-btn {
+
+        .ui-page__subtitle {
+            font-size: 13px;
+            color: var(--ui-text-secondary);
+            margin: 0 0 20px;
+        }
+
+        /* ---- Section (карточка настроек) ---- */
+        .ui-section {
+            background: var(--ui-card);
+            border: 1px solid #e3e7eb;
+            border-radius: var(--ui-radius);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .ui-section__heading {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--ui-text-secondary);
+            text-transform: uppercase;
+            letter-spacing: .4px;
+            margin: 0 0 14px;
+        }
+
+        .ui-field { margin-bottom: 14px; }
+        .ui-field:last-child { margin-bottom: 0; }
+
+        /* ---- Bitrix UI Kit form controls (ui-ctl) ---- */
+        .ui-ctl-label-text {
+            display: block;
+            font-size: 13px;
+            color: var(--ui-text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .ui-ctl {
+            position: relative;
+            display: block;
+            width: 100%;
+        }
+
+        .ui-ctl-element {
+            width: 100%;
+            height: 38px;
+            padding: 0 12px;
+            font-size: 14px;
+            font-family: inherit;
+            color: var(--ui-text);
+            background: #fff;
+            border: 1px solid var(--ui-border);
+            border-radius: var(--ui-radius);
+            outline: none;
+            transition: border-color .15s, box-shadow .15s;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        select.ui-ctl-element {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23828b95' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 30px;
+            cursor: pointer;
+        }
+
+        .ui-ctl-element:focus {
+            border-color: var(--ui-border-focus);
+            box-shadow: 0 0 0 2px rgba(47, 198, 246, .2);
+        }
+
+        .ui-ctl-hint {
+            font-size: 12px;
+            color: var(--ui-text-secondary);
+            margin-top: 6px;
+        }
+
+        /* ---- Bitrix UI Kit buttons (ui-btn) ---- */
+        .ui-btn {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            padding: 11px 28px;
+            height: 38px;
+            padding: 0 22px;
             font-size: 14px;
-            font-weight: 600;
+            font-weight: 500;
+            font-family: inherit;
+            color: #fff;
             border: none;
-            border-radius: 6px;
+            border-radius: var(--ui-radius);
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: background-color .15s;
             text-decoration: none;
+            white-space: nowrap;
         }
-        
-        .b24-btn--primary {
-            background: var(--b24-primary);
-            color: white;
+
+        .ui-btn-primary { background: var(--ui-primary); }
+        .ui-btn-primary:hover { background: var(--ui-primary-hover); }
+
+        .ui-btn-success { background: var(--ui-success); }
+        .ui-btn-success:hover { background: var(--ui-success-hover); }
+
+        .ui-btn-light {
+            background: #f2f4f6;
+            color: var(--ui-text);
+            border: 1px solid var(--ui-border);
         }
-        
-        .b24-btn--primary:hover {
-            background: var(--b24-primary-hover);
-        }
-        
-        .b24-btn--secondary {
-            background: #f0f0f0;
-            color: var(--b24-text);
-        }
-        
-        .b24-btn--secondary:hover {
-            background: #e0e0e0;
-        }
-        
-        .b24-select {
-            width: 100%;
-            padding: 10px 12px;
-            font-size: 14px;
-            border: 1px solid var(--b24-border);
-            border-radius: 6px;
-            background: #fafafa;
-            outline: none;
-            transition: all 0.2s;
-            margin-bottom: 16px;
-        }
-        
-        .b24-select:focus {
-            border-color: var(--b24-primary);
-            background: white;
-            box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.1);
-        }
-        
-        .b24-label {
-            display: block;
-            font-size: 14px;
-            color: var(--b24-text-secondary);
-            margin-bottom: 6px;
-            font-weight: 500;
-        }
-        
-        .b24-alert {
+        .ui-btn-light:hover { background: #e8ebee; }
+
+        /* ---- Alerts (ui-alert) ---- */
+        .ui-alert {
             padding: 12px 16px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .b24-alert--error {
-            background: #fde8e8;
-            color: var(--b24-error);
-            border-left: 4px solid var(--b24-error);
-        }
-        
-        .b24-alert--success {
-            background: #e8f5e9;
-            color: var(--b24-success);
-            border-left: 4px solid var(--b24-success);
-        }
-        
-        .b24-alert--warning {
-            background: #fff3e0;
-            color: var(--b24-warning);
-            border-left: 4px solid var(--b24-warning);
-        }
-        
-        .b24-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 24px;
-            margin: -24px -24px 24px -24px;
-            border-radius: var(--b24-radius) var(--b24-radius) 0 0;
-        }
-        
-        .b24-header__title {
-            font-size: 22px;
-            font-weight: 600;
-            margin: 0;
-        }
-        
-        .b24-header__subtitle {
-            font-size: 14px;
-            opacity: 0.9;
-            margin-top: 4px;
-        }
-        
-        .b24-info {
-            font-size: 12px;
-            color: #888;
-            margin-top: -10px;
+            border-radius: var(--ui-radius);
             margin-bottom: 16px;
+            font-size: 14px;
         }
-        
-        .b24-meta {
-            font-size: 13px;
-            color: #999;
-        }
-        
-        .b24-meta__value {
-            color: var(--b24-text);
-            font-weight: 500;
-        }
-        
-        .b24-container {
-            max-width: 680px;
-            margin: 0 auto;
-            padding: 24px;
-        }
-        
-        .b24-loading {
+        .ui-alert-success { background: #effbe0; color: #5f7e00; border: 1px solid #cfe89a; }
+        .ui-alert-danger  { background: #fdeceb; color: #c0341d; border: 1px solid #f5c3bc; }
+
+        .ui-meta { font-size: 13px; color: var(--ui-text-secondary); margin: 0; }
+        .ui-meta b { color: var(--ui-text); font-weight: 600; }
+
+        .ui-row { display: flex; align-items: flex-end; gap: 12px; }
+        .ui-row > .ui-field { flex: 1; margin-bottom: 0; }
+
+        .ui-actions { margin-top: 20px; }
+
+        .ui-spinner {
             display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 2px solid #f3f3f3;
-            border-top: 2px solid var(--b24-primary);
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,.5);
+            border-top-color: #fff;
             border-radius: 50%;
-            animation: b24-spin 1s linear infinite;
+            animation: ui-spin .8s linear infinite;
+            margin-right: 8px;
         }
-        
-        @keyframes b24-spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes ui-spin { to { transform: rotate(360deg); } }
     </style>
-    
+
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <div id="app" class="b24-container">
+    <div class="ui-page">
         {% block content %}{% endblock %}
     </div>
-    
+
     {% block extra_js %}{% endblock %}
 
     <script src="https://api.bitrix24.com/api/v1/"></script>
     <script>
-        // Инициализация при загрузке каждой страницы
         if (typeof BX24 !== 'undefined') {
-            BX24.init(function(){
-                console.log("Bitrix24 SDK initialized in base.html");
-                // Устанавливаем корректную высоту фрейма под контент
-                const height = document.body.scrollHeight + 50;
+            BX24.init(function () {
                 BX24.fitWindow();
             });
         }
     </script>
-</body>
 </body>
 </html>

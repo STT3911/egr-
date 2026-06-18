@@ -32,6 +32,7 @@ class BitrixClient:
         self.db = db
         self.domain = domain
         self.app_settings: Optional[AppSettings] = None
+        self._address_type_id: Optional[int] = None
     
     async def _load_settings(self) -> AppSettings:
         """Load app settings from database."""
@@ -223,6 +224,33 @@ class BitrixClient:
             "order": {"SORT": "ASC"}
         })
         return result if isinstance(result, list) else []
+
+    async def get_address_type_id(self) -> int:
+        """
+        ID типа «Юридический адрес» через crm.enum.addresstype.
+        Кэшируется в рамках клиента. Фолбэк — 6 (стандартный юр.адрес Битрикса).
+        """
+        if self._address_type_id is not None:
+            return self._address_type_id
+
+        fallback = 6
+        try:
+            result = await self.call("crm.enum.addresstype")
+            items = result if isinstance(result, list) else []
+            # Ищем тип, в названии которого есть «юридическ».
+            for item in items:
+                name = str(item.get("NAME", "")).lower()
+                if "юридическ" in name:
+                    self._address_type_id = int(item["ID"])
+                    return self._address_type_id
+            # Не нашли по названию — используем фолбэк, если он есть в списке.
+            ids = {int(i["ID"]) for i in items if i.get("ID") is not None}
+            self._address_type_id = fallback if (not ids or fallback in ids) else next(iter(ids))
+        except (BitrixAPIError, KeyError, ValueError, TypeError) as e:
+            logger.warning(f"Could not resolve legal address type, using fallback {fallback}: {e}")
+            self._address_type_id = fallback
+
+        return self._address_type_id
 
     async def get_company_userfields(self) -> list:
         """Получение списка полей компании."""

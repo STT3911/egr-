@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from app.api.v1.endpoints import admin, companies, references, grp, gias, auth, subscriptions, stable
+from app.api.v1.endpoints import admin, companies, references, grp, gias, auth, subscriptions, stable, bitrix
 from app.core.config import settings
 from app.core.logger import logger
 from app.core.error_handlers import (
@@ -97,6 +97,9 @@ app.include_router(stable.router, prefix="/api/v1/stable", tags=["Stable Externa
 # Умный поиск интегрирован в companies.router (/api/v1/companies/lookup)
 
 #bitrix
+
+# Тонкий эндпоинт-источник данных для приложения Битрикс24 (только поля под реквизит)
+app.include_router(bitrix.router, prefix="/api/v1/bitrix", tags=["Bitrix24 Data"])
 
 app.include_router(bitrix_admin_router, prefix="/bitrix/admin", tags=["Bitrix24 Admin"])
 app.include_router(bitrix_install_router, prefix="/bitrix", tags=["Bitrix24 Install"])
