@@ -22,51 +22,50 @@ router = APIRouter()
 # Initialize Jinja2 templates
 templates = Jinja2Templates(directory="app/bitrix/templates")
 
-# Событие, на которое подписывается приложение, и относительный путь обработчика.
-COMPANY_UPDATE_EVENT = "ONCRMCOMPANYUPDATE"
+# События, на которые подписывается приложение, и относительный путь обработчика.
+# Реквизиты заполняем и при СОЗДАНИИ компании, и при её изменении.
+COMPANY_EVENTS = ("ONCRMCOMPANYADD", "ONCRMCOMPANYUPDATE")
 WEBHOOK_HANDLER_PATH = "/bitrix/webhook/company-update"
 
 
-async def _bind_company_update_event(domain: str, access_token: str) -> None:
+async def _bind_company_events(domain: str, access_token: str) -> None:
     """
-    Подписать приложение на событие изменения компании.
+    Подписать приложение на события создания и изменения компании.
 
-    Без этого вызова Битрикс не будет дёргать наш webhook — вся событийная
-    модель приложения держится на этой подписке. Перед bind делаем unbind,
-    чтобы повторная установка не плодила дубли обработчиков.
+    Без этого Битрикс не будет дёргать наш webhook — вся событийная модель
+    держится на этих подписках. Перед bind делаем unbind, чтобы повторная
+    установка не плодила дубли обработчиков.
     """
     base = (settings.APP_URL or "").rstrip("/")
     if not base:
         logger.error(
-            "APP_URL не задан — невозможно зарегистрировать handler события %s. "
-            "Webhook не будет вызываться.", COMPANY_UPDATE_EVENT,
+            "APP_URL не задан — невозможно зарегистрировать handler событий %s. "
+            "Webhook не будет вызываться.", ", ".join(COMPANY_EVENTS),
         )
         return
 
     handler_url = f"{base}{WEBHOOK_HANDLER_PATH}"
     rest_url = f"https://{domain}/rest"
-    payload = {
-        "auth": access_token,
-        "event": COMPANY_UPDATE_EVENT,
-        "handler": handler_url,
-    }
 
     async with httpx.AsyncClient(timeout=30) as client:
-        # unbind — best-effort, ошибки игнорируем (подписки могло и не быть).
-        try:
-            await client.post(f"{rest_url}/event.unbind.json", json=payload)
-        except Exception as e:
-            logger.info("event.unbind skipped: %s", e)
+        for event in COMPANY_EVENTS:
+            payload = {"auth": access_token, "event": event, "handler": handler_url}
 
-        try:
-            resp = await client.post(f"{rest_url}/event.bind.json", json=payload)
-            data = resp.json()
-            if data.get("error"):
-                logger.error("event.bind failed: %s", data)
-            else:
-                logger.info("Subscribed to %s → %s", COMPANY_UPDATE_EVENT, handler_url)
-        except Exception as e:
-            logger.error("event.bind request error: %s", e)
+            # unbind — best-effort, ошибки игнорируем (подписки могло и не быть).
+            try:
+                await client.post(f"{rest_url}/event.unbind.json", json=payload)
+            except Exception as e:
+                logger.info("event.unbind skipped (%s): %s", event, e)
+
+            try:
+                resp = await client.post(f"{rest_url}/event.bind.json", json=payload)
+                data = resp.json()
+                if data.get("error"):
+                    logger.error("event.bind failed (%s): %s", event, data)
+                else:
+                    logger.info("Subscribed to %s → %s", event, handler_url)
+            except Exception as e:
+                logger.error("event.bind request error (%s): %s", event, e)
 
 
 @router.get("/install", response_class=HTMLResponse)
@@ -124,8 +123,8 @@ async def install_app(request: Request, db: AsyncSession = Depends(get_db)):
     app_cfg.token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
     await db.commit()
 
-    # Подписываемся на событие изменения компании (иначе webhook не вызовется).
-    await _bind_company_update_event(domain, access_token)
+    # Подписываемся на события создания и изменения компании (иначе webhook не вызовется).
+    await _bind_company_events(domain, access_token)
 
     logger.info(f"App installed for domain: {domain}")
     
