@@ -108,8 +108,8 @@ class RequisiteService:
                 fields_to_write["NAME"] = name
                 fields_to_write["RQ_COMPANY_NAME"] = egr_info.short_name or egr_info.full_name
                 fields_to_write["RQ_COMPANY_FULL_NAME"] = egr_info.full_name
-                # Юрлицо: директор действует на основании устава.
-                fields_to_write["RQ_BASE_DOC"] = "Устав"
+                # Для юрлица «Основание действия» не заполняем — основание неизвестно
+                # (заполняется только у ИП: «Свидетельство о регистрации № {УНП}»).
                 if egr_info.authority:
                     fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority[:80]
                 if egr_info.director:
