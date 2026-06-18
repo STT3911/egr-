@@ -98,7 +98,8 @@ class RequisiteService:
                 fields_to_write["NAME"] = short_name_masked
                 fields_to_write["RQ_COMPANY_NAME"] = short_name_masked
                 fields_to_write["RQ_COMPANY_FULL_NAME"] = _apply_mask(mask_full)
-                fields_to_write["RQ_LEGAL_FORM"] = _apply_mask(mask_basis)
+                # «Основание действия» в BY-схеме — поле RQ_BASE_DOC (RQ_LEGAL_FORM на форму не выводится).
+                fields_to_write["RQ_BASE_DOC"] = _apply_mask(mask_basis)
                 # Для ИП директора тоже заполняем — это ФИО самого предпринимателя.
                 if egr_info.director:
                     fields_to_write["RQ_DIRECTOR"] = egr_info.director
@@ -166,7 +167,7 @@ class RequisiteService:
             else:
                 for key in [
                     "NAME", "RQ_COMPANY_NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED",
-                    "RQ_LEGAL_FORM", "RQ_OGRNIP", "RQ_DIRECTOR", "RQ_COMPANY_REG_DATE",
+                    "RQ_LEGAL_FORM", "RQ_BASE_DOC", "RQ_OGRNIP", "RQ_DIRECTOR", "RQ_COMPANY_REG_DATE",
                 ]:
                     if key in fields_to_write:
                         # Приводим к строке, чтобы None не триггерил обновление при сравнении с ""
