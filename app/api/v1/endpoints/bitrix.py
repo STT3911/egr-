@@ -131,10 +131,21 @@ def get_requisite_data(
     if current_ved:
         okved = current_ved.get("ved_code")
 
-    # Юридический адрес: текущий из профиля, иначе адрес из ГРП.
+    # Юридический адрес. Приоритет источников совпадает с остальным сервисом
+    # (публичный API/админка используют COALESCE(place_location, addresses_history)):
+    #   1) egr_company_place_locations — самый свежий и полный источник,
+    #   2) текущая запись истории адресов ЕГР,
+    #   3) адрес из ГРП.
     address = None
+    place_addr = dossier.get("place_location_address")
     current_addr = _pick_current(dossier.get("addresses", []))
-    if current_addr and current_addr.get("full_address"):
+    if place_addr:
+        address = BitrixRequisiteAddress(
+            full_address=place_addr,
+            postal_code=current_addr.get("postal_code") if current_addr else None,
+            region=current_addr.get("region") if current_addr else None,
+        )
+    elif current_addr and current_addr.get("full_address"):
         address = BitrixRequisiteAddress(
             full_address=current_addr.get("full_address"),
             postal_code=current_addr.get("postal_code"),
