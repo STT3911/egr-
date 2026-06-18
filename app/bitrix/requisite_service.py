@@ -1,7 +1,19 @@
 import logging
+import re
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Префикс страны в начале адреса ЕГР — в реквизит Битрикса не пишем (по требованию).
+_COUNTRY_PREFIX_RE = re.compile(r"^\s*(республика\s+)?беларусь\s*,?\s*", re.IGNORECASE)
+
+
+def _strip_country_prefix(address: str | None) -> str:
+    """Убрать ведущее «Республика Беларусь,» из строки адреса."""
+    if not address:
+        return ""
+    return _COUNTRY_PREFIX_RE.sub("", address).strip()
+
 
 class RequisiteService:
     def __init__(self, bitrix_client, egr_client):
@@ -118,7 +130,7 @@ class RequisiteService:
             # Имена полей — штатные для адресов Битрикса (POSTAL_CODE, PROVINCE).
             address_fields: dict | None = None
             if egr_info.full_address:
-                address_fields = {"ADDRESS_1": egr_info.full_address}
+                address_fields = {"ADDRESS_1": _strip_country_prefix(egr_info.full_address)}
                 if egr_info.postal_code:
                     address_fields["POSTAL_CODE"] = str(egr_info.postal_code)
                 if egr_info.region:

@@ -14,6 +14,7 @@ import unittest
 
 from app.api.v1.endpoints.bitrix import _detect_is_ip, _extract_director
 from app.bitrix.bitrix_client import BitrixClient
+from app.bitrix.requisite_service import _strip_country_prefix
 
 
 class DetectIsIpTests(unittest.TestCase):
@@ -112,6 +113,26 @@ class UpsertRequisiteAddressTests(unittest.TestCase):
         self.assertTrue(ok)
         methods = [m for m, _ in calls]
         self.assertEqual(methods, ["crm.address.list", "crm.address.update"])
+
+
+class StripCountryPrefixTests(unittest.TestCase):
+    def test_strips_republic_belarus(self):
+        self.assertEqual(
+            _strip_country_prefix("Республика Беларусь, 220037, г. Минск, пер. Козлова, д. 7"),
+            "220037, г. Минск, пер. Козлова, д. 7",
+        )
+
+    def test_strips_short_belarus(self):
+        self.assertEqual(_strip_country_prefix("Беларусь, г. Минск"), "г. Минск")
+
+    def test_case_insensitive(self):
+        self.assertEqual(_strip_country_prefix("РЕСПУБЛИКА БЕЛАРУСЬ, г. Брест"), "г. Брест")
+
+    def test_no_prefix_unchanged(self):
+        self.assertEqual(_strip_country_prefix("220037, г. Минск"), "220037, г. Минск")
+
+    def test_none_returns_empty(self):
+        self.assertEqual(_strip_country_prefix(None), "")
 
 
 if __name__ == "__main__":
