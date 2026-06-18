@@ -104,11 +104,12 @@ class RequisiteService:
             if egr_info.ved_code:
                 fields_to_write["RQ_OKVED"] = egr_info.ved_code
 
-            # Добавляем Дату регистрации
+            # Дата гос. регистрации. В белорусской схеме реквизитов поле называется
+            # RQ_COMPANY_REG_DATE (тип string), а не RQ_STATE_REG_DATE (его в BY-схеме нет).
             if egr_info.registration_date:
                 try:
                     dt = datetime.strptime(egr_info.registration_date, "%Y-%m-%d")
-                    fields_to_write["RQ_STATE_REG_DATE"] = dt.strftime("%d.%m.%Y")
+                    fields_to_write["RQ_COMPANY_REG_DATE"] = dt.strftime("%d.%m.%Y")
                 except ValueError:
                     pass
 
@@ -153,7 +154,7 @@ class RequisiteService:
             else:
                 for key in [
                     "NAME", "RQ_COMPANY_NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED",
-                    "RQ_LEGAL_FORM", "RQ_OGRNIP", "RQ_DIRECTOR", "RQ_STATE_REG_DATE",
+                    "RQ_LEGAL_FORM", "RQ_OGRNIP", "RQ_DIRECTOR", "RQ_COMPANY_REG_DATE",
                 ]:
                     if key in fields_to_write:
                         # Приводим к строке, чтобы None не триггерил обновление при сравнении с ""
