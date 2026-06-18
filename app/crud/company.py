@@ -599,6 +599,7 @@ class CompanyCRUD:
 
         return {
             "unp": company.unp,
+            "entity_type_id": company.entity_type_id,
             "current_status_code": company.current_status_code,
             "current_status_name": status_name,
             "registration_date": company.registration_date.isoformat() if company.registration_date else None,

@@ -19,11 +19,17 @@ router = APIRouter()
 logger = get_logger("api.bitrix")
 
 # Маркеры организационно-правовых форм юрлица — если есть в названии, это НЕ ИП.
+# Включаем как аббревиатуры (ООО), так и развёрнутые формы («Общество с ограниченной…»),
+# потому что в ЕГР полное наименование часто хранится без аббревиатуры.
 _ORG_MARKERS = (
     "ООО", "ЗАО", "ОАО", "ПАО", "ЧУП", "ОДО", "УП ", "РУП", "РУПП",
     "ГП ", "КУП", "ТУП", "СООО", "ИООО", "ЗАСО", "ОАСО", "ТОВАРИЩЕСТВО",
     "УЧРЕЖДЕНИЕ", "КООПЕРАТИВ", "ОБЪЕДИНЕНИЕ", "ФОНД", "ПРЕДПРИЯТИЕ",
+    "ОБЩЕСТВО", "АКЦИОНЕРНОЕ", "УНИТАРНОЕ", "ОРГАНИЗАЦИЯ", "КОНЦЕРН", "ХОЛДИНГ",
 )
+
+# Код вида субъекта из ЕГР (nsi00211.nkvob): 1 — юридическое лицо.
+_ENTITY_TYPE_JURIDICAL = 1
 
 # Префиксы, которые срезаем из названия ИП, чтобы получить ФИО для поля «директор».
 _IP_PREFIXES = (
@@ -32,19 +38,38 @@ _IP_PREFIXES = (
 )
 
 
-def _detect_is_ip(full_name: str, unp: str) -> bool:
-    """Эвристика определения ИП по названию и УНП (правила РБ)."""
-    name_upper = (full_name or "").upper().strip()
-    if "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ" in name_upper:
+def _detect_is_ip(
+    full_name: str,
+    short_name: str,
+    unp: str,
+    entity_type_id: int | None = None,
+) -> bool:
+    """ИП или юрлицо.
+
+    Приоритет — достоверный вид субъекта из ЕГР (``entity_type_id``); название
+    используется только как фолбэк, когда тип в БД неизвестен. При неопределённости
+    считаем компанию ОРГАНИЗАЦИЕЙ — это безопаснее, чем налепить «ИП» на юрлицо.
+    """
+    # 1) Достоверный признак из ЕГР: 1 → юрлицо, иначе ИП/физлицо.
+    if entity_type_id is not None:
+        try:
+            return int(entity_type_id) != _ENTITY_TYPE_JURIDICAL
+        except (TypeError, ValueError):
+            pass
+
+    # 2) Фолбэк по названию — учитываем и полное, и краткое наименование.
+    text = f"{full_name or ''} {short_name or ''}".upper().strip()
+    if "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ" in text:
         return True
-    if name_upper.startswith("ИП ") or name_upper.startswith("ИП."):
+    if text.startswith("ИП ") or text.startswith("ИП."):
         return True
     # В УНП есть буквы — это физлицо/ИП (правило налоговой РБ).
     if unp and not str(unp).isdigit():
         return True
-    # Нет ни одного маркера юрлица — считаем ИП.
-    if name_upper and not any(marker in name_upper for marker in _ORG_MARKERS):
-        return True
+    # Нашли маркер юрлица — точно организация.
+    if any(marker in text for marker in _ORG_MARKERS):
+        return False
+    # 3) Не определили — считаем организацией.
     return False
 
 
@@ -118,7 +143,7 @@ def get_requisite_data(
     elif grp and grp.address:
         address = BitrixRequisiteAddress(full_address=grp.address)
 
-    is_ip = _detect_is_ip(full_name or "", unp)
+    is_ip = _detect_is_ip(full_name or "", short_name or "", unp, dossier.get("entity_type_id"))
     director = _extract_director(full_name or "", short_name or "") if is_ip else None
 
     return BitrixRequisiteData(

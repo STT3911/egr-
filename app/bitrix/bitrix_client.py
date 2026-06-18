@@ -27,7 +27,10 @@ class BitrixClient:
     Async client for Bitrix24 REST API.
     Handles OAuth token management and API calls.
     """
-    
+
+    # CCrmOwnerType::Requisite — тип сущности «Реквизит» в crm.address.*
+    REQUISITE_ENTITY_TYPE_ID = 8
+
     def __init__(self, db: AsyncSession, domain: Optional[str] = None):
         self.db = db
         self.domain = domain
@@ -196,23 +199,31 @@ class BitrixClient:
             logger.error(f"Error updating requisite {requisite_id}: {e}")
             return False
 
-    async def update_requisite_address(self, requisite_id: int, address_type_id: int, address_fields: dict) -> bool:
-        """Update requisite address directly via crm.requisite.update"""
+    async def upsert_requisite_address(self, requisite_id: int, address_type_id: int, address_fields: dict) -> bool:
+        """Создать или обновить юридический адрес реквизита через crm.address.*.
+
+        Адрес в Битриксе не имеет собственного ID — он идентифицируется тройкой
+        (TYPE_ID, ENTITY_TYPE_ID, ENTITY_ID). Поэтому сначала проверяем наличие,
+        затем выбираем add или update. Это надёжнее, чем писать поле RQ_ADDR.
+        """
+        base = {
+            "TYPE_ID": address_type_id,
+            "ENTITY_TYPE_ID": self.REQUISITE_ENTITY_TYPE_ID,
+            "ENTITY_ID": requisite_id,
+        }
         try:
-            await self.call(
-                "crm.requisite.update",
+            existing = await self.call(
+                "crm.address.list",
                 {
-                    "id": requisite_id,
-                    "fields": {
-                        "RQ_ADDR": {
-                            str(address_type_id): address_fields
-                        }
-                    }
+                    "filter": dict(base),
+                    "select": ["ENTITY_ID", "TYPE_ID", "ADDRESS_1"],
                 },
             )
+            method = "crm.address.update" if existing else "crm.address.add"
+            await self.call(method, {"fields": {**base, **address_fields}})
             return True
         except BitrixAPIError as e:
-            logger.error(f"Error updating address for requisite {requisite_id}: {e}")
+            logger.error(f"Error upserting address for requisite {requisite_id}: {e}")
             return False
 
     async def get_requisite_presets(self) -> list:

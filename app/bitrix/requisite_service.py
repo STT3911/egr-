@@ -44,42 +44,56 @@ class RequisiteService:
             if egr_info.is_ip is not None:
                 is_ip = egr_info.is_ip
             else:
-                name_upper = (egr_info.full_name or "").upper()
-                is_ip = (
-                    "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ" in name_upper
-                    or name_upper.startswith("ИП ")
-                    or not unp.isdigit()
-                    or not any(
-                        org_type in name_upper
-                        for org_type in ["ООО", "ЗАО", "ОАО", "ЧУП", "ОДО", "УП ", "РУП", "ТОВАРИЩЕСТВО"]
-                    )
+                # Фолбэк, если сервис не вернул тип: учитываем оба наименования,
+                # а при неопределённости считаем ОРГАНИЗАЦИЕЙ (не лепим «ИП» на юрлицо).
+                text = f"{egr_info.full_name or ''} {egr_info.short_name or ''}".upper().strip()
+                org_markers = (
+                    "ООО", "ЗАО", "ОАО", "ПАО", "ЧУП", "ОДО", "УП ", "РУП", "КУП", "ТУП",
+                    "ОБЩЕСТВО", "АКЦИОНЕРНОЕ", "УНИТАРНОЕ", "ПРЕДПРИЯТИЕ", "УЧРЕЖДЕНИЕ",
+                    "КООПЕРАТИВ", "ТОВАРИЩЕСТВО", "КОНЦЕРН", "ХОЛДИНГ", "ОРГАНИЗАЦИЯ",
                 )
+                if "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ" in text or text.startswith("ИП "):
+                    is_ip = True
+                elif not unp.isdigit():
+                    is_ip = True
+                elif any(marker in text for marker in org_markers):
+                    is_ip = False
+                else:
+                    is_ip = False
 
             fields_to_write = {}
             
             if is_ip:
                 base_name = egr_info.short_name or egr_info.full_name
-                
+                # ФИО без префикса «ИП»/«Индивидуальный предприниматель» — иначе маска
+                # задвоит его («Индивидуальный предприниматель ИП Иванов…»).
+                clean_name = egr_info.director or base_name
+
                 # Динамические маски для ИП из базы данных
                 mask_full = cfg.ip_mask_full if cfg and cfg.ip_mask_full else "Индивидуальный предприниматель {company_name}"
                 mask_short = cfg.ip_mask_short if cfg and cfg.ip_mask_short else "ИП {company_name}"
                 mask_basis = cfg.ip_mask_basis if cfg and cfg.ip_mask_basis else "Свидетельство о регистрации № {company_unp}"
-                
-                full_name_masked = mask_full.replace("{company_name}", egr_info.full_name)
-                short_name_masked = mask_short.replace("{company_name}", base_name)
-                basis_masked = mask_basis.replace("{company_unp}", unp).replace("{company_name}", base_name)
-                
+
+                def _apply_mask(mask: str) -> str:
+                    # Обе переменные доступны в любой маске.
+                    return (
+                        (mask or "")
+                        .replace("{company_name}", clean_name or "")
+                        .replace("{company_unp}", unp)
+                    )
+
+                short_name_masked = _apply_mask(mask_short)
                 fields_to_write["NAME"] = short_name_masked
                 fields_to_write["RQ_COMPANY_NAME"] = short_name_masked
-                fields_to_write["RQ_COMPANY_FULL_NAME"] = full_name_masked
-                fields_to_write["RQ_LEGAL_FORM"] = basis_masked
+                fields_to_write["RQ_COMPANY_FULL_NAME"] = _apply_mask(mask_full)
+                fields_to_write["RQ_LEGAL_FORM"] = _apply_mask(mask_basis)
                 # Для ИП директора тоже заполняем — это ФИО самого предпринимателя.
                 if egr_info.director:
                     fields_to_write["RQ_DIRECTOR"] = egr_info.director
             else:
                 name = egr_info.short_name or egr_info.full_name
                 fields_to_write["NAME"] = name
-                fields_to_write["RQ_COMPANY_NAME"] = egr_info.short_name
+                fields_to_write["RQ_COMPANY_NAME"] = egr_info.short_name or egr_info.full_name
                 fields_to_write["RQ_COMPANY_FULL_NAME"] = egr_info.full_name
                 if egr_info.authority:
                     fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority[:80]
@@ -98,15 +112,16 @@ class RequisiteService:
                 except ValueError:
                     pass
 
-            # Добавляем адрес (тип «Юридический» — ID получаем через crm.enum.addresstype)
+            # Юридический адрес из БД. Пишем его отдельным вызовом crm.address.*
+            # после создания/обновления реквизита (надёжнее поля RQ_ADDR).
+            # Имена полей — штатные для адресов Битрикса (POSTAL_CODE, PROVINCE).
+            address_fields: dict | None = None
             if egr_info.full_address:
                 address_fields = {"ADDRESS_1": egr_info.full_address}
                 if egr_info.postal_code:
-                    address_fields["ZIP_CODE"] = str(egr_info.postal_code)
+                    address_fields["POSTAL_CODE"] = str(egr_info.postal_code)
                 if egr_info.region:
-                    address_fields["REGION"] = egr_info.region
-                legal_address_type_id = await self.bitrix.get_address_type_id()
-                fields_to_write["RQ_ADDR"] = {str(legal_address_type_id): address_fields}
+                    address_fields["PROVINCE"] = egr_info.region
 
             # Шаг 6: Получаем старые реквизиты компании
             try:
@@ -131,13 +146,20 @@ class RequisiteService:
             needs_req_update = False
             if is_new:
                 needs_req_update = True
+            elif address_fields:
+                # Адрес пишется отдельным вызовом и надёжно не сравнивается со старым
+                # значением. Если адрес у нас есть — заходим в ветку обновления.
+                needs_req_update = True
             else:
-                for key in ["NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED", "RQ_LEGAL_FORM", "RQ_OGRNIP", "RQ_DIRECTOR"]:
+                for key in [
+                    "NAME", "RQ_COMPANY_NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED",
+                    "RQ_LEGAL_FORM", "RQ_OGRNIP", "RQ_DIRECTOR", "RQ_STATE_REG_DATE",
+                ]:
                     if key in fields_to_write:
                         # Приводим к строке, чтобы None не триггерил обновление при сравнении с ""
                         old_val = str(requisite.get(key) or "").strip()
                         new_val = str(fields_to_write[key] or "").strip()
-                        
+
                         if old_val != new_val:
                             needs_req_update = True
                             logger.info(f"[Company {company_id}] Requisite changed on field '{key}': '{old_val}' -> '{new_val}'")
@@ -200,7 +222,16 @@ class RequisiteService:
                         requisite_id = int(requisite["ID"])
                         await self.bitrix.update_requisite(requisite_id, unp, fields_to_write)
                         logger.info(f"[Company {company_id}] Overwrote existing requisite ID={requisite_id}")
-                        
+
+                    # Юридический адрес — отдельным вызовом через crm.address.*
+                    if address_fields and requisite_id:
+                        address_type_id = await self.bitrix.get_address_type_id()
+                        if await self.bitrix.upsert_requisite_address(requisite_id, address_type_id, address_fields):
+                            logger.info(f"[Company {company_id}] Legal address written to requisite ID={requisite_id}")
+                        else:
+                            logger.warning(f"[Company {company_id}] Failed to write legal address to requisite ID={requisite_id}")
+
+
             except Exception as e:
                 logger.error(f"[Company {company_id}] Error saving data: {e}")
 
