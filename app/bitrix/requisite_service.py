@@ -250,65 +250,66 @@ class RequisiteService:
                 logger.error(f"[Company {company_id}] Error finding requisite: {e}")
                 return
                 
-            is_new = requisite is None
+            # Правило лида: если реквизит по этому УНП уже существует — НИЧЕГО не трогаем
+            # (ни реквизит, ни карточку), чтобы не перезатирать правки, внесённые вручную.
+            if requisite is not None:
+                logger.info(f"[Company {company_id}] Requisite for UNP {unp} already exists (ID={requisite.get('ID')}) — skip, ничего не меняем")
+                return
+
+            # Реквизита по УНП ещё нет → первичное заполнение карточки и реквизита.
             new_title = fields_to_write.get("RQ_COMPANY_NAME") or fields_to_write.get("NAME")
-
-            # --- Шаг 7: ИСПРАВЛЕННАЯ ЗАЩИТА ОТ ЦИКЛА ---
             needs_title_update = bool(new_title and company_title != new_title)
-            
-            needs_req_update = False
-            if is_new:
-                needs_req_update = True
-            elif address_fields:
-                # Адрес пишется отдельным вызовом и надёжно не сравнивается со старым
-                # значением. Если адрес у нас есть — заходим в ветку обновления.
-                needs_req_update = True
-            else:
-                for key in [
-                    "NAME", "RQ_COMPANY_NAME", "RQ_COMPANY_FULL_NAME", "RQ_OKVED",
-                    "RQ_LEGAL_FORM", "RQ_BASE_DOC", "RQ_OGRNIP", "RQ_DIRECTOR", "RQ_COMPANY_REG_DATE",
-                ]:
-                    if key in fields_to_write:
-                        # Приводим к строке, чтобы None не триггерил обновление при сравнении с ""
-                        old_val = str(requisite.get(key) or "").strip()
-                        new_val = str(fields_to_write[key] or "").strip()
 
-                        if old_val != new_val:
-                            needs_req_update = True
-                            logger.info(f"[Company {company_id}] Requisite changed on field '{key}': '{old_val}' -> '{new_val}'")
-                            break
-
-            needs_contact_update = False
             contact_email = _first_valid_email(getattr(egr_info, "email", None))
             contact_phones = _split_phones(getattr(egr_info, "phone", None))
-
+            needs_contact_update = False
             try:
                 if contact_phones and not company.get("PHONE"):
                     needs_contact_update = True
                 if contact_email and not company.get("EMAIL"):
                     needs_contact_update = True
-                if hasattr(egr_info, 'website') and egr_info.website and not company.get("WEB"):
+                if getattr(egr_info, "website", "") and not company.get("WEB"):
                     needs_contact_update = True
             except Exception as e:
                 logger.error(f"[Company {company_id}] Error checking current fields: {e}")
 
-            if not any([needs_title_update, needs_req_update, needs_contact_update]):
-                logger.info(f"[Company {company_id}] Битрикс и ЕГР синхронизированы. Останавливаемся (защита от цикла).")
-                return
-
             # Шаг 8: Обновляем Битрикс!
-            # 1. Фасад карточки — в отдельном try, чтобы ошибка контактов (Битрикс
-            # отклоняет весь апдейт при кривом поле) не блокировала запись реквизита.
+            # Сначала создаём реквизит и адрес, потом карточку — иначе обновление карточки
+            # повторно дёрнет webhook раньше создания реквизита и появится дубль.
+            requisite_id = None
+            try:
+                # Единый Preset для ИП и организаций — для ИП отличаются только
+                # значения полей (по маскам), а не шаблон реквизита.
+                preset_id = cfg.requisite_preset_id if cfg and cfg.requisite_preset_id else 1
+                requisite_id = await self.bitrix.create_requisite(
+                    entity_id=company_id,
+                    preset_id=preset_id,
+                    unp=unp,
+                    fields=fields_to_write,
+                )
+                logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} using preset {preset_id}")
+
+                # Юридический адрес — отдельным вызовом через crm.address.*
+                if address_fields and requisite_id:
+                    address_type_id = await self.bitrix.get_address_type_id()
+                    if await self.bitrix.upsert_requisite_address(requisite_id, address_type_id, address_fields):
+                        logger.info(f"[Company {company_id}] Legal address written to requisite ID={requisite_id}")
+                    else:
+                        logger.warning(f"[Company {company_id}] Failed to write legal address to requisite ID={requisite_id}")
+            except Exception as e:
+                logger.error(f"[Company {company_id}] Error saving requisite: {e}")
+
+            # Карточка (заголовок + контакты) — после реквизита. Отдельный try, чтобы
+            # кривой контакт (Битрикс отклоняет весь апдейт) не ронял остальное.
             company_update_fields = {}
             if needs_title_update:
                 company_update_fields["TITLE"] = new_title
-
             if needs_contact_update:
                 if contact_phones:
                     company_update_fields["PHONE"] = [{"VALUE": p, "VALUE_TYPE": "WORK"} for p in contact_phones]
                 if contact_email:
                     company_update_fields["EMAIL"] = [{"VALUE": contact_email, "VALUE_TYPE": "WORK"}]
-                if hasattr(egr_info, 'website') and egr_info.website:
+                if getattr(egr_info, "website", ""):
                     company_update_fields["WEB"] = [{"VALUE": egr_info.website, "VALUE_TYPE": "WORK"}]
 
             if company_update_fields:
@@ -320,8 +321,7 @@ class RequisiteService:
                     logger.info(f"[Company {company_id}] Updated main card fields: {list(company_update_fields.keys())}")
                 except Exception as e:
                     logger.error(f"[Company {company_id}] Card update failed: {e}")
-                    # Повтор без EMAIL (самый частый виновник — кривой адрес из ЕГР),
-                    # чтобы сохранить заголовок, телефон и сайт.
+                    # Повтор без EMAIL (частый виновник — кривой адрес из ЕГР).
                     retry_fields = {k: v for k, v in company_update_fields.items() if k != "EMAIL"}
                     if retry_fields:
                         try:
@@ -332,39 +332,6 @@ class RequisiteService:
                             logger.info(f"[Company {company_id}] Card updated without EMAIL: {list(retry_fields.keys())}")
                         except Exception as e2:
                             logger.error(f"[Company {company_id}] Card retry failed: {e2}")
-
-            # 2. Бухгалтерия (Реквизиты) — отдельный try.
-            try:
-                if needs_req_update:
-                    if is_new:
-                        # Единый Preset для ИП и организаций — для ИП отличаются только
-                        # значения полей (по маскам), а не шаблон реквизита.
-                        preset_id = cfg.requisite_preset_id if cfg and cfg.requisite_preset_id else 1
-
-                        requisite_id = await self.bitrix.create_requisite(
-                            entity_id=company_id,
-                            preset_id=preset_id,
-                            unp=unp,
-                            fields=fields_to_write,
-                        )
-
-                        logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} using preset {preset_id}")
-                    else:
-                        requisite_id = int(requisite["ID"])
-                        await self.bitrix.update_requisite(requisite_id, unp, fields_to_write)
-                        logger.info(f"[Company {company_id}] Overwrote existing requisite ID={requisite_id}")
-
-                    # Юридический адрес — отдельным вызовом через crm.address.*
-                    if address_fields and requisite_id:
-                        address_type_id = await self.bitrix.get_address_type_id()
-                        if await self.bitrix.upsert_requisite_address(requisite_id, address_type_id, address_fields):
-                            logger.info(f"[Company {company_id}] Legal address written to requisite ID={requisite_id}")
-                        else:
-                            logger.warning(f"[Company {company_id}] Failed to write legal address to requisite ID={requisite_id}")
-
-
-            except Exception as e:
-                logger.error(f"[Company {company_id}] Error saving data: {e}")
 
             logger.info(f"[Company {company_id}] Processing completed successfully")
 
