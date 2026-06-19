@@ -14,7 +14,7 @@ import unittest
 
 from app.api.v1.endpoints.bitrix import _detect_is_ip, _extract_director
 from app.bitrix.bitrix_client import BitrixClient
-from app.bitrix.requisite_service import _strip_country_prefix, _first_valid_email
+from app.bitrix.requisite_service import _strip_country_prefix, _first_valid_email, _split_phones
 
 
 class DetectIsIpTests(unittest.TestCase):
@@ -154,6 +154,45 @@ class FirstValidEmailTests(unittest.TestCase):
         self.assertIsNone(_first_valid_email("info@domain.by."))  # висячая точка в домене
         self.assertIsNone(_first_valid_email("nikolay.piv.@gmail.com"))  # точка перед @
         self.assertIsNone(_first_valid_email("a..b@gmail.com"))   # двойная точка
+
+
+class SplitPhonesTests(unittest.TestCase):
+    def test_single(self):
+        self.assertEqual(_split_phones("+375 29 728-99-16"), ["+375 29 728-99-16"])
+
+    def test_multiple_dedup(self):
+        # дубль схлопывается
+        self.assertEqual(
+            _split_phones("+375 29 103-32-26, +375 29 103-32-26"),
+            ["+375 29 103-32-26"],
+        )
+
+    def test_two_distinct(self):
+        self.assertEqual(
+            _split_phones("+375 29 725-49-31, +375 29 561-18-29"),
+            ["+375 29 725-49-31", "+375 29 561-18-29"],
+        )
+
+    def test_strips_names(self):
+        self.assertEqual(
+            _split_phones("Краснюк С.В. - 80172-206-58-17, Головина И.Б. - 80172-202-53-14"),
+            ["80172-206-58-17", "80172-202-53-14"],
+        )
+
+    def test_drops_garbage_short(self):
+        # «54321» (<6 цифр) выкидывается, нормальный остаётся
+        self.assertEqual(_split_phones("8029-9008874, 54321"), ["8029-9008874"])
+
+    def test_semicolon_separator(self):
+        self.assertEqual(_split_phones("029-6292344; 044-7400817"), ["029-6292344", "044-7400817"])
+
+    def test_cap_at_five(self):
+        raw = ", ".join(f"8017 268 87 5{i}" for i in range(8))
+        self.assertEqual(len(_split_phones(raw)), 5)
+
+    def test_empty(self):
+        self.assertEqual(_split_phones(""), [])
+        self.assertEqual(_split_phones(None), [])
 
 
 if __name__ == "__main__":

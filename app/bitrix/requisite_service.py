@@ -36,6 +36,41 @@ def _first_valid_email(value: str | None) -> str | None:
     return None
 
 
+_PHONE_MIN_DIGITS = 6   # короче — почти всегда мусор («54321»)
+_PHONE_MAX_COUNT = 5    # не засоряем карточку десятком номеров
+
+
+def _split_phones(raw: str | None) -> list[str]:
+    """Разобрать «телефонную» строку ЕГР в список номеров.
+
+    В ЕГР это свободный текст: несколько номеров через ,/;, иногда с именами
+    («Иванов И.И. - 8029-...») и мусором. Срезаем подпись перед номером,
+    оставляем только телефонные символы, отбрасываем слишком короткие, дедуп.
+    """
+    if not raw:
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[,;]", raw):
+        part = part.strip()
+        if not part:
+            continue
+        # «Имя Фамилия - 8029-123-45-67» → берём то, что после последнего « - ».
+        if " - " in part:
+            part = part.rsplit(" - ", 1)[-1]
+        # Оставляем только телефонные символы.
+        cleaned = re.sub(r"[^0-9+()\s\-]", "", part)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
+        digits = re.sub(r"\D", "", cleaned)
+        if len(digits) < _PHONE_MIN_DIGITS or digits in seen:
+            continue
+        seen.add(digits)
+        result.append(cleaned)
+        if len(result) >= _PHONE_MAX_COUNT:
+            break
+    return result
+
+
 class RequisiteService:
     def __init__(self, bitrix_client, egr_client):
         self.bitrix = bitrix_client
@@ -204,9 +239,10 @@ class RequisiteService:
 
             needs_contact_update = False
             contact_email = _first_valid_email(getattr(egr_info, "email", None))
+            contact_phones = _split_phones(getattr(egr_info, "phone", None))
 
             try:
-                if hasattr(egr_info, 'phone') and egr_info.phone and not company.get("PHONE"):
+                if contact_phones and not company.get("PHONE"):
                     needs_contact_update = True
                 if contact_email and not company.get("EMAIL"):
                     needs_contact_update = True
@@ -227,8 +263,8 @@ class RequisiteService:
                 company_update_fields["TITLE"] = new_title
 
             if needs_contact_update:
-                if hasattr(egr_info, 'phone') and egr_info.phone:
-                    company_update_fields["PHONE"] = [{"VALUE": egr_info.phone, "VALUE_TYPE": "WORK"}]
+                if contact_phones:
+                    company_update_fields["PHONE"] = [{"VALUE": p, "VALUE_TYPE": "WORK"} for p in contact_phones]
                 if contact_email:
                     company_update_fields["EMAIL"] = [{"VALUE": contact_email, "VALUE_TYPE": "WORK"}]
                 if hasattr(egr_info, 'website') and egr_info.website:
