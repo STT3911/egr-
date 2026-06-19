@@ -15,6 +15,21 @@ def _strip_country_prefix(address: str | None) -> str:
     return _COUNTRY_PREFIX_RE.sub("", address).strip()
 
 
+# Bitrix строго валидирует e-mail и отклоняет весь crm.company.update при кривом адресе,
+# а в ЕГР email часто мусорный/множественный. Берём первый валидный.
+_EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+
+
+def _first_valid_email(value: str | None) -> str | None:
+    """Первый корректный e-mail из строки (ЕГР может отдать несколько через , ; пробел)."""
+    if not value:
+        return None
+    for part in re.split(r"[,;\s]+", value.strip()):
+        if part and _EMAIL_RE.match(part):
+            return part
+    return None
+
+
 class RequisiteService:
     def __init__(self, bitrix_client, egr_client):
         self.bitrix = bitrix_client
@@ -181,12 +196,13 @@ class RequisiteService:
                             logger.info(f"[Company {company_id}] Requisite changed on field '{key}': '{old_val}' -> '{new_val}'")
                             break
 
-            needs_contact_update = False 
+            needs_contact_update = False
+            contact_email = _first_valid_email(getattr(egr_info, "email", None))
 
             try:
                 if hasattr(egr_info, 'phone') and egr_info.phone and not company.get("PHONE"):
                     needs_contact_update = True
-                if hasattr(egr_info, 'email') and egr_info.email and not company.get("EMAIL"):
+                if contact_email and not company.get("EMAIL"):
                     needs_contact_update = True
                 if hasattr(egr_info, 'website') and egr_info.website and not company.get("WEB"):
                     needs_contact_update = True
@@ -198,28 +214,42 @@ class RequisiteService:
                 return
 
             # Шаг 8: Обновляем Битрикс!
-            try:
-                # 1. Фасад карточки
-                company_update_fields = {}
-                if needs_title_update:
-                    company_update_fields["TITLE"] = new_title
-                    
-                if needs_contact_update:
-                    if hasattr(egr_info, 'phone') and egr_info.phone:
-                        company_update_fields["PHONE"] = [{"VALUE": egr_info.phone, "VALUE_TYPE": "WORK"}]
-                    if hasattr(egr_info, 'email') and egr_info.email:
-                        company_update_fields["EMAIL"] = [{"VALUE": egr_info.email, "VALUE_TYPE": "WORK"}]
-                    if hasattr(egr_info, 'website') and egr_info.website:
-                        company_update_fields["WEB"] = [{"VALUE": egr_info.website, "VALUE_TYPE": "WORK"}]
+            # 1. Фасад карточки — в отдельном try, чтобы ошибка контактов (Битрикс
+            # отклоняет весь апдейт при кривом поле) не блокировала запись реквизита.
+            company_update_fields = {}
+            if needs_title_update:
+                company_update_fields["TITLE"] = new_title
 
-                if company_update_fields:
+            if needs_contact_update:
+                if hasattr(egr_info, 'phone') and egr_info.phone:
+                    company_update_fields["PHONE"] = [{"VALUE": egr_info.phone, "VALUE_TYPE": "WORK"}]
+                if contact_email:
+                    company_update_fields["EMAIL"] = [{"VALUE": contact_email, "VALUE_TYPE": "WORK"}]
+                if hasattr(egr_info, 'website') and egr_info.website:
+                    company_update_fields["WEB"] = [{"VALUE": egr_info.website, "VALUE_TYPE": "WORK"}]
+
+            if company_update_fields:
+                try:
                     await self.bitrix.call("crm.company.update", {
                         "id": company_id,
-                        "fields": company_update_fields
+                        "fields": company_update_fields,
                     })
                     logger.info(f"[Company {company_id}] Updated main card fields: {list(company_update_fields.keys())}")
+                except Exception as e:
+                    logger.error(f"[Company {company_id}] Card update failed: {e}")
+                    # Повтор только с TITLE — чтобы кривой контакт не съел и заголовок.
+                    if needs_title_update:
+                        try:
+                            await self.bitrix.call("crm.company.update", {
+                                "id": company_id,
+                                "fields": {"TITLE": new_title},
+                            })
+                            logger.info(f"[Company {company_id}] TITLE updated (contacts skipped)")
+                        except Exception as e2:
+                            logger.error(f"[Company {company_id}] TITLE-only update failed: {e2}")
 
-                # 2. Бухгалтерия (Реквизиты)
+            # 2. Бухгалтерия (Реквизиты) — отдельный try.
+            try:
                 if needs_req_update:
                     if is_new:
                         # Единый Preset для ИП и организаций — для ИП отличаются только

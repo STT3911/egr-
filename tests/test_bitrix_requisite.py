@@ -14,7 +14,7 @@ import unittest
 
 from app.api.v1.endpoints.bitrix import _detect_is_ip, _extract_director
 from app.bitrix.bitrix_client import BitrixClient
-from app.bitrix.requisite_service import _strip_country_prefix
+from app.bitrix.requisite_service import _strip_country_prefix, _first_valid_email
 
 
 class DetectIsIpTests(unittest.TestCase):
@@ -133,6 +133,20 @@ class StripCountryPrefixTests(unittest.TestCase):
 
     def test_none_returns_empty(self):
         self.assertEqual(_strip_country_prefix(None), "")
+
+
+class FirstValidEmailTests(unittest.TestCase):
+    def test_valid_single(self):
+        self.assertEqual(_first_valid_email("info@company.by"), "info@company.by")
+
+    def test_picks_first_valid_from_list(self):
+        self.assertEqual(_first_valid_email("мусор; a@b.by, c@d.by"), "a@b.by")
+
+    def test_invalid_returns_none(self):
+        self.assertIsNone(_first_valid_email("не email"))
+        self.assertIsNone(_first_valid_email("foo@bar"))
+        self.assertIsNone(_first_valid_email(""))
+        self.assertIsNone(_first_valid_email(None))
 
 
 if __name__ == "__main__":
