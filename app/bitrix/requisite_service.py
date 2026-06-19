@@ -36,6 +36,21 @@ def _first_valid_email(value: str | None) -> str | None:
     return None
 
 
+def _normalize_unp(value: object) -> str | None:
+    """Привести УНП к 9 цифрам: убрать пробелы/дефисы/«.0», оставить только цифры.
+
+    Менеджеры вводят УНП по-разному («291 439 639», «291-439-639», «...0» из Excel),
+    а тонкий эндпоинт принимает строго ^\\d{9}$ — поэтому нормализуем заранее.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    digits = re.sub(r"\D", "", s)
+    return digits if len(digits) == 9 else None
+
+
 def _quotes_to_guillemets(value: str | None) -> str | None:
     """Прямые кавычки "..." → ёлочки «...» в наименовании компании.
 
@@ -130,11 +145,13 @@ class RequisiteService:
             # Читаем УНП
             unp_raw = company.get(unp_field_code)  
             
-            if not unp_raw or str(unp_raw).strip() == "":
-                logger.info(f"[Company {company_id}] No UNP provided in field {unp_field_code}, skipping")
+            unp = _normalize_unp(unp_raw)
+            if not unp:
+                logger.info(
+                    f"[Company {company_id}] No valid 9-digit UNP in field {unp_field_code} "
+                    f"(raw={unp_raw!r}), skipping"
+                )
                 return
-                
-            unp = str(unp_raw).strip()
 
             # Шаг 4: Идем в ЕГР
             egr_info = await self.egr.get_company_info(unp)

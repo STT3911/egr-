@@ -20,6 +20,7 @@ from app.bitrix.requisite_service import (
     _split_phones,
     _to_by_intl,
     _quotes_to_guillemets,
+    _normalize_unp,
 )
 
 
@@ -238,6 +239,26 @@ class QuotesToGuillemetsTests(unittest.TestCase):
 
     def test_none(self):
         self.assertIsNone(_quotes_to_guillemets(None))
+
+
+class NormalizeUnpTests(unittest.TestCase):
+    def test_clean(self):
+        self.assertEqual(_normalize_unp("291439639"), "291439639")
+
+    def test_spaces(self):
+        self.assertEqual(_normalize_unp("291 43 9639"), "291439639")
+
+    def test_dashes(self):
+        self.assertEqual(_normalize_unp("291-439-639"), "291439639")
+
+    def test_excel_float(self):
+        self.assertEqual(_normalize_unp("291439639.0"), "291439639")
+
+    def test_invalid_length(self):
+        self.assertIsNone(_normalize_unp("12345"))
+        self.assertIsNone(_normalize_unp("2914396390"))  # 10 цифр
+        self.assertIsNone(_normalize_unp(""))
+        self.assertIsNone(_normalize_unp(None))
 
 
 if __name__ == "__main__":
