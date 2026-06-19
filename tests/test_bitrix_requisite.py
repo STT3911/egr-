@@ -14,7 +14,13 @@ import unittest
 
 from app.api.v1.endpoints.bitrix import _detect_is_ip, _extract_director
 from app.bitrix.bitrix_client import BitrixClient
-from app.bitrix.requisite_service import _strip_country_prefix, _first_valid_email, _split_phones
+from app.bitrix.requisite_service import (
+    _strip_country_prefix,
+    _first_valid_email,
+    _split_phones,
+    _to_by_intl,
+    _quotes_to_guillemets,
+)
 
 
 class DetectIsIpTests(unittest.TestCase):
@@ -174,14 +180,15 @@ class SplitPhonesTests(unittest.TestCase):
         )
 
     def test_strips_names(self):
+        # имя срезается, а ведущий 80 → +375
         self.assertEqual(
             _split_phones("Краснюк С.В. - 80172-206-58-17, Головина И.Б. - 80172-202-53-14"),
-            ["80172-206-58-17", "80172-202-53-14"],
+            ["+375172-206-58-17", "+375172-202-53-14"],
         )
 
     def test_drops_garbage_short(self):
-        # «54321» (<6 цифр) выкидывается, нормальный остаётся
-        self.assertEqual(_split_phones("8029-9008874, 54321"), ["8029-9008874"])
+        # «54321» (<6 цифр) выкидывается, нормальный остаётся и нормализуется в +375
+        self.assertEqual(_split_phones("8029-9008874, 54321"), ["+37529-9008874"])
 
     def test_semicolon_separator(self):
         self.assertEqual(_split_phones("029-6292344; 044-7400817"), ["029-6292344", "044-7400817"])
@@ -193,6 +200,35 @@ class SplitPhonesTests(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(_split_phones(""), [])
         self.assertEqual(_split_phones(None), [])
+
+
+class ToByIntlTests(unittest.TestCase):
+    def test_80_to_375(self):
+        self.assertEqual(_to_by_intl("8029-5611829"), "+37529-5611829")
+
+    def test_80_city_code(self):
+        self.assertEqual(_to_by_intl("80152-744422"), "+375152-744422")
+
+    def test_already_intl_unchanged(self):
+        self.assertEqual(_to_by_intl("+375 29 728-99-16"), "+375 29 728-99-16")
+
+    def test_non_80_unchanged(self):
+        self.assertEqual(_to_by_intl("029-6292344"), "029-6292344")
+
+
+class QuotesToGuillemetsTests(unittest.TestCase):
+    def test_replaces_pair(self):
+        self.assertEqual(
+            _quotes_to_guillemets('ООО "ТНЛогистикТранс"'),
+            'ООО «ТНЛогистикТранс»',
+        )
+
+    def test_no_quotes_unchanged(self):
+        self.assertEqual(_quotes_to_guillemets("ИП Степанцов Роман Евгеньевич"),
+                         "ИП Степанцов Роман Евгеньевич")
+
+    def test_none(self):
+        self.assertIsNone(_quotes_to_guillemets(None))
 
 
 if __name__ == "__main__":

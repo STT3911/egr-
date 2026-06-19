@@ -36,6 +36,33 @@ def _first_valid_email(value: str | None) -> str | None:
     return None
 
 
+def _quotes_to_guillemets(value: str | None) -> str | None:
+    """Прямые кавычки "..." → ёлочки «...» в наименовании компании."""
+    if not value:
+        return value
+    return re.sub(r'"([^"]*)"', r'«\1»', value)
+
+
+def _to_by_intl(phone: str) -> str:
+    """Белорусский междугородний выход «80…» → «+375…».
+
+    По правилу РБ номер вида 80<код><номер> (80152…, 8029…) — это +375<код><номер>.
+    Международные (+…) и прочие (без ведущего 80) не трогаем.
+    """
+    if not phone or phone.startswith("+"):
+        return phone
+    if not re.sub(r"\D", "", phone).startswith("80"):
+        return phone
+    removed = 0
+    out: list[str] = []
+    for ch in phone:
+        if removed < 2 and ch.isdigit():  # срезаем ведущие 8 и 0
+            removed += 1
+            continue
+        out.append(ch)
+    return "+375" + "".join(out).lstrip(" -")
+
+
 _PHONE_MIN_DIGITS = 6   # короче — почти всегда мусор («54321»)
 _PHONE_MAX_COUNT = 5    # не засоряем карточку десятком номеров
 
@@ -61,10 +88,13 @@ def _split_phones(raw: str | None) -> list[str]:
         # Оставляем только телефонные символы.
         cleaned = re.sub(r"[^0-9+()\s\-]", "", part)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
-        digits = re.sub(r"\D", "", cleaned)
-        if len(digits) < _PHONE_MIN_DIGITS or digits in seen:
+        if len(re.sub(r"\D", "", cleaned)) < _PHONE_MIN_DIGITS:
             continue
-        seen.add(digits)
+        cleaned = _to_by_intl(cleaned)
+        key = re.sub(r"\D", "", cleaned)
+        if key in seen:
+            continue
+        seen.add(key)
         result.append(cleaned)
         if len(result) >= _PHONE_MAX_COUNT:
             break
@@ -170,7 +200,12 @@ class RequisiteService:
                     fields_to_write["RQ_LEGAL_FORM"] = egr_info.authority[:80]
                 if egr_info.director:
                     fields_to_write["RQ_DIRECTOR"] = egr_info.director
-                    
+
+            # Кавычки в наименованиях компании → ёлочки («...»), по регламенту.
+            for _name_key in ("NAME", "RQ_COMPANY_NAME", "RQ_COMPANY_FULL_NAME"):
+                if fields_to_write.get(_name_key):
+                    fields_to_write[_name_key] = _quotes_to_guillemets(fields_to_write[_name_key])
+
             # Добавляем ОКЭД
             if egr_info.ved_code:
                 fields_to_write["RQ_OKVED"] = egr_info.ved_code
