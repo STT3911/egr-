@@ -17,8 +17,13 @@ def _strip_country_prefix(address: str | None) -> str:
 
 # Bitrix строго валидирует e-mail и отклоняет весь crm.company.update при кривом адресе,
 # а в ЕГР email часто мусорный/множественный. Берём первый валидный (строго ASCII,
-# как ожидает Bitrix — кириллица/пробелы/висячие точки отсекаются).
-_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+# как ожидает Bitrix). Точки-разделители: без ведущей/висячей/двойной точки
+# (напр. «nikolay.piv.@gmail.com» — невалиден).
+_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9_%+\-]+(?:\.[A-Za-z0-9_%+\-]+)*"   # локальная часть
+    r"@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*"          # домен
+    r"\.[A-Za-z]{2,}$"                                # TLD
+)
 
 
 def _first_valid_email(value: str | None) -> str | None:

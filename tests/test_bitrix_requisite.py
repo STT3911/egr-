@@ -139,6 +139,9 @@ class FirstValidEmailTests(unittest.TestCase):
     def test_valid_single(self):
         self.assertEqual(_first_valid_email("info@company.by"), "info@company.by")
 
+    def test_valid_with_dot_in_local(self):
+        self.assertEqual(_first_valid_email("nikolay.piv@gmail.com"), "nikolay.piv@gmail.com")
+
     def test_picks_first_valid_from_list(self):
         self.assertEqual(_first_valid_email("мусор; a@b.by, c@d.by"), "a@b.by")
 
@@ -148,7 +151,9 @@ class FirstValidEmailTests(unittest.TestCase):
         self.assertIsNone(_first_valid_email(""))
         self.assertIsNone(_first_valid_email(None))
         self.assertIsNone(_first_valid_email("почта@сайт.бел"))   # кириллица
-        self.assertIsNone(_first_valid_email("info@domain.by."))  # висячая точка
+        self.assertIsNone(_first_valid_email("info@domain.by."))  # висячая точка в домене
+        self.assertIsNone(_first_valid_email("nikolay.piv.@gmail.com"))  # точка перед @
+        self.assertIsNone(_first_valid_email("a..b@gmail.com"))   # двойная точка
 
 
 if __name__ == "__main__":
