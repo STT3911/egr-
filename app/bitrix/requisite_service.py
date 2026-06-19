@@ -16,8 +16,9 @@ def _strip_country_prefix(address: str | None) -> str:
 
 
 # Bitrix строго валидирует e-mail и отклоняет весь crm.company.update при кривом адресе,
-# а в ЕГР email часто мусорный/множественный. Берём первый валидный.
-_EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+# а в ЕГР email часто мусорный/множественный. Берём первый валидный (строго ASCII,
+# как ожидает Bitrix — кириллица/пробелы/висячие точки отсекаются).
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 
 
 def _first_valid_email(value: str | None) -> str | None:
@@ -237,16 +238,18 @@ class RequisiteService:
                     logger.info(f"[Company {company_id}] Updated main card fields: {list(company_update_fields.keys())}")
                 except Exception as e:
                     logger.error(f"[Company {company_id}] Card update failed: {e}")
-                    # Повтор только с TITLE — чтобы кривой контакт не съел и заголовок.
-                    if needs_title_update:
+                    # Повтор без EMAIL (самый частый виновник — кривой адрес из ЕГР),
+                    # чтобы сохранить заголовок, телефон и сайт.
+                    retry_fields = {k: v for k, v in company_update_fields.items() if k != "EMAIL"}
+                    if retry_fields:
                         try:
                             await self.bitrix.call("crm.company.update", {
                                 "id": company_id,
-                                "fields": {"TITLE": new_title},
+                                "fields": retry_fields,
                             })
-                            logger.info(f"[Company {company_id}] TITLE updated (contacts skipped)")
+                            logger.info(f"[Company {company_id}] Card updated without EMAIL: {list(retry_fields.keys())}")
                         except Exception as e2:
-                            logger.error(f"[Company {company_id}] TITLE-only update failed: {e2}")
+                            logger.error(f"[Company {company_id}] Card retry failed: {e2}")
 
             # 2. Бухгалтерия (Реквизиты) — отдельный try.
             try:

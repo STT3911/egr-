@@ -147,6 +147,8 @@ class FirstValidEmailTests(unittest.TestCase):
         self.assertIsNone(_first_valid_email("foo@bar"))
         self.assertIsNone(_first_valid_email(""))
         self.assertIsNone(_first_valid_email(None))
+        self.assertIsNone(_first_valid_email("почта@сайт.бел"))   # кириллица
+        self.assertIsNone(_first_valid_email("info@domain.by."))  # висячая точка
 
 
 if __name__ == "__main__":
