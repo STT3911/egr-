@@ -37,10 +37,16 @@ def _first_valid_email(value: str | None) -> str | None:
 
 
 def _quotes_to_guillemets(value: str | None) -> str | None:
-    """Прямые кавычки "..." → ёлочки «...» в наименовании компании."""
+    """Прямые кавычки "..." → ёлочки «...» в наименовании компании.
+
+    Дополнительно вставляем пробел перед «, если ЕГР склеил форму с названием
+    («предприятие«Смайл»» → «предприятие «Смайл»»).
+    """
     if not value:
         return value
-    return re.sub(r'"([^"]*)"', r'«\1»', value)
+    value = re.sub(r'"([^"]*)"', r'«\1»', value)
+    value = re.sub(r'(?<=\S)«', ' «', value)
+    return value
 
 
 def _to_by_intl(phone: str) -> str:

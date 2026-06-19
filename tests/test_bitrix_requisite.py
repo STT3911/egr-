@@ -223,6 +223,15 @@ class QuotesToGuillemetsTests(unittest.TestCase):
             'ООО «ТНЛогистикТранс»',
         )
 
+    def test_inserts_space_when_glued(self):
+        self.assertEqual(
+            _quotes_to_guillemets('Частное предприятие"СмайлБрест"'),
+            'Частное предприятие «СмайлБрест»',
+        )
+
+    def test_keeps_existing_space(self):
+        self.assertEqual(_quotes_to_guillemets('ООО "Рога"'), 'ООО «Рога»')
+
     def test_no_quotes_unchanged(self):
         self.assertEqual(_quotes_to_guillemets("ИП Степанцов Роман Евгеньевич"),
                          "ИП Степанцов Роман Евгеньевич")
