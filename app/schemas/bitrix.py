@@ -27,6 +27,9 @@ class BitrixRequisiteData(BaseModel):
     registration_date: Optional[str] = None
     okved: Optional[str] = None
     address: Optional[BitrixRequisiteAddress] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
 
     class Config:
         from_attributes = True

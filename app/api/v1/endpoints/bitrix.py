@@ -157,6 +157,13 @@ def get_requisite_data(
     is_ip = _detect_is_ip(full_name or "", short_name or "", unp, dossier.get("entity_type_id"))
     director = _extract_director(full_name or "", short_name or "") if is_ip else None
 
+    # Контакты: первое непустое значение из текущих контактов компании.
+    phone = email = website = None
+    for c in dossier.get("contacts", []):
+        phone = phone or (c.get("phone") or None)
+        email = email or (c.get("email") or None)
+        website = website or (c.get("website") or None)
+
     return BitrixRequisiteData(
         unp=unp_int,
         is_ip=is_ip,
@@ -167,4 +174,7 @@ def get_requisite_data(
         registration_date=registration_date,
         okved=okved,
         address=address,
+        phone=phone,
+        email=email,
+        website=website,
     )

@@ -125,6 +125,10 @@ class EGRClient:
         info.ved_code = str(data.get("okved") or "")
         info.is_ip = data.get("is_ip")
 
+        info.phone = data.get("phone") or ""
+        info.email = data.get("email") or ""
+        info.website = data.get("website") or ""
+
         address = data.get("address")
         if isinstance(address, dict):
             info.full_address = address.get("full_address") or ""
