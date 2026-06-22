@@ -13,7 +13,9 @@ class AppSettings(Base):
     
     __tablename__ = "bitrix_app_settings"
     
-    id = Column(Integer, primary_key=True, index=True, default=1)
+    # PK без sequence — id новым порталам назначаем вручную (app.bitrix.tenancy.next_settings_id).
+    # default=1 убран: иначе вторая запись пыталась бы занять тот же id=1.
+    id = Column(Integer, primary_key=True, index=True)
     
     # Bitrix24 connection
     bitrix_domain = Column(String(255), nullable=True)

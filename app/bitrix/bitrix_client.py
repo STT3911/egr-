@@ -31,28 +31,33 @@ class BitrixClient:
     # CCrmOwnerType::Requisite — тип сущности «Реквизит» в crm.address.*
     REQUISITE_ENTITY_TYPE_ID = 8
 
-    def __init__(self, db: AsyncSession, domain: Optional[str] = None):
+    def __init__(self, db: AsyncSession, domain: Optional[str] = None, member_id: Optional[str] = None):
         self.db = db
         self.domain = domain
+        self.member_id = member_id
         self.app_settings: Optional[AppSettings] = None
         self._address_type_id: Optional[int] = None
-    
+
     async def _load_settings(self) -> AppSettings:
-        """Load app settings from database."""
+        """Load app settings for the target portal (multi-tenant).
+
+        Если задан member_id/domain — берём настройки конкретного портала, иначе
+        (например, общий keep-alive по одному порталу) — первую запись.
+        """
         if self.app_settings:
             return self.app_settings
-        
-        stmt = select(AppSettings)
-        if self.domain:
-            stmt = stmt.where(AppSettings.bitrix_domain == self.domain)
+
+        if self.member_id or self.domain:
+            from app.bitrix.tenancy import find_settings
+            self.app_settings = await find_settings(self.db, self.member_id, self.domain)
         else:
-            stmt = stmt.limit(1)
-            
-        result = await self.db.execute(stmt)
-        self.app_settings = result.scalar_one_or_none()
-        
+            result = await self.db.execute(select(AppSettings).limit(1))
+            self.app_settings = result.scalar_one_or_none()
+
         if not self.app_settings:
-            raise BitrixAPIError("Bitrix24 app settings not found in database")
+            raise BitrixAPIError(
+                f"Bitrix24 app settings not found (member_id={self.member_id}, domain={self.domain})"
+            )
         return self.app_settings
     
     async def _refresh_token_if_needed(self, cfg: AppSettings) -> str:

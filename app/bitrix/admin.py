@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bitrix.database import get_db
 from app.bitrix.models import AppSettings
+from app.bitrix.tenancy import find_settings, next_settings_id
 from app.bitrix.bitrix_client import BitrixClient, BitrixAPIError
 
 logger = logging.getLogger(__name__)
@@ -77,12 +78,11 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
             status_code=403,
         )
 
-    # 4. Обновление токенов в БД (с фильтром по домену!)
-    result = await db.execute(select(AppSettings).filter(AppSettings.bitrix_domain == domain).limit(1))
-    app_cfg = result.scalar_one_or_none()
-    
+    # 4. Обновление токенов в БД — по порталу (member_id, резерв домен), мультитенант.
+    app_cfg = await find_settings(db, member_id=member_id, domain=domain)
+
     if not app_cfg:
-        app_cfg = AppSettings(bitrix_domain=domain)
+        app_cfg = AppSettings(id=await next_settings_id(db))
         db.add(app_cfg)
 
     if member_id:

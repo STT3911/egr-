@@ -38,28 +38,46 @@ def _send_alert(text: str) -> None:
         logger.warning("keepalive alert send failed: %s", ex)
 
 
-async def _keepalive() -> object:
+async def _keepalive_all() -> list[dict]:
     # Импорт внутри — у Битрикса своя async-сессия и клиент, не тянем их в воркер без нужды.
+    from sqlalchemy import select
+
     from app.bitrix.bitrix_client import BitrixClient
     from app.bitrix.database import AsyncSessionLocal
+    from app.bitrix.models import AppSettings
 
+    results: list[dict] = []
     async with AsyncSessionLocal() as db:
-        client = BitrixClient(db)
-        return await client.call("app.info")
+        portals = (await db.execute(select(AppSettings))).scalars().all()
+        # По каждому установленному порталу — отдельно (мультитенант): у каждого свой токен.
+        for cfg in portals:
+            client = BitrixClient(db, domain=cfg.bitrix_domain, member_id=cfg.bitrix_member_id)
+            try:
+                await client.call("app.info")
+                results.append({"member_id": cfg.bitrix_member_id, "domain": cfg.bitrix_domain, "ok": True})
+            except Exception as ex:
+                logger.error("keepalive failed for portal %s (%s): %s", cfg.bitrix_domain, cfg.bitrix_member_id, ex)
+                results.append({"member_id": cfg.bitrix_member_id, "domain": cfg.bitrix_domain,
+                                "ok": False, "error": str(ex)})
+    return results
 
 
 @celery_app.task(name="app.tasks.bitrix_tasks.bitrix_token_keepalive")
 def bitrix_token_keepalive():
-    """Принудительный keep-alive токена Битрикса (раз в сутки)."""
+    """Принудительный keep-alive токенов Битрикса по всем порталам (раз в сутки)."""
     try:
-        result = asyncio.run(_keepalive())
-        app_code = result.get("CODE") if isinstance(result, dict) else None
-        logger.info("bitrix keepalive ok (app=%s)", app_code)
-        return {"ok": True}
+        results = asyncio.run(_keepalive_all())
     except Exception as ex:
-        logger.error("bitrix keepalive FAILED: %s", ex, exc_info=True)
-        _send_alert(
-            f"⚠️ Bitrix keep-alive не смог обновить токен: {ex}\n"
-            f"Refresh_token может протухнуть — проверьте интеграцию (возможно, нужна переустановка приложения)."
-        )
+        logger.error("bitrix keepalive FAILED (run): %s", ex, exc_info=True)
+        _send_alert(f"⚠️ Bitrix keep-alive упал целиком: {ex}")
         return {"ok": False, "error": str(ex)}
+
+    failed = [r for r in results if not r["ok"]]
+    logger.info("bitrix keepalive: %d portal(s), %d failed", len(results), len(failed))
+    if failed:
+        lines = "\n".join(f"• {r['domain'] or r['member_id']}: {r.get('error')}" for r in failed)
+        _send_alert(
+            "⚠️ Bitrix keep-alive не смог обновить токен по порталам:\n"
+            f"{lines}\nRefresh_token может протухнуть — проверьте интеграцию (возможно, нужна переустановка)."
+        )
+    return {"ok": not failed, "portals": len(results), "failed": len(failed)}

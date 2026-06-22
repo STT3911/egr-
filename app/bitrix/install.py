@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.bitrix.database import get_db
 from app.bitrix.models import AppSettings
+from app.bitrix.tenancy import find_settings, next_settings_id
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -113,14 +114,15 @@ async def install_app(request: Request, db: AsyncSession = Depends(get_db)):
             status_code=400
         )
     
-    # Save tokens to DB
-    result = await db.execute(select(AppSettings).where(AppSettings.id == 1))
-    app_cfg = result.scalar_one_or_none()
-    
+    # Save tokens to DB — upsert по порталу (member_id), а не в единственную строку id=1.
+    # Это и есть мультитенант: установка на второй портал создаёт новую запись,
+    # а не затирает токены первого.
+    app_cfg = await find_settings(db, member_id=member_id, domain=domain)
+
     if app_cfg is None:
-        app_cfg = AppSettings(id=1)
+        app_cfg = AppSettings(id=await next_settings_id(db))
         db.add(app_cfg)
-    
+
     app_cfg.bitrix_domain = domain
     app_cfg.bitrix_member_id = member_id or app_cfg.bitrix_member_id
     app_cfg.access_token = access_token

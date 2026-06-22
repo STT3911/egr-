@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bitrix.database import AsyncSessionLocal, get_db
 from app.bitrix.models import AppSettings
+from app.bitrix.tenancy import find_settings
 from app.bitrix.requisite_service import RequisiteService
 
 logger = logging.getLogger(__name__)
@@ -56,23 +57,11 @@ def _extract_company_id(payload: dict) -> str:
     
     return str(payload.get("ID", "") or "")
 
-async def _validate_webhook_source(db: AsyncSession, payload: dict) -> bool:
-    """
-    Validate webhook source against stored settings.
-    Returns: bool (is_valid)
-    """
-    # Ищем настройки. В идеале искать по member_id, но пока оставим limit(1)
-    result = await db.execute(select(AppSettings).limit(1))
-    app_cfg = result.scalar_one_or_none()
-    
-    if app_cfg is None:
-        logger.warning("Webhook validation failed: App settings not found in DB.")
-        return False
-    
+def _extract_auth_ids(payload: dict) -> tuple[str | None, str | None]:
+    """Достать domain и member_id отправителя вебхука (разные форматы Битрикса)."""
     auth = payload.get("auth", {})
     if not isinstance(auth, dict):
         auth = {}
-    
     incoming_domain = (
         auth.get("domain") or auth.get("DOMAIN")
         or payload.get("DOMAIN") or payload.get("auth[domain]")
@@ -82,22 +71,33 @@ async def _validate_webhook_source(db: AsyncSession, payload: dict) -> bool:
         or payload.get("member_id") or payload.get("MEMBER_ID")
         or auth.get("auth[member_id]")
     )
-    
-    if app_cfg.bitrix_domain and incoming_domain and str(incoming_domain) != app_cfg.bitrix_domain:
-        logger.warning(f"Webhook rejected: domain mismatch ({incoming_domain} != {app_cfg.bitrix_domain}).")
-        return False
-    
-    if app_cfg.bitrix_member_id and incoming_member_id and str(incoming_member_id) != app_cfg.bitrix_member_id:
-        logger.warning(f"Webhook rejected: member_id mismatch ({incoming_member_id} != {app_cfg.bitrix_member_id}).")
-        return False
-        
-    
-    return True
+    return (
+        str(incoming_domain) if incoming_domain else None,
+        str(incoming_member_id) if incoming_member_id else None,
+    )
 
-async def _process_company_update_task(company_id: int) -> None:
-    """Background task to process company update."""
+async def _resolve_app_settings(db: AsyncSession, payload: dict):
+    """Найти настройки портала-отправителя (мультитенант).
+
+    Возвращает AppSettings нужного портала или None, если портал неизвестен
+    (не установлен у нас) — тогда вебхук отклоняем.
+    """
+    incoming_domain, incoming_member_id = _extract_auth_ids(payload)
+    if not incoming_domain and not incoming_member_id:
+        logger.warning("Webhook rejected: no domain/member_id in payload.")
+        return None
+
+    app_cfg = await find_settings(db, member_id=incoming_member_id, domain=incoming_domain)
+    if app_cfg is None:
+        logger.warning(
+            f"Webhook rejected: unknown portal (member_id={incoming_member_id}, domain={incoming_domain})."
+        )
+    return app_cfg
+
+async def _process_company_update_task(company_id: int, member_id: str | None, domain: str | None) -> None:
+    """Background task to process company update под токеном нужного портала."""
     async with AsyncSessionLocal() as db:
-        bitrix_client = BitrixClient(db)
+        bitrix_client = BitrixClient(db, domain=domain, member_id=member_id)
         egr_client = EGRClient()
         service = RequisiteService(bitrix_client, egr_client)
         await service.process_company_update(company_id)
@@ -124,24 +124,29 @@ async def company_update_webhook(
         
         body = _normalize_payload(raw_body if isinstance(raw_body, dict) else {})
         
-        # Проверяем источник вебхука (домен и member_id)
-        is_valid = await _validate_webhook_source(db, body)
-        if not is_valid:
+        # Резолвим портал-отправитель (мультитенант). Неизвестный портал → 403.
+        app_cfg = await _resolve_app_settings(db, body)
+        if app_cfg is None:
             return JSONResponse(
                 {"status": "error", "message": "Webhook source validation failed"},
                 status_code=403,
             )
-        
+
         company_id_str = _extract_company_id(body)
         if not company_id_str:
             logger.warning(f"Webhook: Company ID not found in payload: {body}")
             return JSONResponse({"status": "error", "message": "Company ID not found"}, status_code=400)
-        
+
         company_id = int(company_id_str)
-        logger.info(f"Webhook: Received OnCrmCompanyUpdate for company ID={company_id}")
-        
-        # Отправляем в фон, чтобы Битрикс быстро получил ответ 200 OK
-        background_tasks.add_task(_process_company_update_task, company_id)
+        logger.info(
+            f"Webhook: OnCrmCompanyUpdate company ID={company_id} "
+            f"(portal member_id={app_cfg.bitrix_member_id}, domain={app_cfg.bitrix_domain})"
+        )
+
+        # Отправляем в фон под токеном именно этого портала, чтобы Битрикс быстро получил 200 OK
+        background_tasks.add_task(
+            _process_company_update_task, company_id, app_cfg.bitrix_member_id, app_cfg.bitrix_domain
+        )
         return JSONResponse({"status": "ok"})
     
     except ValueError as e:
