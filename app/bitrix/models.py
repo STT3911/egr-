@@ -20,6 +20,12 @@ class AppSettings(Base):
     # Bitrix24 connection
     bitrix_domain = Column(String(255), nullable=True)
     bitrix_member_id = Column(String(100), nullable=True)
+
+    # OAuth-креды локального приложения ЭТОГО портала (мультитенант).
+    # Хранятся по-портально вместо единой пары в .env — у каждого локального
+    # приложения свой client_id/secret. Нужны для refresh токена.
+    bitrix_client_id = Column(String(255), nullable=True)
+    bitrix_client_secret = Column(String(255), nullable=True)
     
     # Для безопасной валидации вебхуков (Опционально, но рекомендуется)
     application_token = Column(String(255), nullable=True)

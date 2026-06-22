@@ -78,14 +78,24 @@ class BitrixClient:
             
             if not cfg.refresh_token:
                 raise BitrixAPIError("Refresh token not available")
-            
+
+            # Креды локального приложения этого портала (мультитенант). Резерв на
+            # .env — для переходного периода, пока креды не перенесены в БД.
+            client_id = (cfg.bitrix_client_id or settings.BITRIX_CLIENT_ID or "").strip()
+            client_secret = (cfg.bitrix_client_secret or settings.BITRIX_CLIENT_SECRET or "").strip()
+            if not client_id or not client_secret:
+                raise BitrixAPIError(
+                    f"Bitrix client_id/secret not configured for portal "
+                    f"(member_id={cfg.bitrix_member_id}, domain={cfg.bitrix_domain})"
+                )
+
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     "https://oauth.bitrix.info/oauth/token/",
                     data={
                         "grant_type": "refresh_token",
-                        "client_id": settings.BITRIX_CLIENT_ID,
-                        "client_secret": settings.BITRIX_CLIENT_SECRET,
+                        "client_id": client_id,
+                        "client_secret": client_secret,
                         "refresh_token": cfg.refresh_token,
                     },
                 )

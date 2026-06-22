@@ -171,6 +171,8 @@ async def save_settings(request: Request, db: AsyncSession = Depends(get_db)):
     
     preset_id = form.get("preset_id", "")
     unp_field_code = form.get("unp_field_code", "")
+    client_id = (form.get("bitrix_client_id") or "").strip()
+    client_secret = (form.get("bitrix_client_secret") or "").strip()
     ip_mask_full = form.get("ip_mask_full", "Индивидуальный предприниматель {company_name}")
     ip_mask_short = form.get("ip_mask_short", "ИП {company_name}")
     ip_mask_basis = form.get("ip_mask_basis", "Свидетельство о регистрации № {company_unp}")
@@ -194,7 +196,14 @@ async def save_settings(request: Request, db: AsyncSession = Depends(get_db)):
         app_cfg.requisite_preset_id = int(preset_id)
     if unp_field_code:
         app_cfg.unp_field_code = str(unp_field_code)
-        
+
+    # OAuth-креды портала: client_id обновляем если задан; секрет — только если
+    # введён (пустой = не менять, чтобы повторное сохранение не стёрло его).
+    if client_id:
+        app_cfg.bitrix_client_id = client_id
+    if client_secret:
+        app_cfg.bitrix_client_secret = client_secret
+
     app_cfg.ip_mask_full = str(ip_mask_full)
     app_cfg.ip_mask_short = str(ip_mask_short)
     app_cfg.ip_mask_basis = str(ip_mask_basis)
@@ -205,8 +214,8 @@ async def save_settings(request: Request, db: AsyncSession = Depends(get_db)):
     # Самовосстановление подписки: гарантируем, что обработчик ONCRMCOMPANYUPDATE
     # зарегистрирован, даже если Битрикс не вызвал установочный путь /bitrix/install.
     try:
-        from app.bitrix.install import _bind_company_update_event
-        await _bind_company_update_event(domain, auth_id)
+        from app.bitrix.install import _bind_company_events
+        await _bind_company_events(domain, auth_id)
     except Exception as e:
         logger.error(f"Failed to ensure event subscription on save: {e}")
 

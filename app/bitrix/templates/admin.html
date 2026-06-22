@@ -89,6 +89,27 @@
         <p class="ui-ctl-hint">Доступные переменные: <code>{company_name}</code>, <code>{company_unp}</code>.</p>
     </div>
 
+    <div class="ui-section">
+        <h2 class="ui-section__heading">OAuth приложения</h2>
+        <div class="ui-field">
+            <label class="ui-ctl-label-text" for="bitrix_client_id">Код приложения (client_id):</label>
+            <div class="ui-ctl">
+                <input type="text" id="bitrix_client_id" name="bitrix_client_id" class="ui-ctl-element"
+                       value="{{ app_cfg.bitrix_client_id if app_cfg and app_cfg.bitrix_client_id else '' }}"
+                       placeholder="local.xxxxxxxx.xxxxxxxx">
+            </div>
+        </div>
+        <div class="ui-field">
+            <label class="ui-ctl-label-text" for="bitrix_client_secret">Ключ приложения (client_secret):</label>
+            <div class="ui-ctl">
+                <input type="password" id="bitrix_client_secret" name="bitrix_client_secret" class="ui-ctl-element"
+                       value="" autocomplete="new-password"
+                       placeholder="{% if app_cfg and app_cfg.bitrix_client_secret %}•••••• задан — оставьте пустым, чтобы не менять{% else %}секретный ключ приложения{% endif %}">
+            </div>
+        </div>
+        <p class="ui-ctl-hint">Берётся из карточки локального приложения в Битрикс24. Нужны для автообновления токена этого портала.</p>
+    </div>
+
     <div class="ui-actions">
         <button type="submit" class="ui-btn ui-btn-success" id="submit-btn">
             <span class="ui-spinner" id="loading-spinner" style="display: none;"></span>
