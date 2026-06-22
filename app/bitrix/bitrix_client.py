@@ -84,13 +84,32 @@ class BitrixClient:
                         "refresh_token": cfg.refresh_token,
                     },
                 )
-                resp.raise_for_status()
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"Token refresh HTTP error: {resp.status_code} {resp.text[:200]}")
+                    raise BitrixAPIError(f"Token refresh failed: HTTP {resp.status_code}") from e
+
                 data = resp.json()
-                
-                cfg.access_token = data.get("access_token", cfg.access_token)
-                cfg.refresh_token = data.get("refresh_token", cfg.refresh_token)
-                cfg.token_expires_at = now + timedelta(seconds=data.get("expires_in", 3600))
-                
+
+                # Сохраняем только если сервер реально вернул непустые токены.
+                # .get(key, default) спасает лишь от отсутствия ключа, но не от "" / null —
+                # без этой проверки пустой ответ затёр бы рабочий токен и положил интеграцию.
+                new_access = (data.get("access_token") or "").strip()
+                new_refresh = (data.get("refresh_token") or "").strip()
+                if not new_access or not new_refresh:
+                    logger.error(f"Token refresh returned empty token(s), keeping existing. Keys: {list(data.keys())}")
+                    raise BitrixAPIError("Token refresh failed: empty access/refresh token")
+
+                try:
+                    expires_in = int(data.get("expires_in") or 3600)
+                except (TypeError, ValueError):
+                    expires_in = 3600
+
+                cfg.access_token = new_access
+                cfg.refresh_token = new_refresh
+                cfg.token_expires_at = now + timedelta(seconds=expires_in)
+
                 await self.db.commit()
                 logger.info("Token refreshed successfully")
         

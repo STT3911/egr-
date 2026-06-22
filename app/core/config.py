@@ -141,6 +141,13 @@ class Settings(BaseSettings):
     # Bitrix24 Integration
     BITRIX_CLIENT_ID: Optional[str] = None
     BITRIX_CLIENT_SECRET: Optional[str] = None
+    # Keep-alive: принудительный refresh токена по расписанию, чтобы refresh_token
+    # не протух при простое (живёт ~30 дней, обновляется при каждом обращении).
+    BITRIX_KEEPALIVE_ENABLED: bool = True
+    BITRIX_KEEPALIVE_SCHEDULE_SECONDS: int = 86400   # раз в сутки
+    # Алерты об сбоях фоновых задач (опционально; если не задано — только лог).
+    ALERT_TELEGRAM_BOT_TOKEN: Optional[str] = None
+    ALERT_TELEGRAM_CHAT_ID: Optional[str] = None
     
     # External service integration
     APP_URL: Optional[str] = None

@@ -51,10 +51,13 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
 
     # 2. Ищем данные авторизации
     domain = params.get("DOMAIN") or params.get("domain")
-    auth_id = params.get("AUTH_ID") or params.get("auth")
-    refresh_id = params.get("REFRESH_ID") or params.get("refresh_id")
+    auth_id = (params.get("AUTH_ID") or params.get("auth") or "").strip()
+    refresh_id = (params.get("REFRESH_ID") or params.get("refresh_id") or "").strip()
     expires_raw = params.get("AUTH_EXPIRES") or params.get("expires", 3600)
-    expires_in = int(expires_raw)
+    try:
+        expires_in = int(expires_raw)
+    except (TypeError, ValueError):
+        expires_in = 3600
     member_id = params.get("member_id") or params.get("MEMBER_ID")
 
     if not domain or not auth_id:

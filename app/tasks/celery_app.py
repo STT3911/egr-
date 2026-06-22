@@ -15,6 +15,7 @@ celery_app = Celery(
         "app.tasks.bankrot_tasks",
         "app.tasks.license_tasks",
         "app.tasks.webhook_tasks",
+        "app.tasks.bitrix_tasks",
     ],
 )
 
@@ -25,6 +26,7 @@ from app.tasks import park_tasks
 from app.tasks import bankrot_tasks
 from app.tasks import license_tasks
 from app.tasks import webhook_tasks
+from app.tasks import bitrix_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {
@@ -170,6 +172,16 @@ _beat_schedule["grp-monthly-export"] = {
 
 if not settings.GIAS_SYNC_ENABLED:
     _beat_schedule.pop("gias-sync-directory-registries", None)
+
+# Keep-alive Битрикс-токена: принудительный refresh по расписанию, чтобы
+# refresh_token не протух при простое (без вебхуков). По умолчанию раз в сутки.
+if settings.BITRIX_KEEPALIVE_ENABLED:
+    _beat_schedule["bitrix-token-keepalive"] = {
+        "task": "app.tasks.bitrix_tasks.bitrix_token_keepalive",
+        "schedule": timedelta(seconds=settings.BITRIX_KEEPALIVE_SCHEDULE_SECONDS),
+        "args": (),
+        "options": {"expires": int(settings.BITRIX_KEEPALIVE_SCHEDULE_SECONDS * 0.8)},
+    }
 
 # Bankrot.gov.by в расписании только если BANKROT_SCHEDULE_ENABLED=true
 if settings.BANKROT_SCHEDULE_ENABLED:

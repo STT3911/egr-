@@ -92,11 +92,16 @@ async def install_app(request: Request, db: AsyncSession = Depends(get_db)):
     
     domain = params.get("DOMAIN", "")
     member_id = params.get("member_id") or params.get("MEMBER_ID", "")
-    access_token = params.get("AUTH_ID", "")
-    refresh_token = params.get("REFRESH_ID", "")
-    expires_in = int(params.get("AUTH_EXPIRES", 3600))
-    
-    if not domain or not access_token:
+    access_token = params.get("AUTH_ID", "").strip()
+    refresh_token = params.get("REFRESH_ID", "").strip()
+    try:
+        expires_in = int(params.get("AUTH_EXPIRES") or 3600)
+    except (TypeError, ValueError):
+        expires_in = 3600
+
+    # Без refresh_token приложение не сможет работать в фоне (нечем обновлять access_token),
+    # поэтому требуем оба токена непустыми — иначе не сохраняем мусор и просим переустановить.
+    if not domain or not access_token or not refresh_token:
         logger.error(f"Installation: required params missing. Params: {params}")
         return templates.TemplateResponse(
             "install.html",
