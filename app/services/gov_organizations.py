@@ -254,6 +254,12 @@ def rebuild(include_joint_stock: bool = False, flush_every: int = 1000) -> dict:
     stats = {"egr_scanned": 0, "egr_added": 0, "grp_scanned": 0, "grp_added": 0}
     seen: set = set()
     try:
+        # Полная пересборка: справочник целиком выводится из исходных данных,
+        # поэтому очищаем перед наполнением (иначе остаются устаревшие записи,
+        # переставшие проходить классификацию после изменения маркеров).
+        db.execute(text("TRUNCATE TABLE gov_organizations"))
+        db.commit()
+
         # --- ЕГР ---
         buf: List[dict] = []
         for unp, name, opf_name, opf_code in _iter_egr_candidates(db):
