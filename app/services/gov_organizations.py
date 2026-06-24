@@ -101,6 +101,8 @@ def _ownership_from_name(n: str, default: str) -> str:
         return "state"
     if "коммунальн" in n:
         return "communal"
+    if "государственн" in n:
+        return "state"
     return default
 
 
@@ -118,35 +120,39 @@ def classify_name(name: Optional[str], opf_name: Optional[str] = None,
     if _PRIVATE_RE.search(text_l):
         return None
 
-    # 2) Советы / исполкомы (местное управление) → communal
-    m = _COUNCIL_RE.search(text_l)
-    if m:
-        return Classification("local_council", "communal", m.group(0))
+    # ВАЖНО: сначала проверяем СОБСТВЕННУЮ ОПФ-форму (унитарное предприятие /
+    # учреждение / АО), и только потом органы. Иначе РУП/ГУП с упоминанием
+    # «Министерства…/…исполкома» в названии ошибочно попадают в gov_body/council.
 
-    # 3) Министерства / госкомитеты / департаменты → state
-    m = _GOV_BODY_RE.search(text_l)
-    if m:
-        return Classification("gov_body", "state", m.group(0))
-
-    # 4) Государственные учреждения → state/communal по наименованию
-    m = _INSTITUTION_RE.search(text_l)
-    if m:
-        return Classification("gov_institution", _ownership_from_name(text_l, "state"), m.group(0))
-
-    # 5) Унитарные предприятия (частные уже отсеяны) → state/communal/unknown
+    # 2) Унитарные предприятия (частные уже отсеяны) → state/communal/unknown
     m = _UNITARY_RE.search(text_l)
     if m:
         return Classification("unitary_enterprise", _ownership_from_name(text_l, "unknown"), m.group(0))
 
-    # 6) Акционерные общества — госдоля из данных не определяется → unknown.
-    #    По умолчанию НЕ включаем (много частных); только если явно есть гос-намёк
-    #    или включено флагом.
+    # 3) Государственные учреждения → state/communal по наименованию
+    m = _INSTITUTION_RE.search(text_l)
+    if m:
+        return Classification("gov_institution", _ownership_from_name(text_l, "state"), m.group(0))
+
+    # 4) Акционерные общества — госдоля из данных не определяется → unknown.
+    #    По умолчанию НЕ включаем (много частных); только если есть гос-намёк
+    #    или включено флагом. НЕ проваливаемся дальше в органы.
     m = _JOINT_STOCK_RE.search(text_l)
     if m:
         own = _ownership_from_name(text_l, "unknown")
-        if include_joint_stock or own != "unknown" or "государств" in text_l:
+        if include_joint_stock or own != "unknown":
             return Classification("joint_stock", own, m.group(0))
         return None
+
+    # 5) Министерства / госкомитеты / департаменты (своей ОПФ-формы нет) → state
+    m = _GOV_BODY_RE.search(text_l)
+    if m:
+        return Classification("gov_body", "state", m.group(0))
+
+    # 6) Советы / исполкомы (местное управление, своей ОПФ-формы нет) → communal
+    m = _COUNCIL_RE.search(text_l)
+    if m:
+        return Classification("local_council", "communal", m.group(0))
 
     return None
 
