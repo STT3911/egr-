@@ -134,6 +134,9 @@ class Company(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
     unp = Column(BigInteger, unique=True, nullable=False, index=True)
+    # Происхождение записи: 'egr' (госрегистрация) | 'grp' (найдено через ГРП —
+    # госорганы/бюджетные, которых в ЕГР нет). Центральный реестр = все УНП.
+    source = Column(String(8), nullable=False, server_default="egr", index=True)
     current_status_code = Column(Integer)
     registration_date = Column(Date)
     
@@ -1266,6 +1269,9 @@ class GovOrganization(Base):
     __tablename__ = "gov_organizations"
 
     unp = Column(BigInteger, primary_key=True, index=True)
+    # Ссылка на центральный реестр (egr_companies). Все УНП живут там; здесь —
+    # только классификация поверх.
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=True, index=True)
     full_name = Column(Text, nullable=True)
     short_name = Column(Text, nullable=True)
 

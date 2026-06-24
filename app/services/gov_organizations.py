@@ -300,6 +300,17 @@ def rebuild(include_joint_stock: bool = False, flush_every: int = 1000) -> dict:
                 _flush(db, buf); buf.clear()
         _flush(db, buf); buf.clear()
         logger.info("ГРП: просмотрено=%d, добавлено=%d", stats["grp_scanned"], stats["grp_added"])
+
+        # Проставляем ссылку на центральный реестр (egr_companies) по УНП.
+        res = db.execute(text("""
+            UPDATE gov_organizations g
+            SET company_id = c.id
+            FROM egr_companies c
+            WHERE c.unp = g.unp AND g.company_id IS DISTINCT FROM c.id
+        """))
+        db.commit()
+        stats["linked_company_id"] = res.rowcount or 0
+        logger.info("gov_organizations.company_id проставлено: %d", stats["linked_company_id"])
     finally:
         db.close()
     return stats
