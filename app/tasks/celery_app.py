@@ -192,6 +192,15 @@ if settings.BANKROT_SCHEDULE_ENABLED:
         "options": {"expires": settings.BANKROT_SCHEDULE_SECONDS},
     }
 
+# Геокодинг адресов через OSM/Nominatim — только если включено (1 req/sec, идёт долго).
+if settings.GEOCODE_SCHEDULE_ENABLED:
+    _beat_schedule["egr-geocode-place-locations"] = {
+        "task": "app.tasks.sync_tasks.egr_geocode_place_locations",
+        "schedule": timedelta(seconds=settings.GEOCODE_SCHEDULE_SECONDS),
+        "kwargs": {},
+        "options": {"expires": int(settings.GEOCODE_SCHEDULE_SECONDS * 0.8)},
+    }
+
 if settings.LICENSE_SCHEDULE_ENABLED:
     _beat_schedule["license-check-changes"] = {
         "task": "app.tasks.license_tasks.check_license_changes",

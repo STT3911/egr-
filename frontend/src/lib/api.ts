@@ -24,6 +24,10 @@ export type CompanyProfile = {
   current_name_ru?: string;
   current_short_name_ru?: string;
   current_name_by?: string;
+  place_location_address?: string;
+  // Координаты места нахождения (геокодинг адреса через OSM, хранятся в БД).
+  latitude?: number;
+  longitude?: number;
   names: {
     full_name_ru?: string;
     short_name_ru?: string;
@@ -345,6 +349,22 @@ export const getGrpTaxpayerData = async (unp: string, forceRefresh = false) => {
   const qs = forceRefresh ? "?force_refresh=true" : "";
   return request<GrpTaxpayerData>(
     `/api/v1/grp/${encodeURIComponent(unp)}${qs}`
+  );
+};
+
+export type CompanyGeocode = {
+  unp: number;
+  latitude: number | null;
+  longitude: number | null;
+  cached: boolean;
+  address: string | null;
+};
+
+// Ленивый геокодинг: сервер геокодит адрес через OSM, кэширует в БД и возвращает
+// координаты. Используется, когда в профиле координат ещё нет.
+export const geocodeCompany = async (unp: string) => {
+  return request<CompanyGeocode>(
+    `/api/v1/companies/${encodeURIComponent(unp)}/geocode`
   );
 };
 

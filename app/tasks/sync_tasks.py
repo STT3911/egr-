@@ -1678,6 +1678,13 @@ def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
                         raw_json = EXCLUDED.raw_json,
                         address = EXCLUDED.address,
                         fetched_at = EXCLUDED.fetched_at,
+                        -- При смене адреса сбрасываем координаты — пусть геокодятся заново.
+                        lat = CASE WHEN egr_company_place_locations.address IS DISTINCT FROM EXCLUDED.address
+                                   THEN NULL ELSE egr_company_place_locations.lat END,
+                        lon = CASE WHEN egr_company_place_locations.address IS DISTINCT FROM EXCLUDED.address
+                                   THEN NULL ELSE egr_company_place_locations.lon END,
+                        geocoded_at = CASE WHEN egr_company_place_locations.address IS DISTINCT FROM EXCLUDED.address
+                                   THEN NULL ELSE egr_company_place_locations.geocoded_at END,
                         updated_at = now()
                 """), {
                     "unp": unp,
@@ -1702,6 +1709,76 @@ def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
     except Exception as e:
         logger.exception("egr_sync_place_locations failed: %s", e)
         raise self.retry(exc=e, countdown=60)
+
+
+@celery_app.task(bind=True, max_retries=3, time_limit=1800, soft_time_limit=1740)
+def egr_geocode_place_locations(self, batch_size: int = None):
+    """
+    Геокодит адреса компаний через OSM/Nominatim и сохраняет lat/lon в
+    egr_company_place_locations. Координаты берём из OSM (хранение разрешено
+    лицензией), НЕ из Яндекса.
+
+    Nominatim держит лимит 1 запрос/сек — поэтому идём ПОСЛЕДОВАТЕЛЬНО с паузой
+    NOMINATIM_DELAY_SECONDS. Берём адреса без координат; уже пробованные неудачно
+    повторяем не чаще, чем раз в GEOCODE_RETRY_AFTER_DAYS дней.
+    """
+    from app.services.geocoding import geocode_address
+
+    limit = int(batch_size) if batch_size else settings.GEOCODE_BATCH_SIZE
+
+    async def _run():
+        db = SessionLocal()
+        headers = {"User-Agent": settings.NOMINATIM_USER_AGENT}
+        try:
+            rows = db.execute(text("""
+                SELECT unp, address
+                FROM egr_company_place_locations
+                WHERE address IS NOT NULL AND address <> '' AND lat IS NULL
+                  AND (geocoded_at IS NULL
+                       OR geocoded_at < now() - make_interval(days => :retry_days))
+                ORDER BY geocoded_at NULLS FIRST, unp
+                LIMIT :limit
+            """), {"limit": limit, "retry_days": settings.GEOCODE_RETRY_AFTER_DAYS}).fetchall()
+
+            if not rows:
+                logger.info("egr_geocode_place_locations: nothing to geocode")
+                return 0
+
+            saved = 0
+            timeout = settings.NOMINATIM_TIMEOUT_SECONDS
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as http:
+                for unp, address in rows:
+                    try:
+                        coords = await geocode_address(http, address)
+                    except Exception:
+                        logger.warning("geocode failed for unp=%s", unp, exc_info=True)
+                        coords = None
+
+                    lat, lon = coords if coords else (None, None)
+                    # geocoded_at ставим всегда — фиксируем факт попытки, чтобы
+                    # не дёргать неподдающиеся адреса каждый прогон.
+                    db.execute(text("""
+                        UPDATE egr_company_place_locations
+                        SET lat = :lat, lon = :lon, geocoded_at = now(), updated_at = now()
+                        WHERE unp = :unp
+                    """), {"unp": int(unp), "lat": lat, "lon": lon})
+                    db.commit()
+                    if coords:
+                        saved += 1
+
+                    # Соблюдаем лимит Nominatim 1 req/sec.
+                    await asyncio.sleep(settings.NOMINATIM_DELAY_SECONDS)
+
+            logger.info("egr_geocode_place_locations: geocoded %s/%s", saved, len(rows))
+            return saved
+        finally:
+            db.close()
+
+    try:
+        return asyncio.run(_run())
+    except Exception as e:
+        logger.exception("egr_geocode_place_locations failed: %s", e)
+        raise self.retry(exc=e, countdown=120)
 
 
 # Максимальный размер файла (байт), для которого при ошибке стриминга пробуем загрузить целиком

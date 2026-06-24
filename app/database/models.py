@@ -1,5 +1,5 @@
 """Database models"""
-from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, UniqueConstraint, false
+from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, Float, UniqueConstraint, false
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -486,6 +486,13 @@ class CompanyPlaceLocation(Base):
     unp = Column(BigInteger, primary_key=True, index=True)
     raw_json = Column(JSONB, nullable=True)
     address = Column(Text, nullable=True)  # “человекочитаемый” адрес (если удаётся извлечь)
+
+    # Координаты адреса. Геокодинг через OSM/Nominatim (хранение разрешено лицензией),
+    # НЕ через Яндекс. geocoded_at — отметка последней попытки (в т.ч. неудачной),
+    # чтобы не геокодить один и тот же адрес каждый прогон.
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+    geocoded_at = Column(DateTime, nullable=True)
 
     fetched_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

@@ -1,4 +1,5 @@
 """Company endpoints"""
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Path, Depends
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -596,6 +597,101 @@ async def get_company_tax_debt(
     )
 
 
+@router.get("/{identifier}/geocode")
+async def get_company_geocode(
+    identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """
+    Ленивый геокодинг места нахождения компании.
+
+    Поведение (как договаривались): первый заход — геокодим адрес через
+    OSM/Nominatim и сохраняем lat/lon в egr_company_place_locations; последующие
+    заходы отдаются из БД. Координаты берём из OSM (лицензия разрешает хранение),
+    Яндекс на карточке только РИСУЕТ точку по этим координатам — это его лицензию
+    не нарушает. Сброс координат при смене адреса делает egr_sync_place_locations.
+    """
+    from datetime import datetime, timedelta
+    from app.services.geocoding import geocode_address
+
+    unp = int(identifier)
+
+    row = db.execute(text(
+        "SELECT lat, lon, address, geocoded_at FROM egr_company_place_locations WHERE unp = :unp"
+    ), {"unp": unp}).first()
+
+    # 1) Координаты уже посчитаны — отдаём из базы.
+    if row and row.lat is not None and row.lon is not None:
+        return {"unp": unp, "latitude": row.lat, "longitude": row.lon, "cached": True, "address": row.address}
+
+    # 2) Недавно пытались и не нашли — не дёргаем Nominatim на каждом заходе.
+    if row and row.geocoded_at is not None:
+        if row.geocoded_at > datetime.now() - timedelta(days=settings.GEOCODE_RETRY_AFTER_DAYS):
+            return {"unp": unp, "latitude": None, "longitude": None, "cached": False, "address": row.address}
+
+    # 3) Адрес для геокодинга: место нахождения (Mobile API), иначе текущий адрес ЕГР.
+    address = row.address if row else None
+    if not address:
+        addr_row = db.execute(text("""
+            SELECT h.full_address
+            FROM egr_company_addresses_history h
+            JOIN egr_companies c ON c.id = h.company_id
+            WHERE c.unp = :unp AND h.valid_to IS NULL
+            ORDER BY h.valid_from DESC NULLS LAST
+            LIMIT 1
+        """), {"unp": unp}).first()
+        address = addr_row.full_address if addr_row else None
+
+    if not address:
+        return {"unp": unp, "latitude": None, "longitude": None, "cached": False, "address": None}
+
+    # 4) Троттлинг Nominatim (лимит 1 req/sec) общим Redis-локом на все воркеры.
+    #    Занято — не геокодим сейчас (фронт нарисует через Яндекс на лету, при
+    #    следующем заходе попробуем снова). geocoded_at не трогаем — это не попытка.
+    aggregator = AggregatorService()
+    try:
+        r = getattr(aggregator, "redis", None)
+        if r is not None:
+            try:
+                if not r.set("geocode:nominatim:lock", "1", nx=True, px=1100):
+                    return {"unp": unp, "latitude": None, "longitude": None, "cached": False, "address": address}
+            except Exception:
+                pass
+    finally:
+        aggregator.close()
+
+    # 5) Геокодим через OSM (best-effort) и сохраняем результат.
+    coords = None
+    try:
+        headers = {"User-Agent": settings.NOMINATIM_USER_AGENT}
+        async with httpx.AsyncClient(timeout=settings.NOMINATIM_TIMEOUT_SECONDS, headers=headers) as http:
+            coords = await geocode_address(http, address)
+    except Exception as e:
+        logger.warning(f"geocode failed for {unp}: {e}")
+
+    lat, lon = coords if coords else (None, None)
+
+    # geocoded_at ставим всегда (фиксируем попытку). Адрес меняем только если строки
+    # ещё не было — у существующей place_location адрес авторитетный (Mobile API).
+    try:
+        db.execute(text("""
+            INSERT INTO egr_company_place_locations (unp, address, lat, lon, geocoded_at, created_at, updated_at)
+            VALUES (:unp, :address, :lat, :lon, now(), now(), now())
+            ON CONFLICT (unp) DO UPDATE SET
+                lat = EXCLUDED.lat,
+                lon = EXCLUDED.lon,
+                geocoded_at = now(),
+                updated_at = now()
+        """), {"unp": unp, "address": address, "lat": lat, "lon": lon})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"failed to persist geocode for {unp}: {e}")
+
+    return {"unp": unp, "latitude": lat, "longitude": lon, "cached": False, "address": address}
+
+
 @router.get("/{identifier}/raw")
 async def get_raw_data(
     identifier: str = Path(..., regex=r'^\d{9}$'),
@@ -804,6 +900,8 @@ async def get_company_public(
             CompanyPlaceLocation.unp == int(identifier)
         ).first()
         place_location_address = place_location.address if place_location else None
+        place_location_lat = place_location.lat if place_location else None
+        place_location_lon = place_location.lon if place_location else None
 
         # Статус
         status_name = None
@@ -824,6 +922,8 @@ async def get_company_public(
             "current_short_name_ru": current_name.short_name_ru if current_name else None,
             "current_name_by": current_name.full_name_by if current_name else None,
             "place_location_address": place_location_address,
+            "latitude": place_location_lat,
+            "longitude": place_location_lon,
             "names": [],  # история скрыта
             "addresses": [
                 {

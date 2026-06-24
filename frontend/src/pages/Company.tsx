@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SubscribeButton } from "@/components/SubscribeButton";
+import { CompanyMap } from "@/components/CompanyMap";
 import { motion, useScroll, useSpring } from "framer-motion";
 import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
 import {
@@ -547,6 +548,27 @@ const Company = () => {
             </Card>
             </SectionCard>
           )}
+
+          {/* Карта местоположения: по сохранённым координатам (OSM), иначе геокод на лету */}
+          {(() => {
+            const currentAddress =
+              profile.place_location_address ??
+              profile.addresses?.find((a) => !a.valid_to)?.full_address ??
+              profile.addresses?.[0]?.full_address;
+            const hasCoords =
+              typeof profile.latitude === "number" && typeof profile.longitude === "number";
+            return currentAddress || hasCoords ? (
+              <SectionCard>
+                <CompanyMap
+                  address={currentAddress}
+                  unp={unp ?? String(profile.unp)}
+                  lat={profile.latitude}
+                  lon={profile.longitude}
+                  name={profile.current_name_ru}
+                />
+              </SectionCard>
+            ) : null;
+          })()}
 
           {/* История адресов */}
           {profile.addresses && profile.addresses.length > 0 && (

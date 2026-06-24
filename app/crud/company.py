@@ -362,9 +362,14 @@ class CompanyCRUD:
                 )
 
         place_location_address = None
+        place_location_lat = None
+        place_location_lon = None
         pl = self.db.query(CompanyPlaceLocation).filter(CompanyPlaceLocation.unp == unp).first()
-        if pl and pl.address:
-            place_location_address = pl.address
+        if pl:
+            if pl.address:
+                place_location_address = pl.address
+            place_location_lat = pl.lat
+            place_location_lon = pl.lon
 
         gias_accreditation = None
         if company.gias_accreditation:
@@ -608,6 +613,8 @@ class CompanyCRUD:
             "liquidation_date": company.liquidation_date.isoformat() if company.liquidation_date else None,
             **current_name_fields,
             "place_location_address": place_location_address,
+            "latitude": place_location_lat,
+            "longitude": place_location_lon,
             "gias_accreditation": gias_accreditation,
             "gias_locked_suppliers": gias_locked_suppliers,
             "pvt_resident": pvt_resident,

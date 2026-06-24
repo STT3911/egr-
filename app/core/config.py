@@ -179,6 +179,18 @@ class Settings(BaseSettings):
     LICENSE_SCHEDULE_ENABLED: bool = False
     LICENSE_SCHEDULE_SECONDS: int = 86400
 
+    # Геокодинг адресов через OSM/Nominatim (координаты можно хранить, в отличие
+    # от Яндекса). Nominatim требует валидный User-Agent с контактом и лимит 1 req/sec.
+    NOMINATIM_BASE_URL: str = "https://nominatim.openstreetmap.org"
+    NOMINATIM_USER_AGENT: str = "egr-service/1.0 (+https://test.tendex.by; stt04032@gmail.com)"
+    NOMINATIM_TIMEOUT_SECONDS: float = 30.0
+    NOMINATIM_DELAY_SECONDS: float = 1.1     # пауза между запросами (лимит 1/сек)
+    NOMINATIM_COUNTRY_CODES: str = "by"      # ограничиваем поиск Беларусью
+    GEOCODE_BATCH_SIZE: int = 40             # адресов за один прогон задачи
+    GEOCODE_RETRY_AFTER_DAYS: int = 7        # через сколько дней повторять неудавшийся геокод
+    GEOCODE_SCHEDULE_ENABLED: bool = False   # включить периодический геокодинг в Beat
+    GEOCODE_SCHEDULE_SECONDS: int = 3600
+
     # Telegram bot
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_API_BASE_URL: str = "http://egr-api:8000"

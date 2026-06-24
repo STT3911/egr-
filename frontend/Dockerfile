@@ -5,6 +5,11 @@ WORKDIR /app
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 
+# Ключ JS API Яндекс.Карт для карты на карточке компании (геокодинг на лету,
+# координаты не хранятся). Пусто = карта просто не показывается.
+ARG VITE_YANDEX_MAPS_API_KEY=
+ENV VITE_YANDEX_MAPS_API_KEY=$VITE_YANDEX_MAPS_API_KEY
+
 COPY package*.json ./
 RUN npm install --no-audit --no-fund
 

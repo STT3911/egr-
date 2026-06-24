@@ -186,6 +186,9 @@ class CompanyProfileResponse(BaseModel):
     current_name_ru: Optional[str] = None
     current_short_name_ru: Optional[str] = None
     place_location_address: Optional[str] = None
+    # Координаты места нахождения (геокодинг адреса через OSM/Nominatim, хранятся в БД).
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     current_name_by: Optional[str] = None
     names: List[CompanyNameSchema] = []
     addresses: List[CompanyAddressSchema] = []
