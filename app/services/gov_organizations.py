@@ -43,10 +43,10 @@ PRIVATE_MARKERS = [
 COUNCIL_MARKERS = [
     "сельский совет", "поселковый совет", "городской совет", "районный совет",
     "областной совет", "совет депутатов",
-    "сельисполком", "сельский исполнительный комитет",
-    "поселковый исполнительный комитет", "районный исполнительный комитет",
-    "городской исполнительный комитет", "областной исполнительный комитет",
-    "исполнительный комитет", "райисполком", "облисполком", "горисполком",
+    "сельисполком", "исполнительный комитет",  # полная форма «X исполнительный комитет»
+    # NB: сокращения горисполком/райисполком/облисполком НЕ включаем — они
+    # встречаются как родитель в родительном падеже («…Мингорисполкома») в
+    # названиях ЧУЖИХ организаций и дают ложные срабатывания.
 ]
 GOV_BODY_MARKERS = [
     "министерство", "государственный комитет", "комитет государственного",
@@ -69,6 +69,13 @@ UNITARY_MARKERS = [
 JOINT_STOCK_MARKERS = [
     "открытое акционерное общество", "закрытое акционерное общество",
 ]
+# Прочие гос-формы (производственные объединения, концерны) — своя ОПФ-форма,
+# проверяется до органов, чтобы не путать с упоминанием исполкома/министерства.
+OTHER_STATE_MARKERS = [
+    "государственное производственное объединение", "производственное объединение",
+    "научно-производственное объединение", "государственное объединение",
+    "концерн",
+]
 
 
 def _compile_regex(markers: List[str]) -> re.Pattern:
@@ -81,11 +88,12 @@ _GOV_BODY_RE = _compile_regex(GOV_BODY_MARKERS)
 _INSTITUTION_RE = _compile_regex(INSTITUTION_MARKERS)
 _UNITARY_RE = _compile_regex(UNITARY_MARKERS)
 _JOINT_STOCK_RE = _compile_regex(JOINT_STOCK_MARKERS)
+_OTHER_STATE_RE = _compile_regex(OTHER_STATE_MARKERS)
 
 # Все включающие маркеры (для SQL-предфильтра кандидатов)
 ALL_INCLUDE_MARKERS = (
     COUNCIL_MARKERS + GOV_BODY_MARKERS + INSTITUTION_MARKERS
-    + UNITARY_MARKERS + JOINT_STOCK_MARKERS
+    + UNITARY_MARKERS + JOINT_STOCK_MARKERS + OTHER_STATE_MARKERS
 )
 
 
@@ -133,6 +141,11 @@ def classify_name(name: Optional[str], opf_name: Optional[str] = None,
     m = _INSTITUTION_RE.search(text_l)
     if m:
         return Classification("gov_institution", _ownership_from_name(text_l, "state"), m.group(0))
+
+    # 3b) Производственные объединения / концерны → other_state
+    m = _OTHER_STATE_RE.search(text_l)
+    if m:
+        return Classification("other_state", _ownership_from_name(text_l, "state"), m.group(0))
 
     # 4) Акционерные общества — госдоля из данных не определяется → unknown.
     #    По умолчанию НЕ включаем (много частных); только если есть гос-намёк
