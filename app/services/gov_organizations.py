@@ -185,13 +185,10 @@ def _iter_egr_candidates(db, batch: int = 5000) -> Iterator[Tuple[int, str, Opti
             WHERE e->>'vnaim' ~* :rx
         )
     """).bindparams(rx=_INCLUDE_REGEX_SQL)
-    result = db.execute(sql, execution_options={"stream_results": True})
-    while True:
-        rows = result.fetchmany(batch)
-        if not rows:
-            break
-        for unp, name in rows:
-            yield int(unp), name, None, None
+    # Кандидатов немного (~125k); читаем всё разом, чтобы не держать серверный
+    # курсор открытым во время commit-ов записи (иначе "named cursor isn't valid").
+    for unp, name in db.execute(sql).fetchall():
+        yield int(unp), name, None, None
 
 
 def _iter_grp_candidates(db, batch: int = 5000) -> Iterator[Tuple[int, str]]:
@@ -200,13 +197,8 @@ def _iter_grp_candidates(db, batch: int = 5000) -> Iterator[Tuple[int, str]]:
         FROM grp_taxpayer_data
         WHERE full_name ~* :rx
     """).bindparams(rx=_INCLUDE_REGEX_SQL)
-    result = db.execute(sql, execution_options={"stream_results": True})
-    while True:
-        rows = result.fetchmany(batch)
-        if not rows:
-            break
-        for unp, name in rows:
-            yield int(unp), name
+    for unp, name in db.execute(sql).fetchall():
+        yield int(unp), name
 
 
 def _flush(db, rows: List[dict]) -> None:
