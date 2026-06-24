@@ -1254,3 +1254,33 @@ class BankrotSyncRun(Base):
     output_file = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
     stats_json = Column(JSONB, nullable=True)
+
+
+class GovOrganization(Base):
+    """Справочник государственных организаций-юрлиц (классифицированных по имени/ОПФ).
+
+    Самостоятельный справочник, наполняемый классификатором поверх собранных данных
+    (egr_raw_company_data + grp_taxpayer_data). Ключ — УНП. FK к egr_companies НЕТ:
+    чистые госорганы (сельисполкомы/Советы) в ЕГР отсутствуют и приходят из ГРП.
+    """
+    __tablename__ = "gov_organizations"
+
+    unp = Column(BigInteger, primary_key=True, index=True)
+    full_name = Column(Text, nullable=True)
+    short_name = Column(Text, nullable=True)
+
+    # ОПФ из ЕГР (nsi00203), если запись пришла из egr_raw; для ГРП-источника пусто
+    opf_code = Column(Integer, nullable=True, index=True)
+    opf_name = Column(Text, nullable=True)
+
+    # local_council | gov_body | gov_institution | unitary_enterprise | joint_stock | other_state
+    category = Column(String(32), nullable=False, index=True)
+    # state (республиканская) | communal (коммунальная) | unknown
+    ownership = Column(String(16), nullable=False, index=True)
+    # egr | grp — откуда классифицирована запись
+    source = Column(String(8), nullable=False, index=True)
+    # маркер, по которому сработала классификация (для отладки/тюнинга)
+    matched_marker = Column(Text, nullable=True)
+
+    classified_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
