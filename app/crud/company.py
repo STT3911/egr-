@@ -26,6 +26,7 @@ from app.database.models import (
 from datetime import datetime
 import logging
 from app.utils.search_normalizer import normalize_company_name
+from app.services.contact_parser import parse_contacts
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +451,7 @@ class CompanyCRUD:
                 "object_building": item.object_building,
                 "object_office": item.object_office,
                 "object_contacts": item.object_contacts,
+                "object_contacts_parsed": parse_contacts(item.object_contacts),
                 "format_type": item.format_type,
                 "location_type": item.location_type,
                 "assortment_type": item.assortment_type,
