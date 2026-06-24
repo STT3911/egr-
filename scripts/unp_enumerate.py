@@ -116,6 +116,11 @@ async def fetch_one(client: GRPClient, unp: str, max_retries: int, base_delay: f
             return await client.get_taxpayer(int(unp))
         except httpx.HTTPStatusError as e:
             status = e.response.status_code if e.response is not None else None
+            # 4xx (кроме 429) = УНП не существует/невалиден → сразу пусто, БЕЗ ретраев.
+            # ГРП на несуществующий номер отдаёт 400 — а таких большинство, поэтому
+            # ретраить их нельзя (сожжёт rate-limit вхолостую).
+            if status is not None and 400 <= status < 500 and status != 429:
+                return {}
             attempt += 1
             if status == 429:
                 wait = cooldown
