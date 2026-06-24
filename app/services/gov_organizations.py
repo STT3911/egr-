@@ -185,7 +185,7 @@ def _iter_egr_candidates(db, batch: int = 5000) -> Iterator[Tuple[int, str, Opti
             WHERE e->>'vnaim' ~* :rx
         )
     """).bindparams(rx=_INCLUDE_REGEX_SQL)
-    result = db.execution_options(stream_results=True).execute(sql)
+    result = db.execute(sql, execution_options={"stream_results": True})
     while True:
         rows = result.fetchmany(batch)
         if not rows:
@@ -200,7 +200,7 @@ def _iter_grp_candidates(db, batch: int = 5000) -> Iterator[Tuple[int, str]]:
         FROM grp_taxpayer_data
         WHERE full_name ~* :rx
     """).bindparams(rx=_INCLUDE_REGEX_SQL)
-    result = db.execution_options(stream_results=True).execute(sql)
+    result = db.execute(sql, execution_options={"stream_results": True})
     while True:
         rows = result.fetchmany(batch)
         if not rows:
