@@ -148,15 +148,30 @@ async def run(args) -> None:
     known = load_known_unps(args.known_tables.split(","))
     logger.info("Известных УНП в БД: %d", len(known))
 
+    # резюме из чекпойнта: пропускаем уже пройденные регионы и стартуем с seq
+    resume_region, resume_seq = None, None
+    if args.resume:
+        try:
+            with open(CHECKPOINT_PATH, encoding="utf-8") as f:
+                cp = json.load(f)
+            resume_region, resume_seq = cp.get("region"), cp.get("seq")
+            logger.info("resume: продолжаю с региона %s, seq %s", resume_region, resume_seq)
+        except Exception as e:
+            logger.warning("resume: чекпойнт не прочитан (%s), старт с начала", e)
+
     client = GRPClient()
     found = 0
     queried = 0
+    last_logged = 0
     pending: list = []  # (unp_int, raw_json)
     try:
         for region in regions:
+            if resume_region is not None and region < resume_region:
+                continue
             empty_run = 0
             seq_start = args.seq_start
-            # резюме: если чекпойнт по этому региону — продолжаем с него
+            if resume_region is not None and region == resume_region and resume_seq:
+                seq_start = int(resume_seq)
             seq = seq_start
             while seq <= args.seq_end:
                 # собрать батч НЕизвестных кандидатов (с сохранением порядка),
@@ -198,9 +213,11 @@ async def run(args) -> None:
                     pending.clear()
                     save_checkpoint(region, seq, found)
 
-                if queried % args.progress_every == 0:
+                if queried - last_logged >= args.progress_every:
+                    last_logged = queried
                     logger.info("регион %d seq~%d | запросов=%d найдено=%d пустых_подряд=%d",
                                 region, seq, queried, found, empty_run)
+                    save_checkpoint(region, seq, found)
 
                 # вежливая пауза между батчами
                 await asyncio.sleep(args.delay)
@@ -235,6 +252,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--progress-every", type=int, default=1000, help="лог прогресса каждые N запросов")
     p.add_argument("--known-tables", default="egr_raw_company_data,grp_raw_data,grp_taxpayer_data",
                    help="таблицы с известными УНП для дедупликации (через запятую)")
+    p.add_argument("--resume", action="store_true",
+                   help="продолжить с последнего чекпойнта (data/unp_enumerate_checkpoint.json)")
     return p
 
 
