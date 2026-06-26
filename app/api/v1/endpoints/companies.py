@@ -613,7 +613,7 @@ async def get_company_geocode(
     не нарушает. Сброс координат при смене адреса делает egr_sync_place_locations.
     """
     from datetime import datetime, timedelta
-    from app.services.geocoding import geocode_address
+    from app.services.geocoding import geocode_address_yandex
 
     unp = int(identifier)
 
@@ -646,27 +646,26 @@ async def get_company_geocode(
     if not address:
         return {"unp": unp, "latitude": None, "longitude": None, "cached": False, "address": None}
 
-    # 4) Троттлинг Nominatim (лимит 1 req/sec) общим Redis-локом на все воркеры.
-    #    Занято — не геокодим сейчас (фронт нарисует через Яндекс на лету, при
-    #    следующем заходе попробуем снова). geocoded_at не трогаем — это не попытка.
+    # 4) Лёгкий троттлинг общим Redis-локом: гасим всплески одновременных
+    #    cache-miss запросов (дневной лимит Яндекс-геокодера ограничен). Занято —
+    #    не геокодим сейчас, при следующем заходе попробуем снова (geocoded_at не трогаем).
     aggregator = AggregatorService()
     try:
         r = getattr(aggregator, "redis", None)
         if r is not None:
             try:
-                if not r.set("geocode:nominatim:lock", "1", nx=True, px=1100):
+                if not r.set("geocode:yandex:lock", "1", nx=True, px=600):
                     return {"unp": unp, "latitude": None, "longitude": None, "cached": False, "address": address}
             except Exception:
                 pass
     finally:
         aggregator.close()
 
-    # 5) Геокодим через OSM (best-effort) и сохраняем результат.
+    # 5) Геокодим через Яндекс HTTP-геокодер (точно по РБ) и кэшируем результат.
     coords = None
     try:
-        headers = {"User-Agent": settings.NOMINATIM_USER_AGENT}
-        async with httpx.AsyncClient(timeout=settings.NOMINATIM_TIMEOUT_SECONDS, headers=headers) as http:
-            coords = await geocode_address(http, address)
+        async with httpx.AsyncClient(timeout=settings.YANDEX_GEOCODER_TIMEOUT_SECONDS) as http:
+            coords = await geocode_address_yandex(http, address)
     except Exception as e:
         logger.warning(f"geocode failed for {unp}: {e}")
 

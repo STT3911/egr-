@@ -191,6 +191,12 @@ class Settings(BaseSettings):
     GEOCODE_SCHEDULE_ENABLED: bool = False   # включить периодический геокодинг в Beat
     GEOCODE_SCHEDULE_SECONDS: int = 3600
 
+    # Яндекс HTTP-геокодер (точное покрытие по РБ; OSM для РБ адресов непригоден).
+    # Ключ «API Геокодера» (тот же формат, что geocode-maps.yandex.ru/1.x в Postman).
+    YANDEX_GEOCODER_URL: str = "https://geocode-maps.yandex.ru/1.x/"
+    YANDEX_GEOCODER_API_KEY: Optional[str] = None
+    YANDEX_GEOCODER_TIMEOUT_SECONDS: float = 15.0
+
     # Telegram bot
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_API_BASE_URL: str = "http://egr-api:8000"
