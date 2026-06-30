@@ -11,6 +11,7 @@ from app.database.models import (
     CompanyAddressHistory,
     CompanyVEDHistory,
     CompanyContactHistory,
+    CompanyContact,
     SyncHistory,
     RawCompanyData,
     CompanyPlaceLocation,
@@ -604,6 +605,33 @@ class CompanyCRUD:
             for row in bankrot_rows
         ]
 
+        # Агрегированные контакты: дедуп по (type, value_norm), источники — списком.
+        contact_rows = (
+            self.db.query(CompanyContact)
+            .filter(CompanyContact.company_id == company.id)
+            .order_by(CompanyContact.contact_type, CompanyContact.value)
+            .all()
+        )
+        _agg: Dict = {}
+        for cc in contact_rows:
+            entry = _agg.get((cc.contact_type, cc.value_norm))
+            if entry is None:
+                _agg[(cc.contact_type, cc.value_norm)] = {
+                    "contact_type": cc.contact_type,
+                    "value": cc.value,
+                    "full_name": cc.full_name,
+                    "position": cc.position,
+                    "sources": [cc.source],
+                }
+            else:
+                if cc.source not in entry["sources"]:
+                    entry["sources"].append(cc.source)
+                if not entry["full_name"] and cc.full_name:
+                    entry["full_name"] = cc.full_name
+                if not entry["position"] and cc.position:
+                    entry["position"] = cc.position
+        contacts_aggregated = list(_agg.values())
+
         return {
             "unp": company.unp,
             "entity_type_id": company.entity_type_id,
@@ -619,6 +647,7 @@ class CompanyCRUD:
             "gias_locked_suppliers": gias_locked_suppliers,
             "pvt_resident": pvt_resident,
             "trade_registry_records": trade_registry_records,
+            "contacts_aggregated": contacts_aggregated,
             "eaeu_sez_resident_records": eaeu_sez_resident_records,
             "license_records": license_records,
             "inspection_plan_records": inspection_plan_records,

@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.license_tasks",
         "app.tasks.webhook_tasks",
         "app.tasks.bitrix_tasks",
+        "app.tasks.contacts_tasks",
     ],
 )
 
@@ -27,6 +28,7 @@ from app.tasks import bankrot_tasks
 from app.tasks import license_tasks
 from app.tasks import webhook_tasks
 from app.tasks import bitrix_tasks
+from app.tasks import contacts_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {
@@ -162,6 +164,14 @@ if settings.PVT_SCHEDULE_ENABLED:
         "options": {"expires": settings.PVT_SYNC_SCHEDULE_SECONDS},
     }
 
+# Пересборка агрегированных контактов компании — раз в сутки (тяжёлая очередь).
+_beat_schedule["rebuild-company-contacts"] = {
+    "task": "app.tasks.contacts_tasks.rebuild_company_contacts_task",
+    "schedule": crontab(hour=5, minute=45),
+    "args": (),
+    "options": {"expires": 24 * 3600},
+}
+
 # Ежемесячный экспорт GRP в JSON — всегда в расписании
 _beat_schedule["grp-monthly-export"] = {
     "task": "app.tasks.sync_tasks.grp_monthly_export",
@@ -241,6 +251,7 @@ celery_app.conf.update(
         "app.tasks.bankrot_tasks.sync_bankrot_cases":         {"queue": "heavy"},
         "app.tasks.license_tasks.check_license_changes":      {"queue": "heavy"},
         "app.tasks.park_tasks.sync_pvt_residents":            {"queue": "heavy"},
+        "app.tasks.contacts_tasks.rebuild_company_contacts_task": {"queue": "heavy"},
         # ── Default (celery) queue — всё остальное ────────────────────
         # process_search_index_queue, grp_process_raw, egr_process_raw,
         # sync_daily_changes, load_companies_from_json,

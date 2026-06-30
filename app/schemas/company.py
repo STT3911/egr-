@@ -184,6 +184,15 @@ class BankrotCaseSchema(BaseModel):
     updated_at: Optional[str] = None
 
 
+class AggregatedContactSchema(BaseModel):
+    """Контакт компании из агрегированной таблицы company_contacts (дедуп по значению)."""
+    contact_type: str                  # phone | email | website | other
+    value: str
+    full_name: Optional[str] = None    # ФИО контактного лица (на будущее)
+    position: Optional[str] = None     # должность (на будущее)
+    sources: List[str] = []            # источники: egr / mart / gias / pvt / manual
+
+
 class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
@@ -206,6 +215,7 @@ class CompanyProfileResponse(BaseModel):
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
+    contacts_aggregated: List[AggregatedContactSchema] = []
     eaeu_sez_resident_records: List[CompanyEAEUSEZResidentRecordSchema] = []
     license_records: List[CompanyLicenseRecordSchema] = []
     inspection_plan_records: List[CompanyInspectionPlanRecordSchema] = []

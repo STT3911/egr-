@@ -561,6 +561,39 @@ class CompanyContactHistory(Base):
     company = relationship("Company", back_populates="contacts_history")
 
 
+class CompanyContact(Base):
+    """Агрегированные контакты компании из всех источников (ЕГР/МАРТ/ГИАС/ПВТ + ручные).
+
+    Плоская денормализованная таблица под быструю выдачу карточки и обратный поиск
+    по номеру/почте. Дедуп — по (company_id, contact_type, value_norm, source).
+    full_name/position — на будущее (ФИО и должность контактного лица), пока не заполняются.
+    Ручные контакты (source='manual') авто-сборкой не трогаются.
+    """
+    __tablename__ = "company_contacts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("egr_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    unp = Column(BigInteger, nullable=True, index=True)
+
+    contact_type = Column(String(16), nullable=False)      # phone | email | website | other
+    value = Column(Text, nullable=False)                   # отображаемое (телефон +375…, email lower)
+    value_norm = Column(Text, nullable=False, index=True)  # ключ дедупа/поиска (телефон → цифры, email/прочее → lower)
+
+    full_name = Column(Text, nullable=True)                # ФИО контактного лица (на будущее)
+    position = Column(Text, nullable=True)                 # должность (на будущее)
+
+    source = Column(String(16), nullable=False)            # egr | mart | gias | pvt | manual
+    raw = Column(Text, nullable=True)                      # исходная строка-источник
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "contact_type", "value_norm", "source", name="uq_company_contact"),
+    )
+
+
 class SyncHistory(Base):
     """Synchronization history log"""
     __tablename__ = "egr_sync_history"
