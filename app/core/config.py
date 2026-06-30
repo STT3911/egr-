@@ -169,6 +169,12 @@ class Settings(BaseSettings):
     BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу
     BANKROT_SCHEDULE_SECONDS: int = 86400            # интервал периодической задачи (сек)
 
+    # ЕАЭС СЭЗ: резиденты свободных экономических зон (portal.eaeunion.org).
+    # Синк по расписанию (раз в 3 дня), апсёрт по item_id без удаления старых.
+    SEZ_SCHEDULE_ENABLED: bool = False
+    SEZ_SCHEDULE_SECONDS: int = 259200
+    SEZ_COUNTRY: str = "Беларусь"
+
     # license.gov.by license registry synchronization
     LICENSE_API_URL: str = "https://license.gov.by/api/licenses"
     LICENSE_PAGE_SIZE: int = 200

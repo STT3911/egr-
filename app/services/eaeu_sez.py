@@ -164,3 +164,32 @@ def import_sez_snapshot_rows(db: Any, rows: list[dict[str, Any]], batch_size: in
 
 def import_sez_snapshot_json(db: Any, snapshot_path: Path, batch_size: int = 500) -> dict[str, int]:
     return import_sez_snapshot_rows(db, load_snapshot(snapshot_path), batch_size=batch_size)
+
+
+def sync_eaeu_sez_residents(
+    db: Any,
+    country: str = "Беларусь",
+    timeout: float = 30.0,
+    delay: float = 0.2,
+    retries: int = 2,
+    limit_pages: int | None = None,
+    batch_size: int = 500,
+) -> dict[str, Any]:
+    """Полный авто-синк СЭЗ: выгрузить реестр (с пагинацией) и обновить БД апсёртом.
+
+    Без промежуточных файлов и без удаления: записи обновляются по item_id,
+    исчезнувшие из реестра остаются, last_seen_at пишется на каждый апсёрт.
+    """
+    from app.services.eaeu_sez_fetch import fetch_rows
+
+    rows, fetch_stats = fetch_rows(
+        country=country,
+        timeout=timeout,
+        delay=delay,
+        limit_pages=limit_pages,
+        retries=retries,
+        quiet=True,
+        on_date=None,
+    )
+    import_stats = import_sez_snapshot_rows(db, rows, batch_size=batch_size)
+    return {"fetch": fetch_stats, "import": import_stats}
