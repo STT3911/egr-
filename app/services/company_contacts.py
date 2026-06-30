@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,7 @@ from app.services.contact_parser import parse_contacts
 logger = get_logger("company_contacts")
 
 _BATCH = 2000
+_LOCK_KEY = 911002   # фикс. ключ pg_advisory_lock — гарантия единственного прогона
 
 
 def _norm(contact_type: str, value: str) -> str:
@@ -108,7 +109,16 @@ def _iter_source_contacts(read_db: Session):
 
 
 def rebuild_company_contacts(db: Session) -> dict:
-    """Полная идемпотентная пересборка авто-контактов. db — сессия для записи."""
+    """Полная идемпотентная пересборка авто-контактов. db — сессия для записи.
+
+    Защищена advisory-lock: два параллельных прогона невозможны (иначе дедлоки на
+    конкурентных upsert). Если лок занят — выходим, не делая ничего.
+    """
+    got = db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK_KEY}).scalar()
+    if not got:
+        logger.warning("rebuild_company_contacts: уже выполняется в другом процессе — пропуск")
+        return {"skipped": True}
+
     run_started = datetime.utcnow()
     batch: list[dict] = []
     batch_keys: set = set()   # антидубль ВНУТРИ одного INSERT (иначе ON CONFLICT упадёт)
@@ -129,6 +139,7 @@ def rebuild_company_contacts(db: Session) -> dict:
             },
         )
         db.execute(stmt)
+        db.commit()              # покоммитно — без гигантской транзакции
         upserted += len(batch)
         batch.clear()
         batch_keys.clear()
@@ -151,18 +162,19 @@ def rebuild_company_contacts(db: Session) -> dict:
             if len(batch) >= _BATCH:
                 flush()
         flush()
+
+        # Устаревшие авто-контакты (не встретились в прогоне) удаляем; ручные не трогаем.
+        pruned = db.execute(
+            delete(CompanyContact).where(
+                CompanyContact.source != "manual",
+                CompanyContact.last_seen_at < run_started,
+            )
+        ).rowcount
         db.commit()
     finally:
         read_db.close()
-
-    # Устаревшие авто-контакты (не встретились в прогоне) удаляем; ручные не трогаем.
-    pruned = db.execute(
-        delete(CompanyContact).where(
-            CompanyContact.source != "manual",
-            CompanyContact.last_seen_at < run_started,
-        )
-    ).rowcount
-    db.commit()
+        db.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
+        db.commit()
 
     logger.info("company_contacts rebuilt: upserted=%s pruned=%s", upserted, pruned)
     return {"upserted": upserted, "pruned": pruned}

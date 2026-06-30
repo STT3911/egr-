@@ -49,9 +49,30 @@ class ParseContactsTests(unittest.TestCase):
             ["+375172700712", "+375172702796"],
         )
 
-    def test_dedup_same_phone_different_format(self):
-        # +375296197299 и 375296197299 — один и тот же номер
-        self.assertEqual(parse_contacts("+375296197299 375296197299")["phones"], ["+375296197299"])
+    def test_dedup_same_phone(self):
+        # один и тот же номер дважды → одна запись
+        self.assertEqual(parse_contacts("+375296197299 +375296197299")["phones"], ["+375296197299"])
+
+    # --- форматы ЕГР (телефоны с пробелами-форматированием) ---
+    def test_egr_spaced_phone_with_email(self):
+        r = parse_contacts("+37517 233 58 95, +37529 514 44 77 strat68@mail.ru")
+        self.assertEqual(r["phones"], ["+375172335895", "+375295144477"])
+        self.assertEqual(r["emails"], ["strat68@mail.ru"])
+        self.assertEqual(r["other"], [])
+
+    def test_egr_two_local_numbers_space(self):
+        # два местных номера через пробел (без кода) — оба сохраняются, без мусора
+        self.assertEqual(parse_contacts("2335895 2344508")["phones"], ["2335895", "2344508"])
+
+    def test_egr_80_with_email(self):
+        r = parse_contacts("80215855694 glyb_s@mail.ru")
+        self.assertEqual(r["phones"], ["+375215855694"])
+        self.assertEqual(r["emails"], ["glyb_s@mail.ru"])
+        self.assertEqual(r["other"], [])
+
+    def test_no_garbage_fragments(self):
+        # обрывки цифр из форматированного номера не должны попадать в other
+        self.assertEqual(parse_contacts("+37517 233 58 95")["other"], [])
 
     def test_dedup_email(self):
         self.assertEqual(
