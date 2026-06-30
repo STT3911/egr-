@@ -30,6 +30,21 @@ from app.database.models import (
 
 logger = get_logger("trade_registry_import")
 
+
+def _enqueue_contacts_rebuild() -> None:
+    """После успешного импорта — пересобрать агрегат company_contacts (async, best-effort).
+
+    Импорт пишет сырой object_contacts в trade_registry_records; разобранные контакты
+    в company_contacts появляются только после пересборки. Ставим её в очередь, чтобы
+    новые данные попадали в агрегат сразу, не дожидаясь суточного расписания.
+    """
+    try:
+        from app.tasks.contacts_tasks import rebuild_company_contacts_task
+        rebuild_company_contacts_task.delay()
+        logger.info("queued company_contacts rebuild after trade-registry import")
+    except Exception as exc:
+        logger.warning("could not queue company_contacts rebuild: %s", exc)
+
 CSV_FIELDS = [
     ("legal_name", "Полное наименование юр. лица или ФИО ИП"),
     ("unp", "УНП"),
@@ -350,6 +365,8 @@ def import_csv(
 
         if dry_run:
             db.rollback()
+            return stats
+        _enqueue_contacts_rebuild()
         return stats
     except Exception:
         db.rollback()
@@ -558,6 +575,7 @@ def run_admin_trade_registry_import(
 
         _apply_staged_import(db, parsed_run_id, stats, batch_size)
         _update_run(db, run, "success", stats)
+        _enqueue_contacts_rebuild()
         return stats
     except Exception as exc:
         db.rollback()
