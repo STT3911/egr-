@@ -78,6 +78,13 @@ class CompanyPVTResidentSchema(BaseModel):
     last_seen_at: Optional[str] = None
 
 
+class ParsedContactsSchema(BaseModel):
+    """Разобранные контакты МАРТ (из object_contacts): телефоны/email/прочее."""
+    phones: List[str] = []
+    emails: List[str] = []
+    other: List[str] = []
+
+
 class CompanyTradeRegistryRecordSchema(BaseModel):
     registration_number: Optional[str] = None
     legal_name: Optional[str] = None
@@ -93,6 +100,7 @@ class CompanyTradeRegistryRecordSchema(BaseModel):
     object_building: Optional[str] = None
     object_office: Optional[str] = None
     object_contacts: Optional[str] = None
+    object_contacts_parsed: Optional[ParsedContactsSchema] = None
     format_type: Optional[str] = None
     location_type: Optional[str] = None
     assortment_type: Optional[str] = None
