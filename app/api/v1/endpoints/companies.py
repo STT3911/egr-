@@ -597,6 +597,32 @@ async def get_company_tax_debt(
     )
 
 
+@router.get("/{identifier}/related")
+async def get_related_companies(
+    identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
+    limit: int = Query(50, ge=1, le=200, description="Максимум связанных компаний в каждой категории"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Связанные компании: по общим телефону/email и по тому же адресу (здание).
+
+    Данные берутся из периодически пересобираемых агрегатов (company_contacts,
+    company_address_keys), поэтому отражают состояние на момент последней
+    пересборки (раз в сутки), не текущий момент день-в-день.
+    """
+    from app.services.company_relations import find_related_by_address, find_related_by_contact
+
+    company = CompanyCRUD(db).get_by_unp(int(identifier))
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Компания {identifier} не найдена")
+
+    return {
+        "unp": int(identifier),
+        "by_contact": find_related_by_contact(db, company.id, limit=limit),
+        "by_address": find_related_by_address(db, company.id, limit=limit),
+    }
+
+
 @router.get("/{identifier}/geocode")
 async def get_company_geocode(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),

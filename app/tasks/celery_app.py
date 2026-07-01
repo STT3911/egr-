@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.tasks.bitrix_tasks",
         "app.tasks.contacts_tasks",
         "app.tasks.eaeu_sez_tasks",
+        "app.tasks.address_tasks",
     ],
 )
 
@@ -31,6 +32,7 @@ from app.tasks import webhook_tasks
 from app.tasks import bitrix_tasks
 from app.tasks import contacts_tasks
 from app.tasks import eaeu_sez_tasks
+from app.tasks import address_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {
@@ -174,6 +176,14 @@ _beat_schedule["rebuild-company-contacts"] = {
     "options": {"expires": 24 * 3600},
 }
 
+# Пересборка ключей текущих адресов ("компании по одному адресу") — раз в сутки.
+_beat_schedule["rebuild-company-address-keys"] = {
+    "task": "app.tasks.address_tasks.rebuild_company_address_keys_task",
+    "schedule": crontab(hour=6, minute=15),
+    "args": (),
+    "options": {"expires": 24 * 3600},
+}
+
 # Ежемесячный экспорт GRP в JSON — всегда в расписании
 _beat_schedule["grp-monthly-export"] = {
     "task": "app.tasks.sync_tasks.grp_monthly_export",
@@ -264,6 +274,7 @@ celery_app.conf.update(
         "app.tasks.park_tasks.sync_pvt_residents":            {"queue": "heavy"},
         "app.tasks.contacts_tasks.rebuild_company_contacts_task": {"queue": "heavy"},
         "app.tasks.eaeu_sez_tasks.sync_eaeu_sez_residents":   {"queue": "heavy"},
+        "app.tasks.address_tasks.rebuild_company_address_keys_task": {"queue": "heavy"},
         # ── Default (celery) queue — всё остальное ────────────────────
         # process_search_index_queue, grp_process_raw, egr_process_raw,
         # sync_daily_changes, load_companies_from_json,

@@ -15,7 +15,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import text
@@ -1033,6 +1033,166 @@ async def list_data_sources(
     return {
         "updated_at": datetime.utcnow().isoformat(),
         "items": sources,
+    }
+
+
+# --- Связанные компании: общие списками (по контакту / по адресу) --------------
+# Читают уже собранные агрегаты company_contacts / company_address_keys
+# (пересобираются раз в сутки — см. app.tasks.contacts_tasks / app.tasks.address_tasks),
+# без парсинга на лету. Группы считаются на лету GROUP BY/HAVING — эндпоинты
+# админские и не горячие, поэтому без материализации кластеров.
+#
+# Пороги (RELATED_MIN_PHONE_DIGITS, RELATED_MAX_CLUSTER_SIZE) — из settings/.env, те же,
+# что и в поиске связей для одной компании (app.services.company_relations) — не расходятся,
+# и настраиваются без деплоя (правка .env + рестарт).
+
+
+@router.get("/related/contacts")
+async def list_related_by_contact(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_admin),
+):
+    """Группы компаний, у которых совпадает телефон или email (2..MAX_CLUSTER_SIZE компаний)."""
+    params = {
+        "min_phone_digits": settings.RELATED_MIN_PHONE_DIGITS,
+        "max_cluster_size": settings.RELATED_MAX_CLUSTER_SIZE,
+        "limit": limit,
+        "offset": offset,
+    }
+
+    rows = db.execute(
+        text(
+            """
+            WITH clusters AS (
+                SELECT contact_type, value_norm, count(DISTINCT company_id) AS cluster_size
+                FROM company_contacts
+                WHERE contact_type IN ('phone', 'email')
+                  AND (contact_type != 'phone' OR length(value_norm) >= :min_phone_digits)
+                GROUP BY contact_type, value_norm
+                HAVING count(DISTINCT company_id) BETWEEN 2 AND :max_cluster_size
+            ),
+            page AS (
+                SELECT * FROM clusters ORDER BY cluster_size DESC, value_norm LIMIT :limit OFFSET :offset
+            )
+            SELECT p.contact_type, p.value_norm, p.cluster_size,
+                   json_agg(json_build_object('unp', c.unp, 'name', COALESCE(n.full_name_ru, n.short_name_ru))
+                            ORDER BY c.unp) AS companies
+            FROM page p
+            JOIN company_contacts cc ON cc.contact_type = p.contact_type AND cc.value_norm = p.value_norm
+            JOIN egr_companies c ON c.id = cc.company_id
+            LEFT JOIN LATERAL (
+                SELECT full_name_ru, short_name_ru FROM egr_company_names_history
+                WHERE company_id = cc.company_id
+                ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST LIMIT 1
+            ) n ON true
+            GROUP BY p.contact_type, p.value_norm, p.cluster_size
+            ORDER BY p.cluster_size DESC, p.value_norm
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    total = db.execute(
+        text(
+            """
+            SELECT count(*) FROM (
+                SELECT contact_type, value_norm
+                FROM company_contacts
+                WHERE contact_type IN ('phone', 'email')
+                  AND (contact_type != 'phone' OR length(value_norm) >= :min_phone_digits)
+                GROUP BY contact_type, value_norm
+                HAVING count(DISTINCT company_id) BETWEEN 2 AND :max_cluster_size
+            ) t
+            """
+        ),
+        {"min_phone_digits": settings.RELATED_MIN_PHONE_DIGITS, "max_cluster_size": settings.RELATED_MAX_CLUSTER_SIZE},
+    ).scalar() or 0
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [
+            {
+                "matched_type": r["contact_type"],
+                "matched_value": r["value_norm"],
+                "count": r["cluster_size"],
+                "companies": r["companies"],
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/related/addresses")
+async def list_related_by_address(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    session: dict = Depends(require_admin),
+):
+    """Группы компаний по одному адресу — здание, без квартиры/офиса (2..MAX_CLUSTER_SIZE компаний)."""
+    params = {"max_cluster_size": settings.RELATED_MAX_CLUSTER_SIZE, "limit": limit, "offset": offset}
+
+    rows = db.execute(
+        text(
+            """
+            WITH clusters AS (
+                SELECT address_key, count(DISTINCT company_id) AS cluster_size
+                FROM company_address_keys
+                WHERE address_key IS NOT NULL
+                GROUP BY address_key
+                HAVING count(DISTINCT company_id) BETWEEN 2 AND :max_cluster_size
+            ),
+            page AS (
+                SELECT * FROM clusters ORDER BY cluster_size DESC, address_key LIMIT :limit OFFSET :offset
+            )
+            SELECT p.address_key, p.cluster_size,
+                   json_agg(json_build_object('unp', k.unp, 'name', COALESCE(n.full_name_ru, n.short_name_ru),
+                                               'address', k.full_address)
+                            ORDER BY k.unp) AS companies
+            FROM page p
+            JOIN company_address_keys k ON k.address_key = p.address_key
+            LEFT JOIN LATERAL (
+                SELECT full_name_ru, short_name_ru FROM egr_company_names_history
+                WHERE company_id = k.company_id
+                ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST LIMIT 1
+            ) n ON true
+            GROUP BY p.address_key, p.cluster_size
+            ORDER BY p.cluster_size DESC, p.address_key
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    total = db.execute(
+        text(
+            """
+            SELECT count(*) FROM (
+                SELECT address_key FROM company_address_keys
+                WHERE address_key IS NOT NULL
+                GROUP BY address_key
+                HAVING count(DISTINCT company_id) BETWEEN 2 AND :max_cluster_size
+            ) t
+            """
+        ),
+        {"max_cluster_size": settings.RELATED_MAX_CLUSTER_SIZE},
+    ).scalar() or 0
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [
+            {
+                "address_key": r["address_key"],
+                "count": r["cluster_size"],
+                "companies": r["companies"],
+            }
+            for r in rows
+        ],
     }
 
 
