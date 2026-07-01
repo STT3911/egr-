@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SubscribeButton } from "@/components/SubscribeButton";
 import { CompanyMap } from "@/components/CompanyMap";
 import { motion, useScroll, useSpring } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun, Users } from "lucide-react";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -13,6 +13,8 @@ import {
   GrpTaxpayerData,
   getCompanyTaxDebt,
   CompanyTaxDebtResponse,
+  getCompanyRelated,
+  CompanyRelatedResponse,
 } from "@/lib/api";
 
 const fieldLabels: Record<string, string> = {
@@ -86,6 +88,7 @@ const Company = () => {
   const [taxDebtData, setTaxDebtData] = useState<CompanyTaxDebtResponse | null>(null);
   const [taxDebtLoading, setTaxDebtLoading] = useState(false);
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
+  const [relatedData, setRelatedData] = useState<CompanyRelatedResponse | null>(null);
   const [isDark, setIsDark] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [expandedBeltppProducts, setExpandedBeltppProducts] = useState<Set<string>>(new Set());
@@ -169,6 +172,20 @@ const Company = () => {
     };
 
     loadTaxDebt();
+  }, [unp]);
+
+  useEffect(() => {
+    // Второстепенный блок: молча ничего не показываем при ошибке/отсутствии совпадений.
+    const loadRelated = async () => {
+      if (!unp) return;
+      try {
+        const data = await getCompanyRelated(unp);
+        setRelatedData(data);
+      } catch {
+        setRelatedData(null);
+      }
+    };
+    loadRelated();
   }, [unp]);
 
   useEffect(() => {
@@ -1568,6 +1585,71 @@ const Company = () => {
             </CardContent>
           </Card>
           </SectionCard>
+
+          {relatedData && (relatedData.by_address.length > 0 || relatedData.by_contact.length > 0) && (
+            <SectionCard>
+            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-fuchsia-500/25">
+              <CardHeader className="rounded-t-lg" style={{
+                background: 'linear-gradient(90deg, hsl(292 70% 55% / 0.1) 0%, hsl(var(--primary) / 0.08) 100%)'
+              }}>
+                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                  <Users className="w-5 h-5 text-fuchsia-600 dark:text-fuchsia-400" />
+                  Связанные компании
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 p-4 sm:p-6">
+                {relatedData.by_address.length > 0 && (
+                  <div>
+                    <div className="text-xs sm:text-sm text-muted-foreground font-medium mb-2 flex items-center gap-2">
+                      <Building2 className="w-4 h-4" />
+                      По тому же адресу ({relatedData.by_address.length})
+                    </div>
+                    <div className="space-y-2">
+                      {relatedData.by_address.map((item) => (
+                        <Link
+                          key={`addr-${item.unp}`}
+                          to={`/company/${item.unp}`}
+                          className="glass p-3 rounded-lg hover:bg-fuchsia-500/5 transition-all duration-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 group"
+                        >
+                          <span className="text-foreground font-medium text-sm group-hover:text-fuchsia-600 dark:group-hover:text-fuchsia-400 transition-colors">
+                            {item.name || `УНП ${item.unp}`}
+                          </span>
+                          <span className="text-xs text-muted-foreground flex-shrink-0">УНП {item.unp}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {relatedData.by_contact.length > 0 && (
+                  <div>
+                    <div className="text-xs sm:text-sm text-muted-foreground font-medium mb-2 flex items-center gap-2">
+                      <Phone className="w-4 h-4" />
+                      По общему телефону/email ({relatedData.by_contact.length})
+                    </div>
+                    <div className="space-y-2">
+                      {relatedData.by_contact.map((item, idx) => (
+                        <Link
+                          key={`contact-${item.unp}-${idx}`}
+                          to={`/company/${item.unp}`}
+                          className="glass p-3 rounded-lg hover:bg-fuchsia-500/5 transition-all duration-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 group"
+                        >
+                          <span className="text-foreground font-medium text-sm group-hover:text-fuchsia-600 dark:group-hover:text-fuchsia-400 transition-colors">
+                            {item.name || `УНП ${item.unp}`}
+                          </span>
+                          <span className="text-xs text-muted-foreground flex items-center gap-1 flex-shrink-0">
+                            {item.matched_type === "email" ? <Mail className="w-3 h-3" /> : <Phone className="w-3 h-3" />}
+                            {item.matched_value}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            </SectionCard>
+          )}
           </motion.div>
         )}
       </motion.div>

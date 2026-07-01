@@ -375,6 +375,34 @@ export const getCompanyTaxDebt = async (unp: string, limit = 100) => {
   );
 };
 
+export type CompanyRelatedByContact = {
+  unp: number;
+  name: string | null;
+  matched_type: "phone" | "email";
+  matched_value: string;
+};
+
+export type CompanyRelatedByAddress = {
+  unp: number;
+  name: string | null;
+  address: string | null;
+};
+
+export type CompanyRelatedResponse = {
+  unp: number;
+  by_contact: CompanyRelatedByContact[];
+  by_address: CompanyRelatedByAddress[];
+};
+
+// Связанные компании: по общему телефону/email и по тому же текущему адресу
+// (здание, без учёта квартиры/офиса). Публичный эндпоинт, та же чувствительность
+// данных, что и у самой карточки компании.
+export const getCompanyRelated = async (unp: string) => {
+  return request<CompanyRelatedResponse>(
+    `/api/v1/companies/${encodeURIComponent(unp)}/related`
+  );
+};
+
 export const syncGrpTaxpayerData = async (onlyMissing = true, limit = 5000) => {
   const qs = toQuery({ only_missing: onlyMissing ? 1 : 0, limit });
   return request<{ queued: boolean; task_id: string; limit: number; only_missing: boolean }>(
