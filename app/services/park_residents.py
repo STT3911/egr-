@@ -233,6 +233,8 @@ def upsert_resident_record(db: Any, company_id: Any, result: ParkResidentResult)
         "last_seen_at": now,
         "updated_at": now,
     }
+    from sqlalchemy import text as _sql_text
+
     stmt = pg_insert(PVTResidentRecord).values(values)
     stmt = stmt.on_conflict_do_update(
         index_elements=[PVTResidentRecord.unp],
@@ -246,8 +248,13 @@ def upsert_resident_record(db: Any, company_id: Any, result: ParkResidentResult)
             "last_seen_at": stmt.excluded.last_seen_at,
             "updated_at": stmt.excluded.updated_at,
         },
-    )
-    db.execute(stmt)
+    ).returning(_sql_text("(xmax = 0) AS inserted"))
+    # xmax = 0 → строка только что вставлена (первое появление УНП в реестре ПВТ),
+    # иначе — обновление уже известной записи. Событие эмитим только на первое появление.
+    inserted = bool(db.execute(stmt).scalar())
+    if inserted:
+        from app.services.subscription_events import emit_company_event, EVENT_REGISTRY_APPEARANCE
+        emit_company_event(db, result.unp, EVENT_REGISTRY_APPEARANCE, new_value="Резидент ПВТ")
 
 
 def get_last_checked_unp(db: Any) -> int | None:

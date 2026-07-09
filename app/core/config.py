@@ -95,6 +95,9 @@ class Settings(BaseSettings):
 
     # Nalog debt (portal.nalog.gov.by) — папка для выгрузки JSON
     NALOG_DEBT_OUT_DIR: str = "dolg_data"
+    # Периодический синк задолженности МНС (режим monthly — только текущий месяц).
+    NALOG_DEBT_SCHEDULE_ENABLED: bool = False
+    NALOG_DEBT_SCHEDULE_SECONDS: int = 86400
 
     # Экспорт БД в JSON (путь относительно корня проекта; в контейнере = /app/...)
     DB_EXPORT_DIR: str = "data/db_export"
@@ -168,6 +171,15 @@ class Settings(BaseSettings):
     BANKROT_SAVE_EVERY: int = 50                     # промежуточный flush каждые N кейсов
     BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу
     BANKROT_SCHEDULE_SECONDS: int = 86400            # интервал периодической задачи (сек)
+    # OIDC-автообновление токена. Access-токен ersb_frontend живёт ~24ч, поэтому
+    # статический BANKROT_API_TOKEN протухает за сутки. Если задан refresh_token
+    # (offline_access, взять один раз из localStorage браузера после входа на
+    # bankrot.gov.by — ключ oidc.user:...:ersb_frontend), клиент сам меняет его на
+    # свежий access-токен через /connect/token и переживает ротацию refresh-токена.
+    BANKROT_OIDC_TOKEN_URL: str = "https://account.bankrot.gov.by/connect/token"
+    BANKROT_OIDC_CLIENT_ID: str = "ersb_frontend"
+    BANKROT_REFRESH_TOKEN: Optional[str] = None      # refresh_token для авто-обновления access
+    BANKROT_REFRESH_TOKEN_FILE: str = "data/bankrot/refresh_token"  # куда сохранять ротированный refresh
 
     # "Связанные компании" (общий телефон/email/адрес) — пороги вынесены в .env для
     # быстрой настройки без деплоя (менять и смотреть на реальных данных, без пересборки).

@@ -623,6 +623,26 @@ async def get_related_companies(
     }
 
 
+@router.get("/{identifier}/risk")
+async def get_company_risk(
+    identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Риск-профиль контрагента: оценка 0–100 с объяснимыми факторами.
+
+    Считается по локальным данным (банкротство, задолженность МНС, реестр
+    недобросовестных поставщиков, статус/ликвидация, массовый адрес, частые
+    смены адреса/названия, возраст) + сигналы доверия (лицензии, ПВТ/СЭЗ, ГИАС).
+    """
+    from app.services.risk_scoring import compute_risk
+
+    result = compute_risk(db, int(identifier))
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Компания {identifier} не найдена")
+    return result
+
+
 @router.get("/{identifier}/geocode")
 async def get_company_geocode(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),

@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 
@@ -114,8 +115,14 @@ def upsert_rows(db: Any, payloads: list[dict[str, Any]]) -> None:
             "last_seen_at": stmt.excluded.last_seen_at,
             "updated_at": stmt.excluded.updated_at,
         },
-    )
-    db.execute(stmt)
+    ).returning(EAEUSEZResidentRecord.unp, text("(xmax = 0) AS inserted"))
+    # Событие «появление в реестре» — только для УНП, впервые попавших в СЭЗ
+    # (xmax = 0 = свежая вставка, а не обновление существующей записи).
+    new_unps = [unp for unp, inserted in db.execute(stmt).all() if inserted and unp]
+    if new_unps:
+        from app.services.subscription_events import emit_company_event, EVENT_REGISTRY_APPEARANCE
+        for unp in new_unps:
+            emit_company_event(db, unp, EVENT_REGISTRY_APPEARANCE, new_value="Резидент СЭЗ ЕАЭС")
 
 
 def import_sez_snapshot_rows(db: Any, rows: list[dict[str, Any]], batch_size: int = 500) -> dict[str, int]:

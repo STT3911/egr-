@@ -77,6 +77,31 @@ def _event_dict(e: SubscriptionEvent) -> dict:
     }
 
 
+def _mark_fully_processed(db, event_ids: list[int]) -> None:
+    """Проставить processed_at событиям, доставленным во все настроенные у юзера каналы.
+
+    Канал считается «закрытым», если он доставлен (delivered_at не пуст),
+    исчерпал попытки (attempts >= MAX_ATTEMPTS) или не настроен у пользователя.
+    """
+    if not event_ids:
+        return
+    rows = (
+        db.query(SubscriptionEvent, User)
+        .join(User, User.id == SubscriptionEvent.user_id)
+        .filter(SubscriptionEvent.id.in_(event_ids),
+                SubscriptionEvent.processed_at.is_(None))
+        .all()
+    )
+    now = datetime.now()
+    for e, user in rows:
+        wh_needed = bool(user.webhook_url)
+        tg_needed = bool(user.telegram_id)
+        wh_done = (not wh_needed) or e.webhook_delivered_at is not None or e.webhook_attempts >= MAX_ATTEMPTS
+        tg_done = (not tg_needed) or e.telegram_delivered_at is not None or e.telegram_attempts >= MAX_ATTEMPTS
+        if wh_done and tg_done:
+            e.processed_at = now
+
+
 @celery_app.task
 def deliver_subscription_events():
     db = SessionLocal()
@@ -87,8 +112,8 @@ def deliver_subscription_events():
             for r in db.query(SubscriptionEvent.user_id)
             .join(User, User.id == SubscriptionEvent.user_id)
             .filter(
-                SubscriptionEvent.processed_at.is_(None),
-                SubscriptionEvent.delivery_attempts < MAX_ATTEMPTS,
+                SubscriptionEvent.webhook_delivered_at.is_(None),
+                SubscriptionEvent.webhook_attempts < MAX_ATTEMPTS,
                 User.webhook_url.isnot(None),
             )
             .distinct()
@@ -104,8 +129,8 @@ def deliver_subscription_events():
                 db.query(SubscriptionEvent)
                 .filter(
                     SubscriptionEvent.user_id == uid,
-                    SubscriptionEvent.processed_at.is_(None),
-                    SubscriptionEvent.delivery_attempts < MAX_ATTEMPTS,
+                    SubscriptionEvent.webhook_delivered_at.is_(None),
+                    SubscriptionEvent.webhook_attempts < MAX_ATTEMPTS,
                 )
                 .order_by(SubscriptionEvent.id.asc())
                 .limit(BATCH_PER_USER)
@@ -125,20 +150,21 @@ def deliver_subscription_events():
                 if 200 <= resp.status_code < 300:
                     now = datetime.now()
                     for e in events:
-                        e.processed_at = now
+                        e.webhook_delivered_at = now
                     delivered += len(events)
                     logger.info("webhook delivered %s events to user %s", len(events), uid)
                 else:
                     for e in events:
-                        e.delivery_attempts += 1
-                        e.last_delivery_error = f"http {resp.status_code}"
+                        e.webhook_attempts += 1
+                        e.webhook_error = f"http {resp.status_code}"
                     logger.warning("webhook user %s → http %s", uid, resp.status_code)
             except Exception as ex:
                 for e in events:
-                    e.delivery_attempts += 1
-                    e.last_delivery_error = str(ex)[:300]
+                    e.webhook_attempts += 1
+                    e.webhook_error = str(ex)[:300]
                 logger.warning("webhook user %s failed: %s", uid, ex)
 
+            _mark_fully_processed(db, [e.id for e in events])
             db.commit()
 
         return delivered
@@ -163,8 +189,8 @@ def deliver_telegram_events():
             for r in db.query(SubscriptionEvent.user_id)
             .join(User, User.id == SubscriptionEvent.user_id)
             .filter(
-                SubscriptionEvent.processed_at.is_(None),
-                SubscriptionEvent.delivery_attempts < MAX_ATTEMPTS,
+                SubscriptionEvent.telegram_delivered_at.is_(None),
+                SubscriptionEvent.telegram_attempts < MAX_ATTEMPTS,
                 User.telegram_id.isnot(None),
             )
             .distinct()
@@ -180,8 +206,8 @@ def deliver_telegram_events():
                 db.query(SubscriptionEvent)
                 .filter(
                     SubscriptionEvent.user_id == uid,
-                    SubscriptionEvent.processed_at.is_(None),
-                    SubscriptionEvent.delivery_attempts < MAX_ATTEMPTS,
+                    SubscriptionEvent.telegram_delivered_at.is_(None),
+                    SubscriptionEvent.telegram_attempts < MAX_ATTEMPTS,
                 )
                 .order_by(SubscriptionEvent.id.asc())
                 .limit(BATCH_PER_USER)
@@ -205,18 +231,19 @@ def deliver_telegram_events():
                         timeout=HTTP_TIMEOUT,
                     )
                     if 200 <= resp.status_code < 300:
-                        event.processed_at = now
+                        event.telegram_delivered_at = now
                         delivered += 1
                         logger.info("telegram: delivered event %s to user %s", event.id, uid)
                     else:
-                        event.delivery_attempts += 1
-                        event.last_delivery_error = f"http {resp.status_code}: {resp.text[:200]}"
+                        event.telegram_attempts += 1
+                        event.telegram_error = f"http {resp.status_code}: {resp.text[:200]}"
                         logger.warning("telegram: user %s event %s → http %s", uid, event.id, resp.status_code)
                 except Exception as ex:
-                    event.delivery_attempts += 1
-                    event.last_delivery_error = str(ex)[:300]
+                    event.telegram_attempts += 1
+                    event.telegram_error = str(ex)[:300]
                     logger.warning("telegram: user %s event %s failed: %s", uid, event.id, ex)
 
+            _mark_fully_processed(db, [e.id for e in events])
             db.commit()
 
         return delivered

@@ -477,6 +477,17 @@ def _update_run(db: Session, run: TradeRegistryImportRun, status: str | None, st
 
 def _apply_staged_import(db: Session, run_id: uuid.UUID, stats: dict[str, Any], batch_size: int) -> None:
     stage_unps = select(TradeRegistryImportStage.unp).where(TradeRegistryImportStage.run_id == run_id).distinct()
+
+    # УНП, у которых запись в реестре уже была ДО применения загрузки — чтобы
+    # отличить впервые появившихся (для события «появление в реестре МАРТ»).
+    staged_unps = {int(u) for (u,) in db.execute(stage_unps).all() if u is not None}
+    existing_unps = {
+        int(u) for (u,) in db.execute(
+            select(TradeRegistryRecord.unp).where(TradeRegistryRecord.unp.in_(staged_unps)).distinct()
+        ).all()
+    }
+    new_unps = staged_unps - existing_unps
+
     delete_result = db.execute(delete(TradeRegistryRecord).where(TradeRegistryRecord.unp.in_(stage_unps)))
     stats["deleted_old_records"] = int(delete_result.rowcount or 0)
 
@@ -497,6 +508,15 @@ def _apply_staged_import(db: Session, run_id: uuid.UUID, stats: dict[str, Any], 
         last_stage_id = int(rows[-1].id)
 
     db.query(TradeRegistryImportStage).filter(TradeRegistryImportStage.run_id == run_id).delete(synchronize_session=False)
+
+    # События «появление в реестре МАРТ» для впервые попавших УНП.
+    if new_unps:
+        from app.services.subscription_events import emit_company_event, EVENT_REGISTRY_APPEARANCE
+        emitted = 0
+        for unp in new_unps:
+            emitted += emit_company_event(db, unp, EVENT_REGISTRY_APPEARANCE, new_value="Реестр МАРТ")
+        stats["registry_events"] = emitted
+
     db.commit()
 
 

@@ -19,6 +19,7 @@ celery_app = Celery(
         "app.tasks.contacts_tasks",
         "app.tasks.eaeu_sez_tasks",
         "app.tasks.address_tasks",
+        "app.tasks.nalog_debt_tasks",
     ],
 )
 
@@ -33,6 +34,7 @@ from app.tasks import bitrix_tasks
 from app.tasks import contacts_tasks
 from app.tasks import eaeu_sez_tasks
 from app.tasks import address_tasks
+from app.tasks import nalog_debt_tasks
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {
@@ -231,6 +233,15 @@ if settings.LICENSE_SCHEDULE_ENABLED:
         "options": {"expires": settings.LICENSE_SCHEDULE_SECONDS},
     }
 
+# МНС: налоговая задолженность (portal.nalog.gov.by), только если включено.
+if settings.NALOG_DEBT_SCHEDULE_ENABLED:
+    _beat_schedule["nalog-debt-sync"] = {
+        "task": "app.tasks.nalog_debt_tasks.sync_nalog_debt",
+        "schedule": timedelta(seconds=settings.NALOG_DEBT_SCHEDULE_SECONDS),
+        "kwargs": {},
+        "options": {"expires": int(settings.NALOG_DEBT_SCHEDULE_SECONDS * 0.8)},
+    }
+
 # ЕАЭС СЭЗ — резиденты СЭЗ (portal.eaeunion.org), только если включено.
 if settings.SEZ_SCHEDULE_ENABLED:
     _beat_schedule["eaeu-sez-sync"] = {
@@ -274,6 +285,7 @@ celery_app.conf.update(
         "app.tasks.park_tasks.sync_pvt_residents":            {"queue": "heavy"},
         "app.tasks.contacts_tasks.rebuild_company_contacts_task": {"queue": "heavy"},
         "app.tasks.eaeu_sez_tasks.sync_eaeu_sez_residents":   {"queue": "heavy"},
+        "app.tasks.nalog_debt_tasks.sync_nalog_debt":         {"queue": "heavy"},
         "app.tasks.address_tasks.rebuild_company_address_keys_task": {"queue": "heavy"},
         # ── Default (celery) queue — всё остальное ────────────────────
         # process_search_index_queue, grp_process_raw, egr_process_raw,

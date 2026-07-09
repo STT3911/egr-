@@ -35,6 +35,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.services.bankrot_auth import get_token_manager
 
 logger = get_logger("bankrot.client")
 
@@ -76,6 +77,10 @@ class BankrotClient:
             or getattr(settings, "BANKROT_API_URL", _DEFAULT_BASE_URL)
         ).rstrip("/")
 
+        # Токен-менеджер сам обновляет access через refresh_token (если задан).
+        # Явно переданный token имеет приоритет (тесты/ручные вызовы).
+        self._explicit_token = token
+        self._token_mgr = get_token_manager() if token is None else None
         self._token = token or getattr(settings, "BANKROT_API_TOKEN", None)
         self._timeout = timeout or getattr(settings, "BANKROT_TIMEOUT_SECONDS", 30.0)
         self._max_retries = max_retries or getattr(settings, "BANKROT_MAX_RETRIES", 3)
@@ -90,12 +95,15 @@ class BankrotClient:
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
         }
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
-        else:
-            logger.debug(
-                "BANKROT_API_TOKEN not set — syncing without authorization "
-                "(public read access)."
+        # Authorization выставляется динамически в _apply_auth() перед каждым
+        # запросом (токен-менеджер может обновить access-токен между вызовами).
+        initial = self._current_token()
+        if initial:
+            headers["Authorization"] = f"Bearer {initial}"
+        elif not (self._token_mgr and self._token_mgr.has_refresh):
+            logger.warning(
+                "BANKROT_API_TOKEN/REFRESH_TOKEN не заданы — API вернёт 401. "
+                "Укажите BANKROT_REFRESH_TOKEN в .env."
             )
 
         self._client = httpx.Client(
@@ -121,25 +129,56 @@ class BankrotClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _current_token(self) -> Optional[str]:
+        """Актуальный access-токен: явный → через менеджер (с авто-refresh) → статический."""
+        if self._explicit_token:
+            return self._explicit_token
+        if self._token_mgr is not None:
+            return self._token_mgr.get_token()
+        return self._token
+
+    def _apply_auth(self, force_refresh: bool = False) -> bool:
+        """Проставить свежий Bearer в заголовки клиента. True, если токен есть/обновлён."""
+        if self._token_mgr is not None:
+            token = self._token_mgr.get_token(force_refresh=force_refresh)
+        else:
+            token = self._explicit_token or self._token
+        if token:
+            self._client.headers["Authorization"] = f"Bearer {token}"
+            return True
+        return False
+
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         """Выполнить HTTP-запрос с retry-логикой.
 
         Retry применяется при сетевых ошибках и 5xx ответах.
-        Ошибки авторизации (401/403) не ретраятся и выбрасывают
-        BankrotAPIError сразу.
+        При 401 один раз форсим обновление токена через refresh_token и
+        повторяем запрос; если и после этого 401/403 — пробрасываем ошибку.
         """
         url = f"{self.base_url}{path}"
         last_exc: Optional[Exception] = None
+        reauth_tried = False
+
+        self._apply_auth()
 
         for attempt in range(1, self._max_retries + 1):
             try:
                 resp = self._client.request(method, url, **kwargs)
 
+                # 401 → один раз обновляем токен через refresh и повторяем запрос
+                if resp.status_code == 401 and not reauth_tried and self._token_mgr \
+                        and self._token_mgr.has_refresh:
+                    reauth_tried = True
+                    logger.info("Bankrot: 401 — обновляю access-токен через refresh и повторяю")
+                    if self._apply_auth(force_refresh=True):
+                        continue
+
                 # Auth errors — не ретраим, сразу пробрасываем
                 if resp.status_code in (401, 403):
                     raise BankrotAPIError(
                         f"Auth error HTTP {resp.status_code} for {method} {path}. "
-                        "Check BANKROT_API_TOKEN in .env",
+                        "Проверьте BANKROT_REFRESH_TOKEN/BANKROT_API_TOKEN в .env "
+                        "(refresh-токен мог истечь).",
                         status_code=resp.status_code,
                     )
 

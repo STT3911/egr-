@@ -758,12 +758,20 @@ class SubscriptionEvent(Base):
     new_value = Column(Text, nullable=True)   # стало
     occurred_at = Column(DateTime, nullable=False, server_default=func.now())  # когда событие возникло
     created_at = Column(DateTime, nullable=False, server_default=func.now())
-    # Когда обработано (доставлено). NULL = ещё не обработано;
-    # можно сбросить в NULL, чтобы обработать заново.
+    # Когда полностью обработано = доставлено во все каналы, настроенные у юзера.
+    # NULL = ещё не завершено; можно сбросить в NULL для повторной обработки.
     processed_at = Column(DateTime, nullable=True, index=True)
-    # Webhook-доставка: счётчик попыток и последняя ошибка (для ретраев/дед-леттера).
+    # Легаси-поля (общий счётчик) — оставлены для совместимости, не используются
+    # новой логикой доставки, которая ведёт счётчики по каждому каналу.
     delivery_attempts = Column(Integer, nullable=False, server_default="0")
     last_delivery_error = Column(Text, nullable=True)
+    # Независимая доставка по каналам: webhook и telegram больше не делят processed_at.
+    webhook_delivered_at = Column(DateTime, nullable=True)
+    webhook_attempts = Column(Integer, nullable=False, server_default="0")
+    webhook_error = Column(Text, nullable=True)
+    telegram_delivered_at = Column(DateTime, nullable=True)
+    telegram_attempts = Column(Integer, nullable=False, server_default="0")
+    telegram_error = Column(Text, nullable=True)
 
 
 # =====================================================
