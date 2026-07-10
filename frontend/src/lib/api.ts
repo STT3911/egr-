@@ -403,6 +403,30 @@ export const getCompanyRelated = async (unp: string) => {
   );
 };
 
+export type CompanyRiskFactor = {
+  code: string;
+  title: string;
+  weight: number;
+  detail: string;
+};
+
+export type CompanyRisk = {
+  unp: number;
+  score: number;
+  level: "high" | "medium" | "low";
+  factors: CompanyRiskFactor[];
+  trust_signals: CompanyRiskFactor[];
+  computed_at: string;
+};
+
+// Риск-профиль контрагента: оценка 0–100 с объяснимыми факторами. Публичный
+// эндпоинт (та же чувствительность, что у карточки компании).
+export const getCompanyRisk = async (unp: string) => {
+  return request<CompanyRisk>(
+    `/api/v1/companies/${encodeURIComponent(unp)}/risk`
+  );
+};
+
 export const syncGrpTaxpayerData = async (onlyMissing = true, limit = 5000) => {
   const qs = toQuery({ only_missing: onlyMissing ? 1 : 0, limit });
   return request<{ queued: boolean; task_id: string; limit: number; only_missing: boolean }>(

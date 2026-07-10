@@ -15,6 +15,8 @@ import {
   CompanyTaxDebtResponse,
   getCompanyRelated,
   CompanyRelatedResponse,
+  getCompanyRisk,
+  CompanyRisk,
 } from "@/lib/api";
 
 const fieldLabels: Record<string, string> = {
@@ -89,6 +91,7 @@ const Company = () => {
   const [taxDebtLoading, setTaxDebtLoading] = useState(false);
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
   const [relatedData, setRelatedData] = useState<CompanyRelatedResponse | null>(null);
+  const [risk, setRisk] = useState<CompanyRisk | null>(null);
   const [isDark, setIsDark] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [expandedBeltppProducts, setExpandedBeltppProducts] = useState<Set<string>>(new Set());
@@ -186,6 +189,19 @@ const Company = () => {
       }
     };
     loadRelated();
+  }, [unp]);
+
+  useEffect(() => {
+    // Риск-профиль: второстепенный блок, при ошибке молча скрываем.
+    const loadRisk = async () => {
+      if (!unp) return;
+      try {
+        setRisk(await getCompanyRisk(unp));
+      } catch {
+        setRisk(null);
+      }
+    };
+    loadRisk();
   }, [unp]);
 
   useEffect(() => {
@@ -483,6 +499,86 @@ const Company = () => {
             animate="visible"
             className="space-y-6"
           >
+            {risk && (() => {
+              const meta = {
+                high:   { color: "#dc2626", bg: "rgba(220,38,38,0.10)",  label: "Высокий риск" },
+                medium: { color: "#d97706", bg: "rgba(217,119,6,0.10)",  label: "Средний риск" },
+                low:    { color: "#16a34a", bg: "rgba(22,163,74,0.10)",  label: "Низкий риск" },
+              }[risk.level];
+              return (
+                <SectionCard>
+                  <Card className="glass shadow-card hover:shadow-glow transition-all duration-300" style={{ borderColor: meta.color + "55" }}>
+                    <CardHeader className="rounded-t-lg" style={{ background: meta.bg }}>
+                      <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                        <AlertTriangle className="w-5 h-5" style={{ color: meta.color }} />
+                        Проверка контрагента
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 sm:p-6 space-y-5">
+                      <div className="flex items-center gap-4">
+                        <div
+                          className="flex-shrink-0 flex flex-col items-center justify-center rounded-2xl w-24 h-24 sm:w-28 sm:h-28"
+                          style={{ background: meta.bg, border: `2px solid ${meta.color}` }}
+                        >
+                          <span className="text-3xl sm:text-4xl font-bold leading-none" style={{ color: meta.color }}>
+                            {risk.score}
+                          </span>
+                          <span className="text-[10px] sm:text-xs text-muted-foreground mt-1">из 100</span>
+                        </div>
+                        <div>
+                          <div className="text-xl sm:text-2xl font-bold" style={{ color: meta.color }}>{meta.label}</div>
+                          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+                            Оценка по данным банкротств, задолженности, реестров и истории компании.
+                          </p>
+                        </div>
+                      </div>
+
+                      {risk.factors.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="text-sm font-semibold text-foreground">Факторы риска</div>
+                          {risk.factors.map((f) => (
+                            <div key={f.code} className="glass rounded-lg p-3 flex items-start gap-3">
+                              <span
+                                className="flex-shrink-0 text-xs font-bold px-2 py-1 rounded-md"
+                                style={{ color: meta.color, background: meta.bg }}
+                              >
+                                +{f.weight}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-foreground">{f.title}</div>
+                                <div className="text-xs text-muted-foreground">{f.detail}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">Значимых факторов риска не обнаружено.</div>
+                      )}
+
+                      {risk.trust_signals.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-sm font-semibold text-foreground">Сигналы доверия</div>
+                          <div className="flex flex-wrap gap-2">
+                            {risk.trust_signals.map((t) => (
+                              <span
+                                key={t.code}
+                                className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full"
+                                style={{ color: "#16a34a", background: "rgba(22,163,74,0.10)" }}
+                                title={t.detail}
+                              >
+                                <Award className="w-3 h-3" />
+                                {t.title}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </SectionCard>
+              );
+            })()}
+
             <SectionCard>
               <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/20">
                 <CardHeader className="rounded-t-lg" style={{
