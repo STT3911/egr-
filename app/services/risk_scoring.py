@@ -91,8 +91,10 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         .scalar()
     ) or 0
     if active_bankrot:
+        # Активное банкротство — само по себе стоп-фактор: одного его достаточно
+        # для уровня «высокий» (вес ≥ LEVEL_HIGH).
         factors.append(_factor(
-            "bankruptcy_active", "Активное дело о банкротстве", 40,
+            "bankruptcy_active", "Активное дело о банкротстве", 50,
             f"Открытых дел: {active_bankrot}",
         ))
     elif total_bankrot:
