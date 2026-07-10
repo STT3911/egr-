@@ -93,8 +93,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_LOOKUP_PER_MINUTE: Optional[int] = 20  # Stricter for lookup/search (anti-parser)
 
-    # Nalog debt (portal.nalog.gov.by) — папка для выгрузки JSON
-    NALOG_DEBT_OUT_DIR: str = "dolg_data"
+    # Nalog debt (portal.nalog.gov.by) — папка для выгрузки JSON.
+    # Обязательно под /app/data (это записываемый том; корень /app доступен
+    # appuser только на чтение → mkdir('dolg_data') падает с Permission denied).
+    NALOG_DEBT_OUT_DIR: str = "data/dolg_data"
     # Периодический синк задолженности МНС (режим monthly — только текущий месяц).
     NALOG_DEBT_SCHEDULE_ENABLED: bool = False
     NALOG_DEBT_SCHEDULE_SECONDS: int = 86400
