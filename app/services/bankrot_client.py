@@ -302,6 +302,15 @@ class BankrotClient:
                         status_code=404,
                     )
 
+                # Ошибки контракта/доступа не исправятся повтором того же запроса.
+                if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                    response_text = resp.text[:500] if resp.text else ""
+                    raise BankrotAPIError(
+                        f"Client error HTTP {resp.status_code} for {method} {path}"
+                        + (f": {response_text}" if response_text else ""),
+                        status_code=resp.status_code,
+                    )
+
                 resp.raise_for_status()
 
                 try:
@@ -548,7 +557,8 @@ class BankrotClient:
         max_pages: Optional[int] = None,
     ) -> Any:
         """POST /messages/all — все публичные сообщения выбранного должника."""
-        page_size = page_size or settings.BANKROT_RELATED_PAGE_SIZE
+        publications_page_size = settings.BANKROT_PUBLICATIONS_PAGE_SIZE
+        page_size = min(page_size or publications_page_size, publications_page_size, 15)
         max_pages = max_pages or settings.BANKROT_RELATED_MAX_PAGES
         offset = 0
         merged: Any = None
