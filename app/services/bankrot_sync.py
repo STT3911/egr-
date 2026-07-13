@@ -25,12 +25,13 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.database.models import BankrotCase, BankrotSyncRun
+from app.database.models import BankrotCase, BankrotCaseDataset, BankrotSyncRun
 from app.services.bankrot_client import BankrotClient, BankrotAPIError
 
 logger = get_logger("bankrot.sync")
@@ -114,6 +115,30 @@ def _safe_str(value: Any) -> Optional[str]:
     return str(value) if not isinstance(value, str) else value
 
 
+def extract_debtor_id(
+    list_data: Optional[Dict], detail_data: Optional[Dict]
+) -> Optional[int]:
+    """Извлечь внутренний id должника для поиска его публикаций."""
+    for source in (detail_data or {}, list_data or {}):
+        for path in (("debtorModel", "id"), ("debtor", "id")):
+            value = _safe_int(_dig(source, *path))
+            if value is not None:
+                return value
+    return None
+
+
+def extract_manager_id(
+    list_data: Optional[Dict], detail_data: Optional[Dict]
+) -> Optional[int]:
+    """Извлечь внутренний id управляющего из живой и прежней схем API."""
+    for source in (detail_data or {}, list_data or {}):
+        for path in (("manager", "id"), ("managerModel", "id")):
+            value = _safe_int(_dig(source, *path))
+            if value is not None:
+                return value
+    return None
+
+
 def _extract_fields(
     list_data: Optional[Dict],
     detail_data: Optional[Dict],
@@ -132,8 +157,12 @@ def _extract_fields(
         return v
 
     manager_name = (
-        _dig(primary, "managerModel", "fullName")
+        _dig(primary, "manager", "fullName")
+        or _dig(primary, "manager", "name")
+        or _dig(primary, "managerModel", "fullName")
         or _dig(primary, "managerModel", "name")
+        or _dig(secondary, "manager", "fullName")
+        or _dig(secondary, "manager", "name")
         or _dig(secondary, "managerModel", "fullName")
         or _dig(secondary, "managerModel", "name")
     )
@@ -147,7 +176,9 @@ def _extract_fields(
         "court":          _safe_str(get("court")),
         "judge":          _safe_str(get("judge")),
         "manager_id":     _safe_int(
-            _dig(primary, "managerModel", "id")
+            _dig(primary, "manager", "id")
+            or _dig(primary, "managerModel", "id")
+            or _dig(secondary, "manager", "id")
             or _dig(secondary, "managerModel", "id")
         ),
         "manager_name":   _safe_str(manager_name),
@@ -249,6 +280,31 @@ def _upsert_cases(db: Session, rows: List[Dict[str, Any]]) -> None:
     db.commit()
 
 
+def _upsert_case_datasets(db: Session, rows: List[Dict[str, Any]]) -> None:
+    """Upsert дочерних наборов без потери последнего успешного payload."""
+    if not rows:
+        return
+
+    stmt = pg_insert(BankrotCaseDataset).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["case_id", "dataset_type"],
+        set_={
+            "endpoint": stmt.excluded.endpoint,
+            "http_method": stmt.excluded.http_method,
+            "payload": func.coalesce(
+                stmt.excluded.payload, BankrotCaseDataset.payload
+            ),
+            "fetch_error": stmt.excluded.fetch_error,
+            "fetched_at": func.coalesce(
+                stmt.excluded.fetched_at, BankrotCaseDataset.fetched_at
+            ),
+            "updated_at": stmt.excluded.updated_at,
+        },
+    )
+    db.execute(stmt)
+    db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Main sync function
 # ---------------------------------------------------------------------------
@@ -263,6 +319,10 @@ def sync_bankrot_cases(
     save_every: Optional[int] = None,
     token: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
+    fetch_related_data: Optional[bool] = None,
+    related_page_size: Optional[int] = None,
+    related_max_pages: Optional[int] = None,
+    related_datasets: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Синхронизировать все дела с bankrot.gov.by в БД и файл.
 
@@ -275,6 +335,10 @@ def sync_bankrot_cases(
         save_every:   flush в БД каждые N дел.
         token:        Bearer-токен (переопределяет BANKROT_API_TOKEN).
         filters:      фильтры для POST /cases (необязательно).
+        fetch_related_data: загружать все публичные разделы карточки дела.
+        related_page_size: размер страницы дочерних разделов.
+        related_max_pages: защита от бесконечной пагинации.
+        related_datasets: ограничить загрузку указанными именами наборов.
 
     Returns:
         dict со счётчиками: processed, failed, upserted, no_unp.
@@ -288,6 +352,22 @@ def sync_bankrot_cases(
     detail_delay = detail_delay if detail_delay is not None else settings.BANKROT_DETAIL_DELAY_SECONDS
     output_dir   = output_dir   or settings.BANKROT_OUTPUT_DIR
     save_every   = save_every   or settings.BANKROT_SAVE_EVERY
+    fetch_related_data = (
+        settings.BANKROT_FETCH_RELATED_DATA
+        if fetch_related_data is None
+        else fetch_related_data
+    )
+    related_page_size = related_page_size or settings.BANKROT_RELATED_PAGE_SIZE
+    related_max_pages = related_max_pages or settings.BANKROT_RELATED_MAX_PAGES
+    if related_datasets is None and settings.BANKROT_RELATED_DATASETS.strip():
+        related_datasets = [
+            item.strip()
+            for item in settings.BANKROT_RELATED_DATASETS.split(",")
+            if item.strip()
+        ]
+    selected_datasets = set(related_datasets) if related_datasets else None
+    manager_data_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
+    debtor_data_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
 
     # --- Create sync run ---
     sync_run = BankrotSyncRun(status="running")
@@ -309,9 +389,12 @@ def sync_bankrot_cases(
         "failed":    0,
         "upserted":  0,
         "no_unp":    0,
+        "datasets_fetched": 0,
+        "datasets_failed": 0,
     }
 
     pending: List[Dict] = []
+    pending_datasets: List[Dict[str, Any]] = []
 
     try:
         with BankrotClient(token=token) as client, \
@@ -357,6 +440,57 @@ def sync_bankrot_cases(
 
                 if detail_delay > 0:
                     time.sleep(detail_delay)
+
+                # ----- Fetch all public related sections -----
+                related_data: Dict[str, Dict[str, Any]] = {}
+                if fetch_related_data:
+                    related_data = client.get_case_related_data(
+                        case_id,
+                        dataset_names=selected_datasets,
+                        page_size=related_page_size,
+                        max_pages=related_max_pages,
+                        delay=detail_delay,
+                    )
+                    debtor_id = extract_debtor_id(list_item, detail_data)
+                    if debtor_id is not None:
+                        if debtor_id not in debtor_data_cache:
+                            debtor_data_cache[debtor_id] = client.get_debtor_related_data(
+                                debtor_id,
+                                dataset_names=selected_datasets,
+                                page_size=related_page_size,
+                                max_pages=related_max_pages,
+                            )
+                        related_data.update(debtor_data_cache[debtor_id])
+
+                    manager_id = extract_manager_id(list_item, detail_data)
+                    if manager_id is not None:
+                        if manager_id not in manager_data_cache:
+                            manager_data_cache[manager_id] = client.get_manager_related_data(
+                                manager_id,
+                                dataset_names=selected_datasets,
+                            )
+                        related_data.update(manager_data_cache[manager_id])
+                    now = datetime.utcnow()
+                    for dataset_type, dataset in related_data.items():
+                        payload = dataset.get("payload")
+                        dataset_error = dataset.get("fetch_error")
+                        pending_datasets.append(
+                            {
+                                "case_id": case_id,
+                                "dataset_type": dataset_type,
+                                "endpoint": dataset["endpoint"],
+                                "http_method": dataset["http_method"],
+                                "payload": payload,
+                                "fetch_error": dataset_error,
+                                "fetched_at": now if payload is not None else None,
+                                "updated_at": now,
+                            }
+                        )
+                        if dataset_error:
+                            errors.append(f"{dataset_type}: {dataset_error}")
+                            stats["datasets_failed"] += 1
+                        else:
+                            stats["datasets_fetched"] += 1
 
                 # ----- Fetch judgements -----
                 judgements_data: Optional[Dict] = None
@@ -407,6 +541,7 @@ def sync_bankrot_cases(
                     "list_data":      list_item,
                     "detail_data":    detail_data,
                     "judgements_group": judgements_data,
+                    "related_data": related_data,
                 }
                 fout.write(
                     json.dumps(merged, ensure_ascii=False, default=str) + "\n"
@@ -418,9 +553,11 @@ def sync_bankrot_cases(
                         "Bankrot: flushing %d cases to DB (total processed=%d)…",
                         len(pending), stats["processed"],
                     )
-                    _upsert_cases(db, pending)
+                    _upsert_cases(db, list(pending))
+                    _upsert_case_datasets(db, list(pending_datasets))
                     stats["upserted"] += len(pending)
                     pending.clear()
+                    pending_datasets.clear()
 
                     # Update progress in sync run
                     db.query(BankrotSyncRun).filter_by(id=run_id).update({
@@ -432,9 +569,11 @@ def sync_bankrot_cases(
         # --- Final flush ---
         if pending:
             logger.info("Bankrot: final flush of %d cases…", len(pending))
-            _upsert_cases(db, pending)
+            _upsert_cases(db, list(pending))
+            _upsert_case_datasets(db, list(pending_datasets))
             stats["upserted"] += len(pending)
             pending.clear()
+            pending_datasets.clear()
 
         # --- Atomic rename tmp → final ---
         tmp_path.rename(final_path)

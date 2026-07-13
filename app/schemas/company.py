@@ -1,6 +1,6 @@
 """Company schemas"""
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from datetime import date
 
 
@@ -182,6 +182,32 @@ class BankrotCaseSchema(BaseModel):
     judge: Optional[str] = None
     manager_name: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class BankrotCaseDatasetSchema(BaseModel):
+    dataset_type: str
+    endpoint: str
+    http_method: str
+    payload: Any = None
+    fetch_error: Optional[str] = None
+    fetched_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class BankrotCaseDetailSchema(BankrotCaseSchema):
+    debtor_unp: Optional[int] = None
+    manager_id: Optional[int] = None
+    last_judgment_id: Optional[int] = None
+    list_data: Optional[Dict[str, Any]] = None
+    detail_data: Optional[Dict[str, Any]] = None
+    judgements_group: Any = None
+    fetch_error: Optional[str] = None
+    datasets: List[BankrotCaseDatasetSchema] = []
+
+
+class CompanyBankrotResponse(BaseModel):
+    unp: int
+    cases: List[BankrotCaseDetailSchema] = []
 
 
 class AggregatedContactSchema(BaseModel):

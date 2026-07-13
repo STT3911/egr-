@@ -163,7 +163,7 @@ class Settings(BaseSettings):
     # Bankrot.gov.by — синхронизация дел о банкротстве
     BANKROT_API_URL: str = "https://api.bankrot.gov.by/v1"
     BANKROT_API_TOKEN: Optional[str] = None          # Bearer token (обязателен для работы API)
-    BANKROT_PAGE_SIZE: int = 100                      # кол-во кейсов на страницу
+    BANKROT_PAGE_SIZE: int = 20                       # кол-во кейсов на страницу (контракт сайта)
     BANKROT_PAGE_DELAY_SECONDS: float = 0.5          # пауза между страницами
     BANKROT_DETAIL_DELAY_SECONDS: float = 0.2        # пауза между detail/judgements запросами
     BANKROT_MAX_RETRIES: int = 3                      # попыток при ошибке
@@ -171,6 +171,10 @@ class Settings(BaseSettings):
     BANKROT_TIMEOUT_SECONDS: float = 30.0            # таймаут HTTP запроса
     BANKROT_OUTPUT_DIR: str = "data/bankrot"         # куда сохранять JSON-выгрузку
     BANKROT_SAVE_EVERY: int = 50                     # промежуточный flush каждые N кейсов
+    BANKROT_FETCH_RELATED_DATA: bool = True           # сообщения, имущество, торги, кредиторы и отчеты
+    BANKROT_RELATED_PAGE_SIZE: int = 20               # проверенный размер страницы дочерних разделов
+    BANKROT_RELATED_MAX_PAGES: int = 1000             # защита от зацикливания нестабильной пагинации
+    BANKROT_RELATED_DATASETS: str = ""                # CSV-фильтр наборов; пусто = все поддерживаемые
     BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу
     BANKROT_SCHEDULE_SECONDS: int = 86400            # интервал периодической задачи (сек)
     # OIDC-автообновление токена. Access-токен ersb_frontend живёт ~24ч, поэтому

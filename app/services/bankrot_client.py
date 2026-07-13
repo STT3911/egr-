@@ -11,9 +11,9 @@
 
 Структура запроса POST /cases:
   {
-    "pagination": {"offset": 0, "count": 100},
-    "sort":       {"sortOrder": "asc"},
-    "filters":    {...}                   # необязательно
+    "pagination": {"offset": 0, "count": 20},
+    "sort":       {"sortOrder": 1},
+    "filters":    {...}                   # полный объект обязателен
   }
 
 Структура ответа POST /cases:
@@ -29,7 +29,9 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Iterator, Optional
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import httpx
 
@@ -40,6 +42,117 @@ from app.services.bankrot_auth import get_token_manager
 logger = get_logger("bankrot.client")
 
 _DEFAULT_BASE_URL = "https://api.bankrot.gov.by/v1"
+
+
+@dataclass(frozen=True)
+class BankrotCaseDatasetSpec:
+    """Описание публичного раздела карточки дела на bankrot.gov.by."""
+
+    name: str
+    path: str
+    method: str = "POST"
+    payload_mode: str = "paginated"
+
+
+BANKROT_CASE_DATASETS: Tuple[BankrotCaseDatasetSpec, ...] = (
+    BankrotCaseDatasetSpec("properties", "/cases/{case_id}/properties"),
+    BankrotCaseDatasetSpec(
+        "property_reports", "/cases/{case_id}/property-reports", payload_mode="filters"
+    ),
+    BankrotCaseDatasetSpec(
+        "property_valuations", "/cases/{case_id}/property-reports/valuation"
+    ),
+    BankrotCaseDatasetSpec("sales", "/cases/{case_id}/sales"),
+    BankrotCaseDatasetSpec("creditor_meetings", "/cases/{case_id}/meetings"),
+    BankrotCaseDatasetSpec("creditor_committees", "/cases/{case_id}/committees"),
+    BankrotCaseDatasetSpec(
+        "creditor_requirements", "/cases/{case_id}/creditor-requirements"
+    ),
+    BankrotCaseDatasetSpec(
+        "property_write_off", "/cases/{case_id}/property-write-off"
+    ),
+    BankrotCaseDatasetSpec(
+        "transfer_remaining_properties",
+        "/cases/{case_id}/transfer-remaining-properties",
+    ),
+    BankrotCaseDatasetSpec(
+        "transfer_unsold_properties", "/cases/{case_id}/transfer-unsold-properties"
+    ),
+    BankrotCaseDatasetSpec(
+        "readjustments", "/cases/{case_id}/readjustments", method="GET", payload_mode="none"
+    ),
+    BankrotCaseDatasetSpec(
+        "fund_balance_reports",
+        "/cases/{case_id}/fund-balance-reports",
+        method="GET",
+        payload_mode="none",
+    ),
+)
+
+BANKROT_MANAGER_DATASETS: Tuple[BankrotCaseDatasetSpec, ...] = (
+    BankrotCaseDatasetSpec(
+        "manager_full_info", "/manager/{manager_id}/fullinfo", method="GET"
+    ),
+    BankrotCaseDatasetSpec(
+        "manager_accreditation", "/manager/{manager_id}/accreditation", method="GET"
+    ),
+    BankrotCaseDatasetSpec(
+        "manager_documents", "/manager/{manager_id}/manager-documents", method="GET"
+    ),
+    BankrotCaseDatasetSpec(
+        "manager_education", "/manager/{manager_id}/education", method="GET"
+    ),
+    BankrotCaseDatasetSpec(
+        "manager_debtors", "/manager/debtors/?id={manager_id}", method="GET"
+    ),
+    BankrotCaseDatasetSpec(
+        "manager_bank_accounts", "/manager/{manager_id}/bank-accounts", method="GET"
+    ),
+    BankrotCaseDatasetSpec(
+        "manager_online_wallets", "/manager/{manager_id}/online-wallets", method="GET"
+    ),
+)
+
+BANKROT_DEBTOR_DATASETS: Tuple[BankrotCaseDatasetSpec, ...] = (
+    BankrotCaseDatasetSpec(
+        "debtor_bank_accounts", "/debtors/{debtor_id}/bank-accounts", method="GET"
+    ),
+    BankrotCaseDatasetSpec(
+        "debtor_online_wallets", "/debtors/{debtor_id}/online-wallets", method="GET"
+    ),
+)
+
+_DEFAULT_CASE_FILTERS: Dict[str, Any] = {
+    "number": "",
+    "status": "",
+    "declarantTypes": None,
+    "manager": "",
+    "procedure": "",
+    "start": {"from": None, "to": None},
+    "end": {"from": None, "to": None},
+    "debtor": {"unp": "", "name": "", "region": "", "type": ""},
+}
+
+_DEFAULT_PUBLICATION_FILTERS: Dict[str, Any] = {
+    "debtorId": None,
+    "publishedDate": {"from": None, "to": None},
+    "messageType": None,
+    "messageStatus": None,
+}
+
+_COLLECTION_KEYS = (
+    "items",
+    "messages",
+    "properties",
+    "propertyReports",
+    "propertyValuations",
+    "sales",
+    "meetings",
+    "committees",
+    "requirementsResults",
+    "propertiesWriteOff",
+    "transferredUnsoldProperty",
+)
 
 
 class BankrotAPIError(Exception):
@@ -235,12 +348,27 @@ class BankrotClient:
     # Public API methods
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _merge_filters(
+        defaults: Dict[str, Any], filters: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        merged = deepcopy(defaults)
+        if not filters:
+            return merged
+
+        for key, value in filters.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key].update(value)
+            else:
+                merged[key] = value
+        return merged
+
     def get_cases_page(
         self,
         offset: int = 0,
-        count: int = 100,
+        count: int = 20,
         filters: Optional[Dict[str, Any]] = None,
-        sort_order: str = "asc",
+        sort_order: int = 1,
     ) -> Dict[str, Any]:
         """POST /cases — одна страница списка дел.
 
@@ -252,15 +380,14 @@ class BankrotClient:
         payload: Dict[str, Any] = {
             "pagination": {"offset": offset, "count": count},
             "sort": {"sortOrder": sort_order},
+            "filters": self._merge_filters(_DEFAULT_CASE_FILTERS, filters),
         }
-        if filters:
-            payload["filters"] = filters
 
         return self._request("POST", "/cases", json=payload)
 
     def iter_all_cases(
         self,
-        page_size: int = 100,
+        page_size: int = 20,
         filters: Optional[Dict[str, Any]] = None,
         delay: float = 0.5,
     ) -> Iterator[Dict[str, Any]]:
@@ -327,3 +454,276 @@ class BankrotClient:
     def get_case_judgements_group(self, case_id: int) -> Dict[str, Any]:
         """GET /cases/{id}/judgements/group — судебные решения по делу."""
         return self._request("GET", f"/cases/{case_id}/judgements/group")
+
+    @staticmethod
+    def _collection_info(data: Any) -> Tuple[Optional[str], Optional[list], int]:
+        if not isinstance(data, dict):
+            return None, None, 0
+
+        collection_keys = _COLLECTION_KEYS + tuple(
+            key
+            for key, value in data.items()
+            if isinstance(value, list) and key not in _COLLECTION_KEYS
+        )
+        for key in collection_keys:
+            value = data.get(key)
+            if isinstance(value, list):
+                total = data.get("totalCount")
+                if total is None:
+                    total = data.get("count")
+                try:
+                    total_int = int(total) if total is not None else 0
+                except (TypeError, ValueError):
+                    total_int = 0
+                return key, value, total_int
+        return None, None, 0
+
+    def get_case_dataset(
+        self,
+        case_id: int,
+        spec: BankrotCaseDatasetSpec,
+        *,
+        page_size: Optional[int] = None,
+        max_pages: Optional[int] = None,
+    ) -> Any:
+        """Загрузить публичный дочерний раздел дела целиком."""
+        path = spec.path.format(case_id=case_id)
+        if spec.method == "GET":
+            return self._request("GET", path)
+
+        if spec.payload_mode == "filters":
+            return self._request("POST", path, json={"filters": {}})
+
+        page_size = page_size or settings.BANKROT_RELATED_PAGE_SIZE
+        max_pages = max_pages or settings.BANKROT_RELATED_MAX_PAGES
+        offset = 0
+        merged: Any = None
+        merged_key: Optional[str] = None
+        previous_page: Optional[list] = None
+
+        for page_number in range(1, max_pages + 1):
+            payload = {
+                "pagination": {"offset": offset, "count": page_size},
+                "sort": {"sortOrder": 1},
+                "filters": {},
+            }
+            page = self._request("POST", path, json=payload)
+            collection_key, items, total = self._collection_info(page)
+
+            if merged is None:
+                merged = deepcopy(page)
+                merged_key = collection_key
+            elif collection_key and collection_key == merged_key and items is not None:
+                merged[collection_key].extend(items)
+
+            if items is None:
+                return page
+            if not items:
+                break
+            if previous_page == items:
+                logger.warning(
+                    "Bankrot: %s ignored pagination for case_id=%d; stopping at page %d",
+                    spec.name,
+                    case_id,
+                    page_number,
+                )
+                break
+
+            offset += len(items)
+            previous_page = items
+            if (total and offset >= total) or len(items) < page_size:
+                break
+        else:
+            raise BankrotAPIError(
+                f"Dataset {spec.name} exceeded {max_pages} pages for case_id={case_id}"
+            )
+
+        return merged
+
+    def get_debtor_publications(
+        self,
+        debtor_id: int,
+        *,
+        page_size: Optional[int] = None,
+        max_pages: Optional[int] = None,
+    ) -> Any:
+        """POST /messages/all — все публичные сообщения выбранного должника."""
+        page_size = page_size or settings.BANKROT_RELATED_PAGE_SIZE
+        max_pages = max_pages or settings.BANKROT_RELATED_MAX_PAGES
+        offset = 0
+        merged: Any = None
+        previous_page: Optional[list] = None
+
+        for page_number in range(1, max_pages + 1):
+            filters = self._merge_filters(
+                _DEFAULT_PUBLICATION_FILTERS, {"debtorId": debtor_id}
+            )
+            payload = {
+                "pagination": {"offset": offset, "count": page_size},
+                "filters": filters,
+            }
+            page = self._request("POST", "/messages/all", json=payload)
+            collection_key, items, total = self._collection_info(page)
+
+            if merged is None:
+                merged = deepcopy(page)
+            elif collection_key and items is not None:
+                merged[collection_key].extend(items)
+
+            if items is None:
+                return page
+            if not items:
+                break
+            if previous_page == items:
+                logger.warning(
+                    "Bankrot: publications ignored pagination for debtor_id=%d; "
+                    "stopping at page %d",
+                    debtor_id,
+                    page_number,
+                )
+                break
+
+            offset += len(items)
+            previous_page = items
+            if (total and offset >= total) or len(items) < page_size:
+                break
+        else:
+            raise BankrotAPIError(
+                f"Publications exceeded {max_pages} pages for debtor_id={debtor_id}"
+            )
+
+        return merged
+
+    def _get_entity_related_data(
+        self,
+        specs: Tuple[BankrotCaseDatasetSpec, ...],
+        format_values: Dict[str, int],
+        *,
+        dataset_names: Optional[set[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        result: Dict[str, Dict[str, Any]] = {}
+        for spec in specs:
+            if dataset_names is not None and spec.name not in dataset_names:
+                continue
+            endpoint = spec.path.format(**format_values)
+            try:
+                payload = self._request("GET", endpoint)
+                result[spec.name] = {
+                    "endpoint": endpoint,
+                    "http_method": "GET",
+                    "payload": payload,
+                    "fetch_error": None,
+                }
+            except Exception as exc:
+                logger.warning("Bankrot: dataset %s error: %s", spec.name, exc)
+                result[spec.name] = {
+                    "endpoint": endpoint,
+                    "http_method": "GET",
+                    "payload": None,
+                    "fetch_error": str(exc),
+                }
+        return result
+
+    def get_manager_related_data(
+        self,
+        manager_id: int,
+        *,
+        dataset_names: Optional[set[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Загрузить все публичные разделы карточки управляющего."""
+        return self._get_entity_related_data(
+            BANKROT_MANAGER_DATASETS,
+            {"manager_id": manager_id},
+            dataset_names=dataset_names,
+        )
+
+    def get_debtor_related_data(
+        self,
+        debtor_id: int,
+        *,
+        dataset_names: Optional[set[str]] = None,
+        page_size: Optional[int] = None,
+        max_pages: Optional[int] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Загрузить публикации, счета и кошельки должника."""
+        result = self._get_entity_related_data(
+            BANKROT_DEBTOR_DATASETS,
+            {"debtor_id": debtor_id},
+            dataset_names=dataset_names,
+        )
+        if dataset_names is not None and "publications" not in dataset_names:
+            return result
+
+        try:
+            payload = self.get_debtor_publications(
+                debtor_id,
+                page_size=page_size,
+                max_pages=max_pages,
+            )
+            result["publications"] = {
+                "endpoint": "/messages/all",
+                "http_method": "POST",
+                "payload": payload,
+                "fetch_error": None,
+            }
+        except Exception as exc:
+            logger.warning(
+                "Bankrot: dataset publications error debtor_id=%d: %s",
+                debtor_id,
+                exc,
+            )
+            result["publications"] = {
+                "endpoint": "/messages/all",
+                "http_method": "POST",
+                "payload": None,
+                "fetch_error": str(exc),
+            }
+        return result
+
+    def get_case_related_data(
+        self,
+        case_id: int,
+        *,
+        dataset_names: Optional[set[str]] = None,
+        page_size: Optional[int] = None,
+        max_pages: Optional[int] = None,
+        delay: float = 0.0,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Загрузить все поддерживаемые публичные разделы карточки дела."""
+        result: Dict[str, Dict[str, Any]] = {}
+        for spec in BANKROT_CASE_DATASETS:
+            if dataset_names is not None and spec.name not in dataset_names:
+                continue
+
+            endpoint = spec.path.format(case_id=case_id)
+            try:
+                payload = self.get_case_dataset(
+                    case_id,
+                    spec,
+                    page_size=page_size,
+                    max_pages=max_pages,
+                )
+                result[spec.name] = {
+                    "endpoint": endpoint,
+                    "http_method": spec.method,
+                    "payload": payload,
+                    "fetch_error": None,
+                }
+            except Exception as exc:  # один раздел не должен останавливать дело
+                logger.warning(
+                    "Bankrot: dataset %s error case_id=%d: %s",
+                    spec.name,
+                    case_id,
+                    exc,
+                )
+                result[spec.name] = {
+                    "endpoint": endpoint,
+                    "http_method": spec.method,
+                    "payload": None,
+                    "fetch_error": str(exc),
+                }
+
+            if delay > 0:
+                time.sleep(delay)
+
+        return result

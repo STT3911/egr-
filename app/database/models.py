@@ -1260,6 +1260,25 @@ class BankrotCase(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class BankrotCaseDataset(Base):
+    """Полный сырой ответ одного публичного раздела карточки дела."""
+
+    __tablename__ = "bankrot_case_datasets"
+
+    case_id = Column(
+        Integer,
+        ForeignKey("bankrot_cases.case_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    dataset_type = Column(String(64), primary_key=True)
+    endpoint = Column(Text, nullable=False)
+    http_method = Column(String(8), nullable=False)
+    payload = Column(JSONB, nullable=True)
+    fetch_error = Column(Text, nullable=True)
+    fetched_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class BankrotCaseHistory(Base):
     """
     История изменений дел о банкротстве.

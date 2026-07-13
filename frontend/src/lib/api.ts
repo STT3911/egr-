@@ -165,6 +165,32 @@ export type CompanyProfile = {
   }[];
 };
 
+export type BankrotCaseDataset = {
+  dataset_type: string;
+  endpoint: string;
+  http_method: string;
+  payload: unknown;
+  fetch_error?: string | null;
+  fetched_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type BankrotCaseDetail = NonNullable<CompanyProfile["bankrot_cases"]>[number] & {
+  debtor_unp?: number | null;
+  manager_id?: number | null;
+  last_judgment_id?: number | null;
+  list_data?: Record<string, unknown> | null;
+  detail_data?: Record<string, unknown> | null;
+  judgements_group?: unknown;
+  fetch_error?: string | null;
+  datasets: BankrotCaseDataset[];
+};
+
+export type CompanyBankrotResponse = {
+  unp: number;
+  cases: BankrotCaseDetail[];
+};
+
 export type ReferenceItem = {
   code: string | number;
   name: string;
@@ -331,6 +357,12 @@ export const lookupCompanies = async (query: string) => {
 
 export const getCompanyProfile = async (unp: string) => {
   return request<CompanyProfile>(`/api/v1/companies/${encodeURIComponent(unp)}`);
+};
+
+export const getCompanyBankruptcy = async (unp: string) => {
+  return request<CompanyBankrotResponse>(
+    `/api/v1/companies/${encodeURIComponent(unp)}/bankruptcy`
+  );
 };
 
 export const getRawCompanyData = async (unp: string) => {

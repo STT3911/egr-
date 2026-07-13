@@ -17,6 +17,8 @@ import {
   CompanyRelatedResponse,
   getCompanyRisk,
   CompanyRisk,
+  getCompanyBankruptcy,
+  CompanyBankrotResponse,
 } from "@/lib/api";
 
 const fieldLabels: Record<string, string> = {
@@ -36,6 +38,31 @@ const fieldLabels: Record<string, string> = {
 const cardReveal = {
   hidden: { opacity: 0, y: 18 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
+};
+
+const bankrotDatasetLabels: Record<string, string> = {
+  publications: "Публикации и сообщения",
+  properties: "Имущество",
+  property_reports: "Отчёты об имуществе",
+  property_valuations: "Оценка имущества",
+  sales: "Продажа и торги",
+  creditor_meetings: "Собрания кредиторов",
+  creditor_committees: "Комитеты кредиторов",
+  creditor_requirements: "Требования кредиторов",
+  property_write_off: "Списание имущества",
+  transfer_remaining_properties: "Передача оставшегося имущества",
+  transfer_unsold_properties: "Передача непроданного имущества",
+  readjustments: "Корректировки планов и отчётов",
+  fund_balance_reports: "Отчёты о движении денежных средств",
+  debtor_bank_accounts: "Банковские счета должника",
+  debtor_online_wallets: "Электронные кошельки должника",
+  manager_full_info: "Карточка управляющего",
+  manager_accreditation: "Аккредитация управляющего",
+  manager_documents: "Документы управляющего",
+  manager_education: "Образование управляющего",
+  manager_debtors: "Дела управляющего",
+  manager_bank_accounts: "Банковские счета управляющего",
+  manager_online_wallets: "Электронные кошельки управляющего",
 };
 
 // Wrapper for staggered card sections
@@ -92,6 +119,10 @@ const Company = () => {
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
   const [relatedData, setRelatedData] = useState<CompanyRelatedResponse | null>(null);
   const [risk, setRisk] = useState<CompanyRisk | null>(null);
+  const [bankruptcyData, setBankruptcyData] = useState<CompanyBankrotResponse | null>(null);
+  const [bankruptcyLoading, setBankruptcyLoading] = useState(false);
+  const [bankruptcyError, setBankruptcyError] = useState<string | null>(null);
+  const [showBankruptcyDetails, setShowBankruptcyDetails] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [expandedBeltppProducts, setExpandedBeltppProducts] = useState<Set<string>>(new Set());
@@ -111,6 +142,12 @@ const Company = () => {
       document.documentElement.classList.remove("dark");
     }
   }, []);
+
+  useEffect(() => {
+    setBankruptcyData(null);
+    setBankruptcyError(null);
+    setShowBankruptcyDetails(false);
+  }, [unp]);
 
   useEffect(() => {
     const load = async () => {
@@ -219,6 +256,27 @@ const Company = () => {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
+    }
+  };
+
+  const toggleBankruptcyDetails = async () => {
+    if (showBankruptcyDetails) {
+      setShowBankruptcyDetails(false);
+      return;
+    }
+    setShowBankruptcyDetails(true);
+    if (!unp || bankruptcyData || bankruptcyLoading) return;
+
+    setBankruptcyLoading(true);
+    setBankruptcyError(null);
+    try {
+      setBankruptcyData(await getCompanyBankruptcy(unp));
+    } catch (err) {
+      setBankruptcyError(
+        err instanceof Error ? err.message : "Ошибка загрузки данных о банкротстве"
+      );
+    } finally {
+      setBankruptcyLoading(false);
     }
   };
 
@@ -1550,6 +1608,7 @@ const Company = () => {
               <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
                 {profile.bankrot_cases.map((c) => {
                   const isActive = !c.end_date;
+                  const fullCase = bankruptcyData?.cases.find((item) => item.case_id === c.case_id);
                   return (
                     <div key={c.case_id} className={`glass p-3 sm:p-4 rounded-lg transition-all duration-300 border-l-4 space-y-3 ${
                       isActive ? "border-orange-500/60 hover:bg-orange-500/5" : "border-border/50 hover:bg-muted/30"
@@ -1601,9 +1660,80 @@ const Company = () => {
                           Обновлено: {formatUpdatedAtUTC(c.updated_at)}
                         </div>
                       )}
+
+                      {showBankruptcyDetails && fullCase && (
+                        <div className="space-y-2 border-t border-border/60 pt-3">
+                          {fullCase.detail_data != null && (
+                            <details className="rounded-lg border border-border/60 bg-background/60 p-3">
+                              <summary className="cursor-pointer font-medium text-sm">
+                                Полная карточка дела
+                              </summary>
+                              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
+                                {JSON.stringify(fullCase.detail_data, null, 2)}
+                              </pre>
+                            </details>
+                          )}
+                          {fullCase.list_data != null && (
+                            <details className="rounded-lg border border-border/60 bg-background/60 p-3">
+                              <summary className="cursor-pointer font-medium text-sm">
+                                Данные реестрового списка
+                              </summary>
+                              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
+                                {JSON.stringify(fullCase.list_data, null, 2)}
+                              </pre>
+                            </details>
+                          )}
+                          {fullCase.judgements_group != null && (
+                            <details className="rounded-lg border border-border/60 bg-background/60 p-3">
+                              <summary className="cursor-pointer font-medium text-sm">
+                                Судебные решения
+                              </summary>
+                              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
+                                {JSON.stringify(fullCase.judgements_group, null, 2)}
+                              </pre>
+                            </details>
+                          )}
+                          {fullCase.datasets.map((dataset) => (
+                            <details
+                              key={dataset.dataset_type}
+                              className="rounded-lg border border-border/60 bg-background/60 p-3"
+                            >
+                              <summary className="cursor-pointer font-medium text-sm">
+                                {bankrotDatasetLabels[dataset.dataset_type] || dataset.dataset_type}
+                                {dataset.fetch_error ? " — ошибка обновления" : ""}
+                              </summary>
+                              {dataset.fetch_error && (
+                                <p className="mt-2 text-xs text-destructive">{dataset.fetch_error}</p>
+                              )}
+                              {dataset.payload != null && (
+                                <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
+                                  {JSON.stringify(dataset.payload, null, 2)}
+                                </pre>
+                              )}
+                            </details>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleBankruptcyDetails}
+                  disabled={bankruptcyLoading}
+                  className="w-full sm:w-auto"
+                >
+                  {bankruptcyLoading
+                    ? "Загрузка сведений..."
+                    : showBankruptcyDetails
+                      ? "Скрыть подробные сведения"
+                      : "Показать все сведения реестра"}
+                </Button>
+                {showBankruptcyDetails && bankruptcyError && (
+                  <p className="text-sm text-destructive">{bankruptcyError}</p>
+                )}
               </CardContent>
             </Card>
             </SectionCard>

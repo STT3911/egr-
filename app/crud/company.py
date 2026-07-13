@@ -6,6 +6,7 @@ from sqlalchemy import and_, text, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.models import (
     BankrotCase,
+    BankrotCaseDataset,
     Company,
     CompanyNameHistory,
     CompanyAddressHistory,
@@ -691,6 +692,72 @@ class CompanyCRUD:
                     "fax": c.fax,
                 }
                 for c in company.contacts_history
+            ],
+        }
+
+    def get_bankrot_dossier(self, unp: int) -> Dict[str, Any]:
+        """Полные локальные данные bankrot.gov.by по УНП без внешних запросов."""
+        cases = (
+            self.db.query(BankrotCase)
+            .filter(BankrotCase.debtor_unp == unp)
+            .order_by(BankrotCase.start_date.desc().nullslast())
+            .all()
+        )
+        case_ids = [row.case_id for row in cases]
+        datasets_by_case: Dict[int, List[Dict[str, Any]]] = {
+            case_id: [] for case_id in case_ids
+        }
+        if case_ids:
+            dataset_rows = (
+                self.db.query(BankrotCaseDataset)
+                .filter(BankrotCaseDataset.case_id.in_(case_ids))
+                .order_by(
+                    BankrotCaseDataset.case_id,
+                    BankrotCaseDataset.dataset_type,
+                )
+                .all()
+            )
+            for dataset in dataset_rows:
+                datasets_by_case[dataset.case_id].append(
+                    {
+                        "dataset_type": dataset.dataset_type,
+                        "endpoint": dataset.endpoint,
+                        "http_method": dataset.http_method,
+                        "payload": dataset.payload,
+                        "fetch_error": dataset.fetch_error,
+                        "fetched_at": (
+                            dataset.fetched_at.isoformat()
+                            if dataset.fetched_at
+                            else None
+                        ),
+                        "updated_at": dataset.updated_at.isoformat(),
+                    }
+                )
+
+        return {
+            "unp": unp,
+            "cases": [
+                {
+                    "case_id": row.case_id,
+                    "debtor_unp": row.debtor_unp,
+                    "number": row.number,
+                    "start_date": row.start_date.isoformat() if row.start_date else None,
+                    "end_date": row.end_date.isoformat() if row.end_date else None,
+                    "status": row.status,
+                    "procedure_type": row.procedure_type,
+                    "court": row.court,
+                    "judge": row.judge,
+                    "manager_id": row.manager_id,
+                    "manager_name": row.manager_name,
+                    "last_judgment_id": row.last_judgment_id,
+                    "list_data": row.list_data,
+                    "detail_data": row.detail_data,
+                    "judgements_group": row.judgements_group,
+                    "fetch_error": row.fetch_error,
+                    "updated_at": row.updated_at.isoformat(),
+                    "datasets": datasets_by_case[row.case_id],
+                }
+                for row in cases
             ],
         }
 

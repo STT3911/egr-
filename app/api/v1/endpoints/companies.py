@@ -4,7 +4,11 @@ from fastapi import APIRouter, HTTPException, Query, Path, Depends
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, text
-from app.schemas.company import CompanyProfileResponse, CompanyLookupResponse
+from app.schemas.company import (
+    CompanyBankrotResponse,
+    CompanyLookupResponse,
+    CompanyProfileResponse,
+)
 from app.schemas.nalog_debt import CompanyNalogDebtResponse, NalogDebtRecordResponse
 from app.crud.company import CompanyCRUD
 from app.services.aggregator import AggregatorService
@@ -550,6 +554,16 @@ async def get_company_profile(
     except Exception as e:
         logger.error(f"Error getting company profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{identifier}/bankruptcy", response_model=CompanyBankrotResponse)
+async def get_company_bankruptcy(
+    identifier: str = Path(..., regex=r"^\d{9}$", description="УНП (9 цифр)"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Вернуть полные сохраненные данные bankrot.gov.by по компании."""
+    return CompanyCRUD(db).get_bankrot_dossier(int(identifier))
 
 
 @router.get("/{identifier}/tax-debt", response_model=CompanyNalogDebtResponse)
