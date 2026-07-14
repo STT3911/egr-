@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SubscribeButton } from "@/components/SubscribeButton";
 import { CompanyMap } from "@/components/CompanyMap";
 import { motion, useScroll, useSpring } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, ExternalLink, FileText, Globe, Info, Mail, Moon, Phone, Printer, Store, Sun, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, Store, Sun, Users } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import {
   getCompanyProfile,
   CompanyProfile,
@@ -19,6 +20,7 @@ import {
   CompanyRisk,
   getCompanyBankruptcy,
   CompanyBankrotResponse,
+  downloadCompanyReport,
 } from "@/lib/api";
 
 const fieldLabels: Record<string, string> = {
@@ -126,9 +128,36 @@ const Company = () => {
   const [isDark, setIsDark] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [expandedBeltppProducts, setExpandedBeltppProducts] = useState<Set<string>>(new Set());
+  const [reportDownloading, setReportDownloading] = useState(false);
+  const { toast } = useToast();
 
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, { stiffness: 200, damping: 30 });
+
+  const handleDownloadReport = async () => {
+    if (!unp || reportDownloading) return;
+    setReportDownloading(true);
+    try {
+      const { blob, filename } = await downloadCompanyReport(unp);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast({ title: "Полное досье сформировано" });
+    } catch (downloadError) {
+      toast({
+        title: "Не удалось скачать отчёт",
+        description: downloadError instanceof Error ? downloadError.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setReportDownloading(false);
+    }
+  };
 
   useEffect(() => {
     const theme = localStorage.getItem("theme");
@@ -466,6 +495,20 @@ const Company = () => {
           </div>
           {unp && (
             <div className="flex gap-2 flex-wrap">
+              <Button
+                type="button"
+                variant="default"
+                onClick={handleDownloadReport}
+                disabled={reportDownloading || !profile}
+                className="flex-1 sm:flex-initial"
+              >
+                {reportDownloading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                Скачать досье
+              </Button>
               <Link to={`/company/${unp}/raw`} className="flex-1 sm:flex-initial">
                 <Button variant="outline" className="w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base">
                   Raw данные

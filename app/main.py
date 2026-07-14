@@ -1,4 +1,6 @@
 """Main FastAPI application"""
+from time import perf_counter
+
 from app.bitrix.admin import router as bitrix_admin_router
 from app.bitrix.install import router as bitrix_install_router
 from app.bitrix.webhook import router as bitrix_webhook_router
@@ -8,8 +10,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from sqlalchemy import text
 from app.api.v1.endpoints import admin, companies, references, grp, gias, auth, subscriptions, stable, bitrix
 from app.core.config import settings
+from app.core.database import engine
 from app.core.logger import logger
 from app.core.error_handlers import (
     validation_exception_handler,
@@ -131,12 +135,34 @@ async def health():
 
 
 @app.get("/api/v1/health/ready")
-async def health_ready():
+def health_ready():
     """Readiness check endpoint"""
-    # TODO: Add database connectivity check
+    started_at = perf_counter()
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        logger.warning("Readiness database check failed: %s", exc.__class__.__name__)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "checks": {
+                    "database": {
+                        "status": "error",
+                    }
+                },
+            },
+        )
+
     return {
         "status": "ready",
-        "database": "ok"
+        "checks": {
+            "database": {
+                "status": "ok",
+                "latency_ms": round((perf_counter() - started_at) * 1000, 2),
+            }
+        },
     }
 
 

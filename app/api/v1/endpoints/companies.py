@@ -1,6 +1,7 @@
 """Company endpoints"""
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Path, Depends
+from fastapi.responses import Response
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, text
@@ -12,6 +13,7 @@ from app.schemas.company import (
 from app.schemas.nalog_debt import CompanyNalogDebtResponse, NalogDebtRecordResponse
 from app.crud.company import CompanyCRUD
 from app.services.aggregator import AggregatorService
+from app.services.company_report import build_company_report
 from app.core.config import settings
 from app.services.egr_client import EGRClient, MobileEGRClient
 from app.core.logger import get_logger
@@ -552,6 +554,26 @@ async def get_company_profile(
     except Exception as e:
         logger.error(f"Error getting company profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{identifier}/report.xlsx")
+def download_company_report(
+    identifier: str = Path(..., regex=r"^\d{9}$", description="УНП (9 цифр)"),
+    db: Session = Depends(get_db),
+):
+    """Скачать полное локальное досье компании в формате Excel."""
+    unp = int(identifier)
+    report = build_company_report(db, unp)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Компания {identifier} не найдена")
+    return Response(
+        content=report,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="company_{unp}_dossier.xlsx"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/{identifier}/bankruptcy", response_model=CompanyBankrotResponse)

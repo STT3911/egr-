@@ -559,6 +559,21 @@ export const fillCompanyFile = async (file: File) => {
   };
 };
 
+export const downloadCompanyReport = async (unp: string) => {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/companies/${encodeURIComponent(unp)}/report.xlsx`,
+    { headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } }
+  );
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(data.detail || data.message || "Не удалось сформировать отчёт");
+  }
+  return {
+    blob: await response.blob(),
+    filename: getFilenameFromDisposition(response.headers.get("Content-Disposition")),
+  };
+};
+
 export const createTradeRegistryImport = async (file: File) => {
   const formData = new FormData();
   formData.append("file", file);
