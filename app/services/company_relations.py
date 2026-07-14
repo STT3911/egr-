@@ -6,7 +6,7 @@ app.services.company_addresses — там периодическая сборк�
 """
 from __future__ import annotations
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -129,3 +129,127 @@ def find_related_by_address(db: Session, company_id, limit: int = 100) -> list[d
         {"unp": int(r["unp"]), "name": r["name"], "address": r["full_address"]}
         for r in rows
     ]
+
+
+def _company_ids_by_unp(db: Session, unps: list[int]) -> dict[int, str]:
+    if not unps:
+        return {}
+    statement = text(
+        "SELECT unp, id FROM egr_companies WHERE unp IN :unps"
+    ).bindparams(bindparam("unps", expanding=True))
+    rows = db.execute(statement, {"unps": unps}).mappings().all()
+    return {int(row["unp"]): str(row["id"]) for row in rows}
+
+
+def _company_names_by_unp(db: Session, unps: list[int]) -> dict[int, str | None]:
+    if not unps:
+        return {}
+    statement = text(
+        """
+        SELECT c.unp, COALESCE(n.full_name_ru, n.short_name_ru, n.full_name_by) AS name
+        FROM egr_companies c
+        LEFT JOIN LATERAL (
+            SELECT full_name_ru, short_name_ru, full_name_by
+            FROM egr_company_names_history
+            WHERE company_id = c.id
+            ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+            LIMIT 1
+        ) n ON true
+        WHERE c.unp IN :unps
+        """
+    ).bindparams(bindparam("unps", expanding=True))
+    rows = db.execute(statement, {"unps": unps}).mappings().all()
+    return {int(row["unp"]): row["name"] for row in rows}
+
+
+def build_relation_graph(
+    db: Session,
+    company_id,
+    root_unp: int,
+    *,
+    depth: int = 2,
+    max_nodes: int = 40,
+) -> dict:
+    """Build a bounded company relation graph from shared contacts and addresses."""
+    nodes: dict[int, dict] = {
+        root_unp: {"unp": root_unp, "name": None, "depth": 0, "relation_count": 0}
+    }
+    edges: dict[tuple, dict] = {}
+    frontier: list[tuple[str, int]] = [(str(company_id), root_unp)]
+    per_node_limit = max(6, min(16, max_nodes // 2))
+    was_truncated = False
+
+    def add_edge(source_unp: int, target_unp: int, relation_type: str, value: str | None) -> None:
+        if source_unp == target_unp:
+            return
+        pair = tuple(sorted((source_unp, target_unp)))
+        key = (*pair, relation_type, value or "")
+        if key not in edges:
+            edges[key] = {
+                "source_unp": source_unp,
+                "target_unp": target_unp,
+                "type": relation_type,
+                "value": value,
+            }
+
+    for current_depth in range(1, depth + 1):
+        discovered_unps: list[int] = []
+        for source_id, source_unp in frontier:
+            related_rows = [
+                *find_related_by_contact(db, source_id, limit=per_node_limit),
+                *find_related_by_address(db, source_id, limit=per_node_limit),
+            ]
+            for related in related_rows:
+                target_unp = int(related["unp"])
+                if "matched_type" in related:
+                    relation_type = related["matched_type"]
+                    value = related.get("matched_value")
+                else:
+                    relation_type = "address"
+                    value = related.get("address")
+
+                if target_unp in nodes:
+                    add_edge(source_unp, target_unp, relation_type, value)
+                    continue
+                if len(nodes) >= max_nodes:
+                    was_truncated = True
+                    continue
+
+                nodes[target_unp] = {
+                    "unp": target_unp,
+                    "name": related.get("name"),
+                    "depth": current_depth,
+                    "relation_count": 0,
+                }
+                discovered_unps.append(target_unp)
+                add_edge(source_unp, target_unp, relation_type, value)
+
+        if current_depth >= depth or not discovered_unps:
+            break
+        expandable_unps = list(dict.fromkeys(discovered_unps))[:12]
+        id_map = _company_ids_by_unp(db, expandable_unps)
+        frontier = [(company_id, unp) for unp, company_id in id_map.items()]
+
+    names = _company_names_by_unp(db, list(nodes))
+    for unp, node in nodes.items():
+        node["name"] = names.get(unp) or node["name"]
+
+    for edge in edges.values():
+        nodes[edge["source_unp"]]["relation_count"] += 1
+        nodes[edge["target_unp"]]["relation_count"] += 1
+
+    edge_items = list(edges.values())
+    return {
+        "root_unp": root_unp,
+        "depth": depth,
+        "nodes": sorted(nodes.values(), key=lambda node: (node["depth"], -node["relation_count"], node["unp"])),
+        "edges": edge_items,
+        "stats": {
+            "companies": len(nodes),
+            "connections": len(edge_items),
+            "phones": sum(edge["type"] == "phone" for edge in edge_items),
+            "emails": sum(edge["type"] == "email" for edge in edge_items),
+            "addresses": sum(edge["type"] == "address" for edge in edge_items),
+        },
+        "truncated": was_truncated,
+    }

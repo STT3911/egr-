@@ -22,7 +22,7 @@ const Search = () => {
         <div className="text-center space-y-3">
           <h1 className="text-4xl font-bold text-foreground">Поиск компаний</h1>
           <p className="text-lg text-muted-foreground">
-            Введите УНП или часть названия компании для поиска
+            Ищите контрагентов по УНП, названию, телефону, email или адресу
           </p>
         </div>
 
@@ -30,7 +30,7 @@ const Search = () => {
         <div className="max-w-2xl mx-auto">
           <CompanySearch 
             variant="compact"
-            placeholder="Поиск по УНП или названию..."
+            placeholder="УНП, название, телефон, email или адрес..."
           />
         </div>
 

@@ -11,6 +11,7 @@ const References = lazy(() => import("./pages/References"));
 const ReferenceDetail = lazy(() => import("./pages/ReferenceDetail"));
 const CompanyRawData = lazy(() => import("./pages/CompanyRawData"));
 const CompanyCompare = lazy(() => import("./pages/CompanyCompare"));
+const CompanyRelations = lazy(() => import("./pages/CompanyRelations"));
 const Admin = lazy(() => import("./pages/Admin"));
 const Login = lazy(() => import("./pages/Login"));
 const MySubscriptions = lazy(() => import("./pages/MySubscriptions"));
@@ -64,6 +65,7 @@ const App = () => (
             <Route path="/company/:unp" element={<Company />} />
             <Route path="/company/:unp/raw" element={<CompanyRawData />} />
             <Route path="/company/:unp/compare" element={<CompanyCompare />} />
+            <Route path="/company/:unp/relations" element={<CompanyRelations />} />
             <Route path="/references" element={<References />} />
             <Route path="/references/:type" element={<ReferenceDetail />} />
             <Route path="/admin" element={<Admin />} />

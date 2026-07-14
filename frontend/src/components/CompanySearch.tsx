@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Building2, Loader2, Search } from "lucide-react";
+import { ArrowRight, Building2, Loader2, Mail, MapPin, Phone, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { lookupCompanies, CompanyLookupResult } from "@/lib/api";
@@ -14,7 +14,7 @@ interface CompanySearchProps {
 
 export const CompanySearch = ({
   variant = "compact",
-  placeholder = "Введите УНП или название компании",
+  placeholder = "УНП, название, телефон, email или адрес",
   onSearchStart,
 }: CompanySearchProps) => {
   const [query, setQuery] = useState("");
@@ -233,6 +233,17 @@ export const CompanySearch = ({
                         title={`Историческое название: ${item.matched_name}`}
                       >
                         Историческое название: {item.matched_name}
+                      </div>
+                    )}
+
+                    {item.matched_type && item.matched_value && (
+                      <div className="mb-1 flex items-center gap-1.5 truncate text-xs text-primary">
+                        {item.matched_type === "phone" && <Phone className="h-3 w-3 flex-shrink-0" />}
+                        {item.matched_type === "email" && <Mail className="h-3 w-3 flex-shrink-0" />}
+                        {item.matched_type === "address" && <MapPin className="h-3 w-3 flex-shrink-0" />}
+                        <span className="truncate" title={item.matched_value}>
+                          {item.matched_value}
+                        </span>
                       </div>
                     )}
 

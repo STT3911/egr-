@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SubscribeButton } from "@/components/SubscribeButton";
 import { CompanyMap } from "@/components/CompanyMap";
+import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
+import { getBankrotPayloadCount } from "@/lib/bankrotData";
 import { motion, useScroll, useSpring } from "framer-motion";
 import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, Store, Sun, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -40,31 +42,6 @@ const fieldLabels: Record<string, string> = {
 const cardReveal = {
   hidden: { opacity: 0, y: 18 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
-};
-
-const bankrotDatasetLabels: Record<string, string> = {
-  publications: "Публикации и сообщения",
-  properties: "Имущество",
-  property_reports: "Отчёты об имуществе",
-  property_valuations: "Оценка имущества",
-  sales: "Продажа и торги",
-  creditor_meetings: "Собрания кредиторов",
-  creditor_committees: "Комитеты кредиторов",
-  creditor_requirements: "Требования кредиторов",
-  property_write_off: "Списание имущества",
-  transfer_remaining_properties: "Передача оставшегося имущества",
-  transfer_unsold_properties: "Передача непроданного имущества",
-  readjustments: "Корректировки планов и отчётов",
-  fund_balance_reports: "Отчёты о движении денежных средств",
-  debtor_bank_accounts: "Банковские счета должника",
-  debtor_online_wallets: "Электронные кошельки должника",
-  manager_full_info: "Карточка управляющего",
-  manager_accreditation: "Аккредитация управляющего",
-  manager_documents: "Документы управляющего",
-  manager_education: "Образование управляющего",
-  manager_debtors: "Дела управляющего",
-  manager_bank_accounts: "Банковские счета управляющего",
-  manager_online_wallets: "Электронные кошельки управляющего",
 };
 
 // Wrapper for staggered card sections
@@ -517,6 +494,11 @@ const Company = () => {
               <Link to={`/company/${unp}/compare`} className="flex-1 sm:flex-initial">
                 <Button variant="outline" className="w-full sm:w-auto glass hover:bg-accent/10 dark:hover:bg-accent/20 transition-all duration-300 text-sm sm:text-base">
                   Сравнение API
+                </Button>
+              </Link>
+              <Link to={`/company/${unp}/relations`} className="flex-1 sm:flex-initial">
+                <Button variant="outline" className="w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base">
+                  Карта связей
                 </Button>
               </Link>
               <SubscribeButton unp={unp} />
@@ -1653,7 +1635,7 @@ const Company = () => {
                   const isActive = !c.end_date;
                   const fullCase = bankruptcyData?.cases.find((item) => item.case_id === c.case_id);
                   const successfulDatasets = fullCase?.datasets.filter(
-                    (dataset) => dataset.payload != null
+                    (dataset) => getBankrotPayloadCount(dataset.payload) > 0
                   ).length ?? 0;
                   const failedDatasets = fullCase?.datasets.filter(
                     (dataset) => dataset.fetch_error
@@ -1744,55 +1726,12 @@ const Company = () => {
                               <div className="text-xs text-muted-foreground">управляющий определён</div>
                             </div>
                           </div>
-                          {fullCase.detail_data != null && (
-                            <details className="rounded-lg border border-border/60 bg-background/60 p-3">
-                              <summary className="cursor-pointer font-medium text-sm">
-                                Полная карточка дела
-                              </summary>
-                              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
-                                {JSON.stringify(fullCase.detail_data, null, 2)}
-                              </pre>
-                            </details>
-                          )}
-                          {fullCase.list_data != null && (
-                            <details className="rounded-lg border border-border/60 bg-background/60 p-3">
-                              <summary className="cursor-pointer font-medium text-sm">
-                                Данные реестрового списка
-                              </summary>
-                              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
-                                {JSON.stringify(fullCase.list_data, null, 2)}
-                              </pre>
-                            </details>
-                          )}
-                          {fullCase.judgements_group != null && (
-                            <details className="rounded-lg border border-border/60 bg-background/60 p-3">
-                              <summary className="cursor-pointer font-medium text-sm">
-                                Судебные решения
-                              </summary>
-                              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
-                                {JSON.stringify(fullCase.judgements_group, null, 2)}
-                              </pre>
-                            </details>
-                          )}
-                          {fullCase.datasets.map((dataset) => (
-                            <details
-                              key={dataset.dataset_type}
-                              className="rounded-lg border border-border/60 bg-background/60 p-3"
-                            >
-                              <summary className="cursor-pointer font-medium text-sm">
-                                {bankrotDatasetLabels[dataset.dataset_type] || dataset.dataset_type}
-                                {dataset.fetch_error ? " — ошибка обновления" : ""}
-                              </summary>
-                              {dataset.fetch_error && (
-                                <p className="mt-2 text-xs text-destructive">{dataset.fetch_error}</p>
-                              )}
-                              {dataset.payload != null && (
-                                <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
-                                  {JSON.stringify(dataset.payload, null, 2)}
-                                </pre>
-                              )}
-                            </details>
-                          ))}
+                          <BankrotDataView
+                            detailData={fullCase.detail_data}
+                            listData={fullCase.list_data}
+                            judgementsGroup={fullCase.judgements_group}
+                            datasets={fullCase.datasets}
+                          />
                         </div>
                       )}
                     </div>

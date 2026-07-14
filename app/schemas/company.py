@@ -261,6 +261,8 @@ class CompanyLookupItem(BaseModel):
     full_name_by: Optional[str] = None
     matched_name: Optional[str] = None
     matched_historical_name: bool = False
+    matched_type: Optional[str] = None
+    matched_value: Optional[str] = None
 
 
 class CompanyLookupResponse(BaseModel):

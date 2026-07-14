@@ -13,6 +13,8 @@ export type CompanyLookupResult = {
   matched_historical_name?: boolean;
   status?: string;
   address?: string;
+  matched_type?: "phone" | "email" | "address";
+  matched_value?: string;
 };
 
 export type CompanyProfile = {
@@ -557,6 +559,41 @@ export const fillCompanyFile = async (file: File) => {
     blob: await response.blob(),
     filename: getFilenameFromDisposition(response.headers.get("Content-Disposition")),
   };
+};
+
+export type CompanyRelationNode = {
+  unp: number;
+  name: string | null;
+  depth: number;
+  relation_count: number;
+};
+
+export type CompanyRelationEdge = {
+  source_unp: number;
+  target_unp: number;
+  type: "phone" | "email" | "address";
+  value: string | null;
+};
+
+export type CompanyRelationGraph = {
+  root_unp: number;
+  depth: number;
+  nodes: CompanyRelationNode[];
+  edges: CompanyRelationEdge[];
+  stats: {
+    companies: number;
+    connections: number;
+    phones: number;
+    emails: number;
+    addresses: number;
+  };
+  truncated: boolean;
+};
+
+export const getCompanyRelationGraph = async (unp: string) => {
+  return request<CompanyRelationGraph>(
+    `/api/v1/companies/${encodeURIComponent(unp)}/relations/graph?depth=2&max_nodes=40`
+  );
 };
 
 export const downloadCompanyReport = async (unp: string) => {

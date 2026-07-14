@@ -25,6 +25,7 @@ from app.utils.search_normalizer import (
     normalize_company_name as normalize_search_name,
     transliterate_query,
 )
+from app.utils.address_key import building_address_key
 from app.core.public_token import verify_public_token
 
 
@@ -97,14 +98,36 @@ def is_unp_query(query: str) -> bool:
     # Проверяем, что это только цифры и длина подходит для УНП
     if cleaned.isdigit():
         # УНП Беларуси: 9 цифр, но можем искать по частичному УНП
-        return 1 <= len(cleaned) <= 12
+        return 1 <= len(cleaned) <= 9
     
     return False
 
 
+def _contact_search_kind(query: str) -> Optional[str]:
+    if "@" in query:
+        return "email"
+    digits = re.sub(r"\D", "", query)
+    if len(digits) > 9 or (
+        len(digits) >= settings.RELATED_MIN_PHONE_DIGITS and re.search(r"[+()\s-]", query)
+    ):
+        return "phone"
+    return None
+
+
+def _looks_like_address(query: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:^|[\s,])(?:г|город|ул|улица|пр-т|проспект|пер|переулок|д|дом|корп|корпус)\.?[\s,]",
+            query,
+            re.IGNORECASE,
+        )
+        or ("," in query and bool(re.search(r"\d", query)))
+    )
+
+
 @router.get("/lookup", response_model=CompanyLookupResponse)
 def lookup_companies(
-    q: str = Query(..., min_length=1, description="Поиск по УНП или названию"),
+    q: str = Query(..., min_length=1, description="Поиск по УНП, названию, телефону, email или адресу"),
     limit: int = Query(10, ge=1, le=50, description="Максимум результатов"),
     db: Session = Depends(get_db),
 ):
@@ -130,7 +153,14 @@ def lookup_companies(
     results = []
     seen_unps = set()
 
-    def add_lookup_row(row, *, matched_name=None, matched_historical_name=False):
+    def add_lookup_row(
+        row,
+        *,
+        matched_name=None,
+        matched_historical_name=False,
+        matched_type=None,
+        matched_value=None,
+    ):
         unp = int(row["unp"])
         if unp in seen_unps:
             return
@@ -147,11 +177,92 @@ def lookup_companies(
             "full_name_by": row["full_name_by"],
             "matched_name": matched_name,
             "matched_historical_name": matched_historical_name,
+            "matched_type": matched_type,
+            "matched_value": matched_value,
         })
         seen_unps.add(unp)
     
     # Чистим УНП от пробелов и дефисов
     cleaned_query = re.sub(r'[\s-]', '', query)
+
+    contact_kind = _contact_search_kind(query)
+    if contact_kind:
+        value_norm = re.sub(r"\D", "", query) if contact_kind == "phone" else query.lower()
+        contact_sql = text("""
+            SELECT DISTINCT ON (c.unp)
+                c.unp, n.full_name_ru, n.short_name_ru, n.full_name_by,
+                cc.value AS matched_value
+            FROM company_contacts cc
+            JOIN egr_companies c ON c.id = cc.company_id
+            LEFT JOIN LATERAL (
+                SELECT full_name_ru, short_name_ru, full_name_by
+                FROM egr_company_names_history
+                WHERE company_id = c.id
+                ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+                LIMIT 1
+            ) n ON true
+            WHERE cc.contact_type = :contact_type AND cc.value_norm = :value_norm
+            ORDER BY c.unp, cc.last_seen_at DESC
+            LIMIT :limit
+        """)
+        rows = db.execute(contact_sql, {
+            "contact_type": contact_kind,
+            "value_norm": value_norm,
+            "limit": limit,
+        }).mappings().all()
+        for row in rows:
+            add_lookup_row(
+                row,
+                matched_type=contact_kind,
+                matched_value=row["matched_value"],
+            )
+        elapsed = time.time() - start_time
+        return {
+            "query": query,
+            "count": len(results),
+            "execution_time": round(elapsed, 3),
+            "results": results,
+        }
+
+    if _looks_like_address(query):
+        search_key = building_address_key(query)
+        if search_key:
+            address_sql = text("""
+                SELECT c.unp, n.full_name_ru, n.short_name_ru, n.full_name_by,
+                       k.full_address AS matched_value,
+                       similarity(k.address_key, :search_key) AS relevance
+                FROM company_address_keys k
+                JOIN egr_companies c ON c.id = k.company_id
+                LEFT JOIN LATERAL (
+                    SELECT full_name_ru, short_name_ru, full_name_by
+                    FROM egr_company_names_history
+                    WHERE company_id = c.id
+                    ORDER BY (valid_to IS NULL) DESC, valid_to DESC NULLS LAST, valid_from DESC NULLS LAST
+                    LIMIT 1
+                ) n ON true
+                WHERE k.address_key % :search_key
+                   OR k.address_key LIKE :search_prefix
+                ORDER BY relevance DESC, c.unp
+                LIMIT :limit
+            """)
+            rows = db.execute(address_sql, {
+                "search_key": search_key,
+                "search_prefix": f"{search_key}%",
+                "limit": limit,
+            }).mappings().all()
+            for row in rows:
+                add_lookup_row(
+                    row,
+                    matched_type="address",
+                    matched_value=row["matched_value"],
+                )
+            elapsed = time.time() - start_time
+            return {
+                "query": query,
+                "count": len(results),
+                "execution_time": round(elapsed, 3),
+                "results": results,
+            }
 
     if is_unp_query(cleaned_query):
         # 🔍 ПОИСК ПО УНП - оптимизированный запрос
@@ -652,6 +763,28 @@ async def get_related_companies(
         "by_contact": find_related_by_contact(db, company.id, limit=limit),
         "by_address": find_related_by_address(db, company.id, limit=limit),
     }
+
+
+@router.get("/{identifier}/relations/graph")
+def get_company_relation_graph(
+    identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
+    depth: int = Query(2, ge=1, le=2, description="Глубина связей"),
+    max_nodes: int = Query(40, ge=5, le=80, description="Максимум компаний в графе"),
+    db: Session = Depends(get_db),
+):
+    """Карта прямых и косвенных связей по телефонам, email и адресам."""
+    from app.services.company_relations import build_relation_graph
+
+    company = CompanyCRUD(db).get_by_unp(int(identifier))
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Компания {identifier} не найдена")
+    return build_relation_graph(
+        db,
+        company.id,
+        int(identifier),
+        depth=depth,
+        max_nodes=max_nodes,
+    )
 
 
 @router.get("/{identifier}/risk")
