@@ -439,7 +439,7 @@ const JudgementView = ({ value }: { value: unknown }) => {
 const DatasetView = ({ dataset }: { dataset: BankrotCaseDataset }) => {
   const count = getBankrotPayloadCount(dataset.payload);
   return (
-    <details className="group rounded-xl border border-border/60 bg-background/50" open={count > 0 && count <= 3}>
+    <details className="group rounded-xl border border-border/60 bg-background/50">
       <summary className="flex cursor-pointer list-none items-center gap-3 p-4">
         <div className={`rounded-lg p-2 ${dataset.fetch_error ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"}`}>
           {dataset.fetch_error ? <AlertTriangle className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
