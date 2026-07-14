@@ -120,3 +120,117 @@ groups:
                 - evaluator:
                     type: gt
                     params: [7]
+
+      # 4) Последний запуск Bankrot завершился общей ошибкой.
+      - uid: bankrot_sync_failed
+        title: "Bankrot: последний запуск завершился ошибкой"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels:
+          severity: critical
+        annotations:
+          summary: "Последняя синхронизация bankrot.gov.by завершилась со статусом failed."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: egr-postgres
+            model:
+              refId: A
+              datasource:
+                type: postgres
+                uid: egr-postgres
+              format: table
+              rawSql: "SELECT CASE WHEN status = 'failed' THEN 1::float8 ELSE 0::float8 END AS value FROM bankrot_sync_runs ORDER BY started_at DESC LIMIT 1"
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # 5) При ежедневном расписании успешного Bankrot-запуска нет больше 48 часов.
+      - uid: bankrot_sync_stale
+        title: "Bankrot: нет успешной синхронизации более 48 часов"
+        condition: C
+        for: 15m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels:
+          severity: critical
+        annotations:
+          summary: "Bankrot.gov.by не обновлялся более 48 часов. Проверь heavy worker, beat и токен."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: egr-postgres
+            model:
+              refId: A
+              datasource:
+                type: postgres
+                uid: egr-postgres
+              format: table
+              rawSql: "SELECT COALESCE(EXTRACT(EPOCH FROM (now() - max(finished_at))) / 3600, 999999)::float8 AS hours_since_success FROM bankrot_sync_runs WHERE status = 'done'"
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [48]
+
+      # 6) Последняя успешная синхронизация сохранила слишком много ошибок дочерних наборов.
+      - uid: bankrot_dataset_errors
+        title: "Bankrot: качество дочерних данных ниже 95%"
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Alerting
+        labels:
+          severity: warning
+        annotations:
+          summary: "Успешно загружено менее 95% дочерних наборов bankrot.gov.by."
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: egr-postgres
+            model:
+              refId: A
+              datasource:
+                type: postgres
+                uid: egr-postgres
+              format: table
+              rawSql: "SELECT COALESCE((stats_json ->> 'dataset_success_pct')::float8, 100) AS success_pct FROM bankrot_sync_runs WHERE status = 'done' ORDER BY finished_at DESC LIMIT 1"
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [95]

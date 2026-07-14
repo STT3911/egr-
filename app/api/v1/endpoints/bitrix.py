@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.logger import get_logger
-from app.core.security import verify_api_key
 from app.crud.company import CompanyCRUD
 from app.crud.grp import GrpCRUD
 from app.schemas.bitrix import BitrixRequisiteAddress, BitrixRequisiteData
@@ -100,7 +99,6 @@ def _pick_current(items: list, key: str = "valid_to") -> dict | None:
 def get_requisite_data(
     unp: str = Path(..., regex=r"^\d{9}$", description="УНП (9 цифр)"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """Срез данных компании под реквизит Битрикс24: наименования, директор, орган, адрес, ОКЭД."""
     unp_int = int(unp)

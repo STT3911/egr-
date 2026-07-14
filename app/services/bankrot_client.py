@@ -134,10 +134,10 @@ _DEFAULT_CASE_FILTERS: Dict[str, Any] = {
 }
 
 _DEFAULT_PUBLICATION_FILTERS: Dict[str, Any] = {
-    "debtorId": None,
-    "publishedDate": {"from": None, "to": None},
-    "messageType": None,
-    "messageStatus": None,
+    "debtor": "",
+    "manager": "",
+    "region": "",
+    "published": {"from": None, "to": None},
 }
 
 _COLLECTION_KEYS = (
@@ -552,13 +552,13 @@ class BankrotClient:
     def get_debtor_publications(
         self,
         debtor_id: int,
+        debtor_name: str,
         *,
         page_size: Optional[int] = None,
         max_pages: Optional[int] = None,
     ) -> Any:
-        """POST /messages/all — все публичные сообщения выбранного должника."""
-        publications_page_size = settings.BANKROT_PUBLICATIONS_PAGE_SIZE
-        page_size = min(page_size or publications_page_size, publications_page_size, 15)
+        """POST /messages — публичные сообщения, найденные по имени должника."""
+        page_size = page_size or settings.BANKROT_RELATED_PAGE_SIZE
         max_pages = max_pages or settings.BANKROT_RELATED_MAX_PAGES
         offset = 0
         merged: Any = None
@@ -566,13 +566,14 @@ class BankrotClient:
 
         for page_number in range(1, max_pages + 1):
             filters = self._merge_filters(
-                _DEFAULT_PUBLICATION_FILTERS, {"debtorId": debtor_id}
+                _DEFAULT_PUBLICATION_FILTERS, {"debtor": debtor_name}
             )
             payload = {
                 "pagination": {"offset": offset, "count": page_size},
+                "sort": {"sortOrder": 1},
                 "filters": filters,
             }
-            page = self._request("POST", "/messages/all", json=payload)
+            page = self._request("POST", "/messages", json=payload)
             collection_key, items, total = self._collection_info(page)
 
             if merged is None:
@@ -650,6 +651,7 @@ class BankrotClient:
     def get_debtor_related_data(
         self,
         debtor_id: int,
+        debtor_name: Optional[str] = None,
         *,
         dataset_names: Optional[set[str]] = None,
         page_size: Optional[int] = None,
@@ -664,14 +666,24 @@ class BankrotClient:
         if dataset_names is not None and "publications" not in dataset_names:
             return result
 
+        if not debtor_name:
+            result["publications"] = {
+                "endpoint": "/messages",
+                "http_method": "POST",
+                "payload": None,
+                "fetch_error": "Debtor name is missing; public messages search was skipped",
+            }
+            return result
+
         try:
             payload = self.get_debtor_publications(
                 debtor_id,
+                debtor_name,
                 page_size=page_size,
                 max_pages=max_pages,
             )
             result["publications"] = {
-                "endpoint": "/messages/all",
+                "endpoint": "/messages",
                 "http_method": "POST",
                 "payload": payload,
                 "fetch_error": None,
@@ -683,7 +695,7 @@ class BankrotClient:
                 exc,
             )
             result["publications"] = {
-                "endpoint": "/messages/all",
+                "endpoint": "/messages",
                 "http_method": "POST",
                 "payload": None,
                 "fetch_error": str(exc),

@@ -15,6 +15,7 @@ from app.telegram_bot.formatting import (
     HELP_TEXT,
     company_keyboard,
     format_company_card,
+    format_detailed_company_report,
     format_lookup_message,
     lookup_keyboard,
 )
@@ -59,6 +60,42 @@ class EGRApiClient:
         )
         response.raise_for_status()
         return response.json()
+
+    async def _get_optional(self, path: str, **params: Any) -> dict[str, Any] | None:
+        response = await self._client.get(path, params=params or None)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()
+
+    async def get_detailed_report(self, unp: str) -> dict[str, Any]:
+        profile = await self.get_company(unp)
+        requests = {
+            "grp": self._get_optional(f"/api/v1/grp/{unp}"),
+            "bankruptcy": self._get_optional(f"/api/v1/companies/{unp}/bankruptcy"),
+            "tax_debt": self._get_optional(
+                f"/api/v1/companies/{unp}/tax-debt",
+                limit=100,
+            ),
+            "risk": self._get_optional(f"/api/v1/companies/{unp}/risk"),
+            "related": self._get_optional(
+                f"/api/v1/companies/{unp}/related",
+                limit=50,
+            ),
+        }
+        results = await asyncio.gather(*requests.values(), return_exceptions=True)
+        report: dict[str, Any] = {"profile": profile, "errors": {}}
+        for source, result in zip(requests, results):
+            if isinstance(result, Exception):
+                if isinstance(result, httpx.HTTPStatusError):
+                    detail = f"HTTP {result.response.status_code}"
+                else:
+                    detail = result.__class__.__name__
+                report["errors"][source] = detail
+                logger.warning("Detailed report source failed: unp=%s source=%s error=%s", unp, source, result)
+                continue
+            report[source] = result
+        return report
 
 
 class TelegramApiClient:
@@ -144,6 +181,17 @@ class TelegramBot:
             return
 
         lower = text.lower()
+        command = lower.split(maxsplit=1)[0].split("@", 1)[0] if lower else ""
+        if command == "/more":
+            parts = text.split(maxsplit=1)
+            unp_str = parts[1].strip() if len(parts) > 1 else ""
+            if not UNP_RE.fullmatch(unp_str):
+                reply_text = ((message.get("reply_to_message") or {}).get("text") or "").strip()
+                match = re.search(r"(?<!\d)(\d{9})(?!\d)", reply_text)
+                unp_str = match.group(1) if match else ""
+            await self._handle_more(chat_id, unp_str)
+            return
+
         if lower.startswith("/subscribe") or lower.startswith("/sub "):
             parts = text.split(maxsplit=1)
             unp_str = parts[1].strip() if len(parts) > 1 else ""
@@ -354,6 +402,36 @@ class TelegramBot:
             format_company_card(company),
             reply_markup=company_keyboard(unp),
         )
+
+    async def _handle_more(self, chat_id: int, unp: str) -> None:
+        if not UNP_RE.fullmatch(unp):
+            await self.telegram.send_message(
+                chat_id,
+                "Укажите УНП: <code>/more 193712492</code>\n"
+                "Или ответьте командой <code>/more</code> на сообщение, где есть УНП.",
+            )
+            return
+
+        await self.telegram.send_message(
+            chat_id,
+            f"⏳ Собираю подробный отчёт по УНП <code>{escape(unp)}</code> из всех источников…",
+        )
+        try:
+            report = await self.egr.get_detailed_report(unp)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                await self.telegram.send_message(chat_id, f"Компания с УНП {escape(unp)} не найдена.")
+                return
+            logger.warning("Detailed company report failed: %s %s", exc.response.status_code, exc.response.text[:500])
+            await self.telegram.send_message(chat_id, "Не удалось получить подробный отчёт.")
+            return
+        except httpx.HTTPError as exc:
+            logger.warning("Detailed company report request error: %s", exc)
+            await self.telegram.send_message(chat_id, "Сервис подробных отчётов временно недоступен.")
+            return
+
+        for message_text in format_detailed_company_report(report):
+            await self.telegram.send_message(chat_id, message_text)
 
 
 async def run_polling() -> None:

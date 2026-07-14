@@ -1609,6 +1609,12 @@ const Company = () => {
                 {profile.bankrot_cases.map((c) => {
                   const isActive = !c.end_date;
                   const fullCase = bankruptcyData?.cases.find((item) => item.case_id === c.case_id);
+                  const successfulDatasets = fullCase?.datasets.filter(
+                    (dataset) => dataset.payload != null
+                  ).length ?? 0;
+                  const failedDatasets = fullCase?.datasets.filter(
+                    (dataset) => dataset.fetch_error
+                  ).length ?? 0;
                   return (
                     <div key={c.case_id} className={`glass p-3 sm:p-4 rounded-lg transition-all duration-300 border-l-4 space-y-3 ${
                       isActive ? "border-orange-500/60 hover:bg-orange-500/5" : "border-border/50 hover:bg-muted/30"
@@ -1663,6 +1669,38 @@ const Company = () => {
 
                       {showBankruptcyDetails && fullCase && (
                         <div className="space-y-2 border-t border-border/60 pt-3">
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <div className="rounded-lg border border-border/60 bg-background/60 p-3">
+                              <div className="text-xl font-semibold">{fullCase.datasets.length}</div>
+                              <div className="text-xs text-muted-foreground">разделов найдено</div>
+                            </div>
+                            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                              <div className="text-xl font-semibold text-emerald-600 dark:text-emerald-400">
+                                {successfulDatasets}
+                              </div>
+                              <div className="text-xs text-muted-foreground">с данными</div>
+                            </div>
+                            <div className={`rounded-lg border p-3 ${
+                              failedDatasets
+                                ? "border-destructive/30 bg-destructive/5"
+                                : "border-emerald-500/30 bg-emerald-500/5"
+                            }`}>
+                              <div className={`text-xl font-semibold ${
+                                failedDatasets
+                                  ? "text-destructive"
+                                  : "text-emerald-600 dark:text-emerald-400"
+                              }`}>
+                                {failedDatasets}
+                              </div>
+                              <div className="text-xs text-muted-foreground">ошибок обновления</div>
+                            </div>
+                            <div className="rounded-lg border border-border/60 bg-background/60 p-3">
+                              <div className="text-xl font-semibold">
+                                {fullCase.manager_name ? "Да" : "—"}
+                              </div>
+                              <div className="text-xs text-muted-foreground">управляющий определён</div>
+                            </div>
+                          </div>
                           {fullCase.detail_data != null && (
                             <details className="rounded-lg border border-border/60 bg-background/60 p-3">
                               <summary className="cursor-pointer font-medium text-sm">

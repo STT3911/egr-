@@ -32,7 +32,6 @@ def get_sync_runs(
     registry_name: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     query = db.query(GiasSyncRun).order_by(desc(GiasSyncRun.started_at))
     if registry_name:
@@ -57,7 +56,6 @@ def list_accredited_customers(
     q: Optional[str] = Query(None, description="Поиск по УНП или названию"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     query = db.query(GiasAccreditedCustomer).order_by(GiasAccreditedCustomer.name.asc())
     if q:
@@ -77,7 +75,6 @@ def get_accredited_customer_history(
     unp: str = Path(..., pattern=r"^\d{1,20}$"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     customer = db.query(GiasAccreditedCustomer).filter(GiasAccreditedCustomer.unp == unp).one_or_none()
     if customer is None:
@@ -97,7 +94,6 @@ def list_locked_suppliers(
     q: Optional[str] = Query(None, description="Поиск по УНП или названию"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     rows = (
         db.query(LockedSupplier)
@@ -141,7 +137,6 @@ def get_locked_supplier_history(
     unp: str = Path(..., pattern=r"^\d{1,20}$"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     history = (
         db.query(LockedSupplierHistory)

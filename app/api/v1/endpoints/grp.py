@@ -91,7 +91,6 @@ async def list_grp_data(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     crud = GrpCRUD(db)
     records = crud.list_recent(limit=limit, offset=offset)
@@ -130,4 +129,3 @@ async def reformat_grp_addresses(
     crud = GrpCRUD(db)
     updated_count = crud.reformat_addresses(limit=limit)
     return {"updated": updated_count, "limit": limit}
-    

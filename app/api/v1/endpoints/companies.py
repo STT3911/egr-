@@ -105,7 +105,6 @@ def lookup_companies(
     q: str = Query(..., min_length=1, description="Поиск по УНП или названию"),
     limit: int = Query(10, ge=1, le=50, description="Максимум результатов"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """
     🔍 Умный поиск по УНП или названию компании.
@@ -432,7 +431,6 @@ def lookup_companies(
 @router.get("/search/status")
 def company_search_status(
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """Return Elasticsearch index status."""
     from app.services.search_index import get_index_status
@@ -560,7 +558,6 @@ async def get_company_profile(
 async def get_company_bankruptcy(
     identifier: str = Path(..., regex=r"^\d{9}$", description="УНП (9 цифр)"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """Вернуть полные сохраненные данные bankrot.gov.by по компании."""
     return CompanyCRUD(db).get_bankrot_dossier(int(identifier))
@@ -571,7 +568,6 @@ async def get_company_tax_debt(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
     limit: int = Query(100, ge=1, le=1000, description="Сколько записей задолженности вернуть"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """Return tax debt records for a company by UNP."""
     unp = int(identifier)
@@ -616,7 +612,6 @@ async def get_related_companies(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
     limit: int = Query(50, ge=1, le=200, description="Максимум связанных компаний в каждой категории"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """Связанные компании: по общим телефону/email и по тому же адресу (здание).
 
@@ -641,7 +636,6 @@ async def get_related_companies(
 async def get_company_risk(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """Риск-профиль контрагента: оценка 0–100 с объяснимыми факторами.
 
@@ -661,7 +655,6 @@ async def get_company_risk(
 async def get_company_geocode(
     identifier: str = Path(..., regex=r'^\d{9}$', description="УНП (9 цифр)"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """
     Ленивый геокодинг места нахождения компании.
@@ -755,7 +748,6 @@ async def get_company_geocode(
 async def get_raw_data(
     identifier: str = Path(..., regex=r'^\d{9}$'),
     api_type: str = Query("auto", description="Тип API: mobile, legacy, auto"),
-    api_key: str = Depends(verify_api_key),
 ):
     """Получить сырые данные из API ЕГР"""
     try:
@@ -795,7 +787,6 @@ async def get_raw_data(
 async def get_raw_status(
     identifier: str = Path(..., regex=r'^\d{9}$'),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """Статус обработки сырых данных из БД"""
     raw_entry = db.query(RawCompanyData).filter(RawCompanyData.unp == int(identifier)).first()
@@ -856,7 +847,6 @@ async def parse_pending_raw(
 @router.get("/{identifier}/compare")
 async def compare_apis(
     identifier: str = Path(..., regex=r'^\d{9}$'),
-    api_key: str = Depends(verify_api_key),
 ):
     """Сравнить данные из разных API ЕГР"""
     try:

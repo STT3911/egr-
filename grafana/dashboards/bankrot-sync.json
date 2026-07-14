@@ -1,0 +1,114 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-30d", "to": "now" },
+  "timezone": "browser",
+  "title": "Bankrot.gov.by — полнота и качество",
+  "uid": "bankrot-sync",
+  "version": 1,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Дел в локальном реестре",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*)::bigint AS value FROM bankrot_cases" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Активных дел",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*)::bigint AS value FROM bankrot_cases WHERE status = 1" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Привязано к ЕГР по УНП",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 80 }, { "color": "green", "value": 95 }] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(round(100.0 * count(*) FILTER (WHERE EXISTS (SELECT 1 FROM egr_companies c WHERE c.unp = b.debtor_unp)) / NULLIF(count(*), 0), 1), 0)::float8 AS value FROM bankrot_cases b" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Успешных дочерних наборов",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 90 }, { "color": "green", "value": 98 }] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE((stats_json ->> 'dataset_success_pct')::float8, 0) AS value FROM bankrot_sync_runs WHERE status = 'done' ORDER BY finished_at DESC LIMIT 1" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Возраст последнего успеха",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "h", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 30 }, { "color": "red", "value": 48 }] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(EXTRACT(EPOCH FROM (now() - max(finished_at))) / 3600, 999999)::float8 AS value FROM bankrot_sync_runs WHERE status = 'done'" }]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Длительность последнего запуска",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE((stats_json ->> 'duration_seconds')::float8, EXTRACT(EPOCH FROM (finished_at - started_at))) AS value FROM bankrot_sync_runs WHERE status = 'done' ORDER BY finished_at DESC LIMIT 1" }]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Результаты запусков",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15, "showPoints": "auto" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT $__time(finished_at), processed_cases::float8 AS processed, failed_cases::float8 AS failed FROM bankrot_sync_runs WHERE $__timeFilter(finished_at) AND status IN ('done', 'failed') ORDER BY finished_at" },
+        { "refId": "B", "format": "time_series", "rawQuery": true, "rawSql": "SELECT $__time(finished_at), COALESCE((stats_json ->> 'datasets_failed')::float8, 0) AS dataset_errors FROM bankrot_sync_runs WHERE $__timeFilter(finished_at) AND status IN ('done', 'failed') ORDER BY finished_at" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "barchart",
+      "title": "Покрытие дочерними наборами",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "options": { "orientation": "horizontal", "showValue": "always", "stacking": "none", "xTickLabelRotation": 0 },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT dataset_type AS metric, count(*) FILTER (WHERE payload IS NOT NULL)::bigint AS success, count(*) FILTER (WHERE fetch_error IS NOT NULL)::bigint AS errors FROM bankrot_case_datasets GROUP BY dataset_type ORDER BY success DESC" }]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Последние запуски",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 10, "w": 14, "x": 0, "y": 14 },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "started_at", "desc": true }] },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT id, status, started_at, finished_at, processed_cases, failed_cases, COALESCE((stats_json ->> 'with_unp')::int, 0) AS with_unp, COALESCE((stats_json ->> 'unique_managers')::int, 0) AS managers, COALESCE((stats_json ->> 'dataset_success_pct')::numeric, 0) AS dataset_success_pct, COALESCE((stats_json ->> 'duration_seconds')::numeric, EXTRACT(EPOCH FROM (finished_at - started_at))) AS duration_seconds, left(error, 160) AS error FROM bankrot_sync_runs ORDER BY started_at DESC LIMIT 20" }]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Ошибки наборов по типам",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 10, "w": 10, "x": 14, "y": 14 },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "errors", "desc": true }] },
+      "fieldConfig": { "defaults": {}, "overrides": [{ "matcher": { "id": "byName", "options": "errors" }, "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-background" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 20 }] } }] }] },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT dataset_type, count(*) FILTER (WHERE fetch_error IS NOT NULL)::bigint AS errors, max(updated_at) AS last_attempt, left(max(fetch_error), 180) AS sample_error FROM bankrot_case_datasets GROUP BY dataset_type HAVING count(*) FILTER (WHERE fetch_error IS NOT NULL) > 0 ORDER BY errors DESC" }]
+    }
+  ]
+}

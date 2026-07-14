@@ -40,6 +40,17 @@ The profile endpoint can include linked records from:
 - scheduled inspection plans;
 - BelTPP own-production certificates.
 
+Bankrot.gov.by release materials:
+
+- [`docs/BANKROT.md`](docs/BANKROT.md) — collected datasets and API architecture;
+- [`docs/BANKROT_RUNBOOK.md`](docs/BANKROT_RUNBOOK.md) — deployment, diagnostics, and recovery;
+- [`docs/RELEASE_REPORT_2026-07-20.md`](docs/RELEASE_REPORT_2026-07-20.md) — release report and demo scenario;
+### API access policy
+
+- Company data and other read-only `GET` endpoints are available without `X-API-Key`.
+- Administrative operations (`sync`, `reindex`, `parse`) require `X-API-Key`.
+- `force_refresh=true` also requires `X-API-Key` because it updates stored data.
+
 ## Local Development
 
 Install backend dependencies:

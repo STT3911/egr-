@@ -127,6 +127,25 @@ def extract_debtor_id(
     return None
 
 
+def extract_debtor_name(
+    list_data: Optional[Dict], detail_data: Optional[Dict]
+) -> Optional[str]:
+    """Извлечь наименование должника для публичного поиска сообщений."""
+    paths = (
+        ("debtorModel", "organization", "shortName"),
+        ("debtorModel", "organization", "fullName"),
+        ("organization", "shortName"),
+        ("organization", "fullName"),
+        ("debtor", "value"),
+    )
+    for source in (detail_data or {}, list_data or {}):
+        for path in paths:
+            value = _safe_str(_dig(source, *path))
+            if value and value.strip():
+                return value.strip()
+    return None
+
+
 def extract_manager_id(
     list_data: Optional[Dict], detail_data: Optional[Dict]
 ) -> Optional[int]:
@@ -368,6 +387,7 @@ def sync_bankrot_cases(
     selected_datasets = set(related_datasets) if related_datasets else None
     manager_data_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
     debtor_data_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
+    sync_started_monotonic = time.monotonic()
 
     # --- Create sync run ---
     sync_run = BankrotSyncRun(status="running")
@@ -384,14 +404,33 @@ def sync_bankrot_cases(
     tmp_path   = out_dir / f"bankrot_cases_{run_id}_{ts}.jsonl.tmp"
     final_path = out_dir / f"bankrot_cases_{run_id}_{ts}.jsonl"
 
-    stats: Dict[str, int] = {
+    stats: Dict[str, Any] = {
         "processed": 0,
         "failed":    0,
         "upserted":  0,
         "no_unp":    0,
+        "with_unp":  0,
+        "active_cases": 0,
+        "closed_cases": 0,
+        "unknown_status_cases": 0,
         "datasets_fetched": 0,
         "datasets_failed": 0,
     }
+
+    def refresh_summary_stats() -> None:
+        total_datasets = stats["datasets_fetched"] + stats["datasets_failed"]
+        stats["total_cases"] = stats["processed"] + stats["failed"]
+        stats["unique_debtors"] = len(debtor_data_cache)
+        stats["unique_managers"] = len(manager_data_cache)
+        stats["unp_coverage_pct"] = round(
+            stats["with_unp"] * 100 / stats["processed"], 2
+        ) if stats["processed"] else 0.0
+        stats["dataset_success_pct"] = round(
+            stats["datasets_fetched"] * 100 / total_datasets, 2
+        ) if total_datasets else 100.0
+        stats["duration_seconds"] = round(
+            max(0.0, time.monotonic() - sync_started_monotonic), 2
+        )
 
     pending: List[Dict] = []
     pending_datasets: List[Dict[str, Any]] = []
@@ -454,8 +493,10 @@ def sync_bankrot_cases(
                     debtor_id = extract_debtor_id(list_item, detail_data)
                     if debtor_id is not None:
                         if debtor_id not in debtor_data_cache:
+                            debtor_name = extract_debtor_name(list_item, detail_data)
                             debtor_data_cache[debtor_id] = client.get_debtor_related_data(
                                 debtor_id,
+                                debtor_name=debtor_name,
                                 dataset_names=selected_datasets,
                                 page_size=related_page_size,
                                 max_pages=related_max_pages,
@@ -520,6 +561,18 @@ def sync_bankrot_cases(
                         case_id,
                         list_item.get("number") or "?",
                     )
+                else:
+                    stats["with_unp"] += 1
+
+                case_status = _safe_int(
+                    (detail_data or {}).get("status", list_item.get("status"))
+                )
+                if case_status == 1:
+                    stats["active_cases"] += 1
+                elif case_status == 0:
+                    stats["closed_cases"] += 1
+                else:
+                    stats["unknown_status_cases"] += 1
 
                 fetch_error = "; ".join(errors) if errors else None
 
@@ -560,9 +613,12 @@ def sync_bankrot_cases(
                     pending_datasets.clear()
 
                     # Update progress in sync run
+                    refresh_summary_stats()
                     db.query(BankrotSyncRun).filter_by(id=run_id).update({
+                        "total_cases":     stats["total_cases"],
                         "processed_cases": stats["processed"],
                         "failed_cases":    stats["failed"],
+                        "stats_json":      dict(stats),
                     })
                     db.commit()
 
@@ -580,9 +636,11 @@ def sync_bankrot_cases(
         logger.info("Bankrot: output saved to %s", final_path)
 
         # --- Mark done ---
+        refresh_summary_stats()
         db.query(BankrotSyncRun).filter_by(id=run_id).update({
             "status":          "done",
             "finished_at":     datetime.utcnow(),
+            "total_cases":     stats["total_cases"],
             "processed_cases": stats["processed"],
             "failed_cases":    stats["failed"],
             "output_file":     str(final_path),
@@ -617,9 +675,11 @@ def sync_bankrot_cases(
         # Mark run as failed
         try:
             db.rollback()
+            refresh_summary_stats()
             db.query(BankrotSyncRun).filter_by(id=run_id).update({
                 "status":          "failed",
                 "finished_at":     datetime.utcnow(),
+                "total_cases":     stats["total_cases"],
                 "processed_cases": stats["processed"],
                 "failed_cases":    stats["failed"],
                 "error":           str(exc),

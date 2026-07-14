@@ -15,7 +15,10 @@ HELP_TEXT = (
     "<b>Подписки на изменения ЕГР:</b>\n"
     "/subscribe 193712492 — подписаться на компанию\n"
     "/unsubscribe 193712492 — отменить подписку\n"
-    "/mysubs — мои подписки"
+    "/mysubs — мои подписки\n\n"
+    "<b>Подробный отчёт по всем источникам:</b>\n"
+    "/more 193712492 — собрать полное досье\n"
+    "Также можно ответить командой /more на сообщение с УНП."
 )
 
 
@@ -317,6 +320,451 @@ def format_company_card(company: dict[str, Any]) -> str:
     _append_section(lines, "ГИАС недобросовестные поставщики", locked_supplier_lines)
 
     return "\n".join(lines)
+
+
+def _detail_fields(
+    data: dict[str, Any],
+    fields: list[tuple[str, str]],
+    *,
+    max_length: int = 500,
+) -> list[str]:
+    lines = []
+    for label, key in fields:
+        value = _clean(data.get(key))
+        if value:
+            lines.append(f"{escape(label)}: {escape(_truncate(value, max_length))}")
+    return lines
+
+
+def _detail_records(
+    records: list[dict[str, Any]],
+    fields: list[tuple[str, str]],
+    *,
+    limit: int = 20,
+) -> list[str]:
+    lines = []
+    for index, record in enumerate(records[:limit], start=1):
+        parts = []
+        for label, key in fields:
+            value = _clean(record.get(key))
+            if value:
+                parts.append(f"{escape(label)}: {escape(_truncate(value, 350))}")
+        if parts:
+            lines.append(f"{index}. " + "; ".join(parts))
+    if len(records) > limit:
+        lines.append(f"Показаны первые {limit} из {len(records)} записей.")
+    return lines
+
+
+def _detail_messages(title: str, lines: list[str]) -> list[str]:
+    if not lines:
+        return []
+    header = f"<b>{escape(title)}</b>"
+    messages = []
+    current = [header]
+    for line in lines:
+        candidate = "\n".join([*current, line])
+        if len(candidate) <= TELEGRAM_MESSAGE_LIMIT:
+            current.append(line)
+            continue
+        messages.append("\n".join(current))
+        current = [header, line]
+    if len(current) > 1:
+        messages.append("\n".join(current))
+    return messages
+
+
+def _dataset_size(payload: Any) -> str | None:
+    if isinstance(payload, list):
+        return f"{len(payload)} записей"
+    if isinstance(payload, dict):
+        for key in ("items", "content", "data", "results", "messages"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return f"{len(value)} записей"
+        return f"{len(payload)} полей"
+    return None
+
+
+def format_detailed_company_report(report: dict[str, Any]) -> list[str]:
+    profile = report.get("profile") or {}
+    errors = report.get("errors") or {}
+    unp = _clean(profile.get("unp")) or "—"
+    name = company_display_name(profile)
+    bankruptcy = report.get("bankruptcy") or {}
+    tax_debt = report.get("tax_debt") or {}
+    related = report.get("related") or {}
+    risk = report.get("risk") or {}
+    grp = report.get("grp") or {}
+
+    def source_state(source: str, has_data: bool, count: int | None = None) -> str:
+        if source in errors:
+            return f"⚠️ ошибка ({escape(str(errors[source]))})"
+        if has_data:
+            return f"✅ {count}" if count is not None else "✅ данные найдены"
+        return "▫️ данных нет"
+
+    trade_records = profile.get("trade_registry_records") or []
+    locked_suppliers = profile.get("gias_locked_suppliers") or []
+    eaeu_records = profile.get("eaeu_sez_resident_records") or []
+    licenses = profile.get("license_records") or []
+    inspections = profile.get("inspection_plan_records") or []
+    certificates = profile.get("belltpp_own_certificates") or []
+    bankrot_cases = bankruptcy.get("cases") or []
+    tax_items = tax_debt.get("items") or []
+    related_count = len(related.get("by_contact") or []) + len(related.get("by_address") or [])
+
+    summary_lines = [
+        f"<b>{escape(name)}</b>",
+        f"УНП: <code>{escape(unp)}</code>",
+        "",
+        "<b>Проверенные источники</b>",
+        "✅ ЕГР — основная карточка и история",
+        f"{source_state('grp', bool(grp))} — ГРП МНС",
+        f"{source_state('tax_debt', bool(tax_items), len(tax_items))} — задолженность МНС",
+        f"{source_state('bankruptcy', bool(bankrot_cases), len(bankrot_cases))} — bankrot.gov.by",
+        f"{source_state('risk', bool(risk))} — риск-профиль",
+        f"{source_state('related', related_count > 0, related_count)} — связанные компании",
+        f"{source_state('trade', bool(trade_records), len(trade_records))} — торговый реестр МАРТ",
+        f"{source_state('gias', bool(profile.get('gias_accreditation')) or bool(locked_suppliers), len(locked_suppliers))} — ГИАС",
+        f"{source_state('pvt', bool(profile.get('pvt_resident')))} — ПВТ",
+        f"{source_state('eaeu', bool(eaeu_records), len(eaeu_records))} — реестры ЕАЭС/СЭЗ",
+        f"{source_state('licenses', bool(licenses), len(licenses))} — лицензии",
+        f"{source_state('inspections', bool(inspections), len(inspections))} — планы проверок",
+        f"{source_state('certificates', bool(certificates), len(certificates))} — БелТПП",
+    ]
+    messages = ["\n".join(summary_lines)]
+
+    egr_lines = _detail_fields(
+        profile,
+        [
+            ("Статус", "current_status_name"),
+            ("Код статуса", "current_status_code"),
+            ("Дата регистрации", "registration_date"),
+            ("Дата ликвидации", "liquidation_date"),
+            ("Текущее название", "current_name_ru"),
+            ("Краткое название", "current_short_name_ru"),
+            ("Название BY", "current_name_by"),
+            ("Адрес", "place_location_address"),
+        ],
+    )
+    names = profile.get("names") or []
+    if names:
+        egr_lines.append(f"\n<b>История названий ({len(names)})</b>")
+        egr_lines.extend(
+            _detail_records(
+                names,
+                [
+                    ("название", "full_name_ru"),
+                    ("кратко", "short_name_ru"),
+                    ("с", "valid_from"),
+                    ("по", "valid_to"),
+                ],
+            )
+        )
+    addresses = profile.get("addresses") or []
+    if addresses:
+        egr_lines.append(f"\n<b>История адресов ({len(addresses)})</b>")
+        egr_lines.extend(
+            _detail_records(
+                addresses,
+                [("адрес", "full_address"), ("с", "valid_from"), ("по", "valid_to")],
+            )
+        )
+    ved = profile.get("ved") or []
+    if ved:
+        egr_lines.append(f"\n<b>Виды деятельности ({len(ved)})</b>")
+        egr_lines.extend(
+            _detail_records(
+                ved,
+                [("код", "ved_code"), ("вид", "ved_name"), ("с", "valid_from"), ("по", "valid_to")],
+            )
+        )
+    contacts = profile.get("contacts_aggregated") or profile.get("contacts") or []
+    if contacts:
+        egr_lines.append(f"\n<b>Контакты ({len(contacts)})</b>")
+        egr_lines.extend(
+            _detail_records(
+                contacts,
+                [
+                    ("тип", "contact_type"),
+                    ("значение", "value"),
+                    ("телефон", "phone"),
+                    ("email", "email"),
+                    ("сайт", "website"),
+                    ("источники", "sources"),
+                ],
+            )
+        )
+    messages.extend(_detail_messages("🏢 ЕГР — полная карточка", egr_lines))
+
+    if grp:
+        messages.extend(
+            _detail_messages(
+                "🏛 ГРП МНС",
+                _detail_fields(
+                    grp,
+                    [
+                        ("Полное название", "full_name"),
+                        ("Краткое название", "short_name"),
+                        ("Дата регистрации", "registration_date"),
+                        ("Инспекция", "inspectorate_name"),
+                        ("Код инспекции", "inspectorate_code"),
+                        ("Статус", "status_code"),
+                        ("Дата статуса", "status_date"),
+                        ("Адрес", "address"),
+                        ("Получено", "fetched_at"),
+                        ("Обновлено", "updated_at"),
+                        ("Последняя ошибка", "last_error"),
+                    ],
+                ),
+            )
+        )
+
+    if risk:
+        level_labels = {"high": "высокий", "medium": "средний", "low": "низкий"}
+        risk_lines = [
+            f"Оценка: <b>{escape(_clean(risk.get('score')) or '0')}/100</b>",
+            f"Уровень: {escape(level_labels.get(risk.get('level'), _clean(risk.get('level')) or '—'))}",
+        ]
+        factors = risk.get("factors") or []
+        if factors:
+            risk_lines.append("\n<b>Факторы риска</b>")
+            risk_lines.extend(
+                _detail_records(factors, [("фактор", "title"), ("вес", "weight"), ("детали", "detail")])
+            )
+        trust = risk.get("trust_signals") or []
+        if trust:
+            risk_lines.append("\n<b>Сигналы доверия</b>")
+            risk_lines.extend(
+                _detail_records(trust, [("сигнал", "title"), ("вес", "weight"), ("детали", "detail")])
+            )
+        messages.extend(_detail_messages("📊 Риск-профиль", risk_lines))
+
+    if bankrot_cases:
+        bankrot_lines = []
+        for index, case in enumerate(bankrot_cases, start=1):
+            datasets = case.get("datasets") or []
+            successful = sum(1 for item in datasets if not item.get("fetch_error"))
+            bankrot_lines.append(f"\n<b>Дело {index}: {escape(_clean(case.get('number')) or str(case.get('case_id') or '—'))}</b>")
+            bankrot_lines.extend(
+                _detail_fields(
+                    case,
+                    [
+                        ("Начало", "start_date"),
+                        ("Окончание", "end_date"),
+                        ("Статус", "status"),
+                        ("Процедура", "procedure_type"),
+                        ("Суд", "court"),
+                        ("Судья", "judge"),
+                        ("Управляющий", "manager_name"),
+                        ("Ошибка карточки", "fetch_error"),
+                    ],
+                )
+            )
+            bankrot_lines.append(f"Наборы данных: {successful}/{len(datasets)} успешно")
+            for dataset in datasets:
+                dataset_type = escape(_clean(dataset.get("dataset_type")) or "unknown")
+                if dataset.get("fetch_error"):
+                    bankrot_lines.append(f"⚠️ {dataset_type}: {escape(_truncate(str(dataset['fetch_error']), 250))}")
+                else:
+                    size = _dataset_size(dataset.get("payload"))
+                    suffix = f" — {escape(size)}" if size else ""
+                    bankrot_lines.append(f"✅ {dataset_type}{suffix}")
+        messages.extend(_detail_messages("⚖️ Банкротство — полное досье", bankrot_lines))
+
+    if tax_items:
+        tax_lines = [
+            f"Записей: {len(tax_items)}",
+            f"Последний срез: {escape(_clean(tax_debt.get('latest_slice_date')) or '—')}",
+        ]
+        tax_lines.extend(
+            _detail_records(
+                tax_items,
+                [
+                    ("ИМНС", "imns_name"),
+                    ("код", "imns_code"),
+                    ("дата долга", "debt_date"),
+                    ("погашение", "repayment_date"),
+                    ("срез", "slice_date"),
+                ],
+                limit=30,
+            )
+        )
+        messages.extend(_detail_messages("💰 Задолженность МНС", tax_lines))
+
+    if related_count:
+        related_lines = []
+        by_address = related.get("by_address") or []
+        if by_address:
+            related_lines.append(f"<b>По адресу ({len(by_address)})</b>")
+            related_lines.extend(_detail_records(by_address, [("УНП", "unp"), ("название", "name"), ("адрес", "address")]))
+        by_contact = related.get("by_contact") or []
+        if by_contact:
+            related_lines.append(f"\n<b>По контактам ({len(by_contact)})</b>")
+            related_lines.extend(
+                _detail_records(
+                    by_contact,
+                    [("УНП", "unp"), ("название", "name"), ("тип", "matched_type"), ("совпадение", "matched_value")],
+                )
+            )
+        messages.extend(_detail_messages("🔗 Связанные компании", related_lines))
+
+    pvt = profile.get("pvt_resident") or {}
+    if pvt:
+        pvt_lines = _detail_fields(
+            pvt,
+            [
+                ("Название", "name"),
+                ("Город", "city"),
+                ("Адрес", "legal_address"),
+                ("Телефон", "phone"),
+                ("Сайт", "website"),
+                ("Описание", "description"),
+                ("Профиль", "profile_url"),
+                ("Обновлено", "last_seen_at"),
+            ],
+        )
+        directions = pvt.get("activity_directions") or []
+        if directions:
+            pvt_lines.append("Направления: " + escape(", ".join(map(str, directions))))
+        messages.extend(_detail_messages("💻 Парк высоких технологий", pvt_lines))
+
+    if trade_records:
+        messages.extend(
+            _detail_messages(
+                "🏪 Торговый реестр МАРТ",
+                _detail_records(
+                    trade_records,
+                    [
+                        ("№", "registration_number"),
+                        ("объект", "object_name"),
+                        ("тип", "object_type"),
+                        ("магазин", "internet_shop_domain"),
+                        ("сеть", "trade_network_name"),
+                        ("контакты", "object_contacts"),
+                        ("включено", "inclusion_date"),
+                    ],
+                    limit=30,
+                ),
+            )
+        )
+
+    accreditation = profile.get("gias_accreditation") or {}
+    if accreditation or locked_suppliers:
+        gias_lines = []
+        if accreditation:
+            gias_lines.append("<b>Аккредитация</b>")
+            gias_lines.extend(
+                _detail_fields(
+                    accreditation,
+                    [
+                        ("Статус", "state"),
+                        ("Название", "summary"),
+                        ("Телефон", "phone"),
+                        ("Email", "email"),
+                        ("Сайт", "web_site"),
+                        ("Адрес", "placements_address"),
+                        ("Действует с", "dt_from"),
+                        ("Действует до", "dt_to"),
+                    ],
+                )
+            )
+        if locked_suppliers:
+            gias_lines.append(f"\n<b>Недобросовестные поставщики ({len(locked_suppliers)})</b>")
+            gias_lines.extend(
+                _detail_records(
+                    locked_suppliers,
+                    [
+                        ("статус", "state"),
+                        ("№", "reg_number"),
+                        ("включён", "add_date"),
+                        ("исключён", "del_date"),
+                        ("основание", "base_incl_text"),
+                    ],
+                )
+            )
+        messages.extend(_detail_messages("📑 ГИАС", gias_lines))
+
+    if eaeu_records:
+        messages.extend(
+            _detail_messages(
+                "🌍 ЕАЭС и свободные экономические зоны",
+                _detail_records(
+                    eaeu_records,
+                    [
+                        ("страна", "country"),
+                        ("название", "full_name"),
+                        ("СЭЗ", "sez_name"),
+                        ("проект", "project_name"),
+                        ("свидетельство", "certificate"),
+                        ("дата", "registry_entry_date"),
+                    ],
+                ),
+            )
+        )
+
+    if licenses:
+        messages.extend(
+            _detail_messages(
+                "📜 Реестр лицензий",
+                _detail_records(
+                    licenses,
+                    [
+                        ("№", "generated_number"),
+                        ("вид деятельности", "activity_type_name"),
+                        ("с", "activity_date_start"),
+                        ("по", "activity_date_end"),
+                        ("активна", "activity_is_active"),
+                    ],
+                    limit=30,
+                ),
+            )
+        )
+
+    if inspections:
+        messages.extend(
+            _detail_messages(
+                "🔎 Планы проверок",
+                _detail_records(
+                    inspections,
+                    [
+                        ("период", "plan_period"),
+                        ("месяц", "start_month"),
+                        ("орган", "controller_authority"),
+                        ("регион", "source_region"),
+                        ("план", "plan_title"),
+                    ],
+                    limit=30,
+                ),
+            )
+        )
+
+    if certificates:
+        certificate_lines = _detail_records(
+            certificates,
+            [
+                ("№", "cert_number"),
+                ("бланк", "blank_number"),
+                ("выдан", "issue_date"),
+                ("действует до", "valid_until"),
+                ("проверка", "verify_url"),
+            ],
+        )
+        for index, certificate in enumerate(certificates[:20], start=1):
+            products = certificate.get("products") or []
+            if products:
+                names = [_clean(item.get("name")) for item in products[:10]]
+                certificate_lines.append(
+                    f"Товары сертификата {index}: {escape(', '.join(name for name in names if name))}"
+                )
+        messages.extend(_detail_messages("🏅 Сертификаты БелТПП", certificate_lines))
+
+    messages.append(
+        "✅ <b>Подробный отчёт завершён</b>\n"
+        "Обычные уведомления по подпискам остаются краткими. Новый полный отчёт формируется только по команде <code>/more</code>."
+    )
+    return messages
 
 
 def company_keyboard(unp: int | str) -> dict[str, Any]:

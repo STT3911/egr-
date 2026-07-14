@@ -173,7 +173,6 @@ class Settings(BaseSettings):
     BANKROT_SAVE_EVERY: int = 50                     # промежуточный flush каждые N кейсов
     BANKROT_FETCH_RELATED_DATA: bool = True           # все публичные разделы дела, должника и управляющего
     BANKROT_RELATED_PAGE_SIZE: int = 20               # проверенный размер страницы дочерних разделов
-    BANKROT_PUBLICATIONS_PAGE_SIZE: int = 15          # максимум /messages/all в frontend сайта
     BANKROT_RELATED_MAX_PAGES: int = 1000             # защита от зацикливания нестабильной пагинации
     BANKROT_RELATED_DATASETS: str = ""                # CSV-фильтр наборов; пусто = все поддерживаемые
     BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу

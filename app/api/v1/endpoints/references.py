@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Dict, Any
 from app.core.database import get_db
-from app.core.security import verify_api_key
 from app.core.logger import get_logger
 
 logger = get_logger("api.references")
@@ -34,7 +33,7 @@ REFERENCE_TABLES = {
 
 
 @router.get("/")
-async def list_reference_types(api_key: str = Depends(verify_api_key)):
+async def list_reference_types():
     """
     Получить список доступных справочников
     """
@@ -69,7 +68,6 @@ async def get_reference_data(
     limit: int = 1000,
     offset: int = 0,
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """
     Получить данные справочника
@@ -131,7 +129,6 @@ async def get_reference_item(
     ref_type: str = Path(..., description="Тип справочника"),
     ref_id: int = Path(..., description="ID элемента справочника"),
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """
     Получить элемент справочника по ID
@@ -181,7 +178,6 @@ async def search_reference(
     q: str = "",
     limit: int = 100,
     db: Session = Depends(get_db),
-    api_key: str = Depends(verify_api_key),
 ):
     """
     Поиск в справочнике по названию
@@ -234,5 +230,4 @@ async def search_reference(
     except Exception as e:
         logger.error(f"Error searching in {ref_type}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
