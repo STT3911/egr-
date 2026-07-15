@@ -177,14 +177,15 @@ class Settings(BaseSettings):
     BANKROT_RELATED_DATASETS: str = ""                # CSV-фильтр наборов; пусто = все поддерживаемые
     BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу
     BANKROT_SCHEDULE_SECONDS: int = 86400            # интервал периодической задачи (сек)
-    # OIDC-автообновление токена. Access-токен ersb_frontend живёт ~24ч, поэтому
-    # статический BANKROT_API_TOKEN протухает за сутки. Если задан refresh_token
-    # (offline_access, взять один раз из localStorage браузера после входа на
-    # bankrot.gov.by — ключ oidc.user:...:ersb_frontend), клиент сам меняет его на
-    # свежий access-токен через /connect/token и переживает ротацию refresh-токена.
+    # OIDC-автообновление токена. По умолчанию клиент читает публичную frontend-
+    # конфигурацию bankrot.gov.by и использует client_credentials без входа пользователя.
+    # Явные client secret и refresh token оставлены как необязательные переопределения.
     BANKROT_OIDC_TOKEN_URL: str = "https://account.bankrot.gov.by/connect/token"
     BANKROT_OIDC_CLIENT_ID: str = "ersb_frontend"
-    BANKROT_REFRESH_TOKEN: Optional[str] = None      # refresh_token для авто-обновления access
+    BANKROT_OIDC_SCOPE: str = "ersb_backend.api"
+    BANKROT_OIDC_CLIENT_SECRET: Optional[str] = None
+    BANKROT_FRONTEND_URL: str = "https://bankrot.gov.by"
+    BANKROT_REFRESH_TOKEN: Optional[str] = None
     BANKROT_REFRESH_TOKEN_FILE: str = "data/bankrot/refresh_token"  # куда сохранять ротированный refresh
 
     # "Связанные компании" (общий телефон/email/адрес) — пороги вынесены в .env для

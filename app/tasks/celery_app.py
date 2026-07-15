@@ -264,7 +264,8 @@ celery_app.conf.update(
     # Маршрутизация задач по очередям
     #
     # celery  — быстрые/частые задачи and EGR fetch/process pipeline
-    # heavy   — long-running external sync jobs (historical, gias, bankrot, pvt)
+    # heavy   — long-running external sync jobs (historical, gias, pvt)
+    # bankrot — isolated full synchronization of bankrot.gov.by
     #
     # Цель: быстрые задачи никогда не ждут пока закончится GIAS/historical
     # ------------------------------------------------------------------
@@ -280,7 +281,7 @@ celery_app.conf.update(
         "app.tasks.sync_tasks.egr_reconcile_states":          {"queue": "heavy"},
         "app.tasks.sync_tasks.reindex_elasticsearch":         {"queue": "heavy"},
         "app.tasks.sync_tasks.enrich_missing_raw":            {"queue": "heavy"},
-        "app.tasks.bankrot_tasks.sync_bankrot_cases":         {"queue": "heavy"},
+        "app.tasks.bankrot_tasks.sync_bankrot_cases":         {"queue": "bankrot"},
         "app.tasks.license_tasks.check_license_changes":      {"queue": "heavy"},
         "app.tasks.park_tasks.sync_pvt_residents":            {"queue": "heavy"},
         "app.tasks.contacts_tasks.rebuild_company_contacts_task": {"queue": "heavy"},

@@ -1,60 +1,35 @@
 apiVersion: 1
 
+deleteRules:
+  - orgId: 1
+    uid: egr_sync_behind
+  - orgId: 1
+    uid: egr_backlog
+  - orgId: 1
+    uid: source_silent
+  - orgId: 1
+    uid: bankrot_sync_failed
+  - orgId: 1
+    uid: bankrot_sync_stale
+  - orgId: 1
+    uid: bankrot_dataset_errors
+
 groups:
   - orgId: 1
-    name: egr-health
+    name: tendex-health
     folder: EGR
     interval: 5m
     rules:
-      # 1) ЕГР: ежедневная синхронизация отстаёт больше 3 дней (норма — отставание на 1 день).
-      - uid: egr_sync_behind
-        title: "ЕГР: ежедневная синхронизация отстаёт"
+      - uid: tendex_health_summary
+        title: "Сводка состояния Tendex"
         condition: C
         for: 10m
-        noDataState: Alerting
-        execErrState: Alerting
-        labels:
-          severity: critical
-        annotations:
-          summary: "ЕГР daily sync отстаёт на {{ index $values \"A\" }} дн. Проверь egr_celery_worker / egr_last_sync_date."
-        data:
-          - refId: A
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: egr-postgres
-            model:
-              refId: A
-              datasource:
-                type: postgres
-                uid: egr-postgres
-              format: table
-              rawSql: "SELECT (current_date - value::date)::float8 AS days_behind FROM egr_system_state WHERE key = 'egr_last_sync_date'"
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              conditions:
-                - evaluator:
-                    type: gt
-                    params: [3]
-
-      # 2) ЕГР: backlog необработанных raw-строк раздулся (обработка не успевает / воркер стоит).
-      - uid: egr_backlog
-        title: "ЕГР: backlog raw слишком большой"
-        condition: C
-        for: 15m
         noDataState: OK
         execErrState: Alerting
         labels:
-          severity: warning
+          scope: data-health
         annotations:
-          summary: "В очереди обработки {{ index $values \"A\" }} необработанных raw-строк (порог 50000)."
+          summary: "{{ index $labels \"details\" }}"
         data:
           - refId: A
             relativeTimeRange:
@@ -67,84 +42,157 @@ groups:
                 type: postgres
                 uid: egr-postgres
               format: table
-              rawSql: "SELECT count(*)::float8 AS pending FROM egr_raw_company_data WHERE processed_at IS NULL"
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              conditions:
-                - evaluator:
-                    type: gt
-                    params: [50000]
+              rawSql: |
+                WITH config AS (
+                    SELECT
+                        lower('${BANKROT_SCHEDULE_ENABLED}') IN ('true', '1', 'yes', 'on') AS bankrot_enabled,
+                        lower('${GRP_SCHEDULE_ENABLED}') IN ('true', '1', 'yes', 'on') AS grp_enabled,
+                        lower('${PVT_SCHEDULE_ENABLED}') IN ('true', '1', 'yes', 'on') AS pvt_enabled,
+                        lower('${LICENSE_SCHEDULE_ENABLED}') IN ('true', '1', 'yes', 'on') AS license_enabled,
+                        lower('${NALOG_DEBT_SCHEDULE_ENABLED}') IN ('true', '1', 'yes', 'on') AS nalog_enabled,
+                        lower('${SEZ_SCHEDULE_ENABLED}') IN ('true', '1', 'yes', 'on') AS sez_enabled,
+                        lower('${GIAS_SYNC_ENABLED}') IN ('true', '1', 'yes', 'on') AS gias_enabled
+                ),
+                latest_bankrot AS (
+                    SELECT status, error, started_at, finished_at
+                    FROM bankrot_sync_runs
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                ),
+                latest_bankrot_success AS (
+                    SELECT finished_at,
+                           COALESCE((stats_json ->> 'dataset_success_pct')::float8, 100) AS success_pct
+                    FROM bankrot_sync_runs
+                    WHERE status = 'done'
+                    ORDER BY finished_at DESC
+                    LIMIT 1
+                ),
+                bankrot_health AS (
+                    SELECT
+                        c.bankrot_enabled,
+                        COALESCE(lb.status, 'missing') AS latest_status,
+                        lb.error,
+                        COALESCE(EXTRACT(EPOCH FROM (now() - lbs.finished_at)) / 3600, 999999)::float8 AS success_age_hours,
+                        COALESCE(lbs.success_pct, 100)::float8 AS success_pct
+                    FROM config c
+                    LEFT JOIN latest_bankrot lb ON true
+                    LEFT JOIN latest_bankrot_success lbs ON true
+                ),
+                source_ages AS (
+                    SELECT 'ЕГР: карточки' AS source, true AS enabled,
+                           EXTRACT(EPOCH FROM (now() - max(updated_at))) / 3600 AS age_hours
+                    FROM egr_companies
+                    UNION ALL
+                    SELECT 'ЕГР Mobile: адреса', true,
+                           EXTRACT(EPOCH FROM (now() - max(fetched_at))) / 3600
+                    FROM egr_company_place_locations
+                    UNION ALL
+                    SELECT 'ГРП: плательщики', c.grp_enabled,
+                           EXTRACT(EPOCH FROM (now() - max(g.fetched_at))) / 3600
+                    FROM grp_taxpayer_data g CROSS JOIN config c
+                    GROUP BY c.grp_enabled
+                    UNION ALL
+                    SELECT 'ПВТ: резиденты', c.pvt_enabled,
+                           EXTRACT(EPOCH FROM (now() - max(p.last_seen_at))) / 3600
+                    FROM pvt_resident_records p CROSS JOIN config c
+                    GROUP BY c.pvt_enabled
+                    UNION ALL
+                    SELECT 'Лицензии', c.license_enabled,
+                           EXTRACT(EPOCH FROM (now() - max(l.last_seen_at))) / 3600
+                    FROM license_records l CROSS JOIN config c
+                    GROUP BY c.license_enabled
+                    UNION ALL
+                    SELECT 'ГИАС: аккредитованные заказчики', c.gias_enabled,
+                           EXTRACT(EPOCH FROM (now() - max(g.last_seen_at))) / 3600
+                    FROM gias_accredited_customers g CROSS JOIN config c
+                    GROUP BY c.gias_enabled
+                    UNION ALL
+                    SELECT 'ГИАС: недобросовестные поставщики', c.gias_enabled,
+                           EXTRACT(EPOCH FROM (now() - max(l.last_seen_at))) / 3600
+                    FROM locked_suppliers l CROSS JOIN config c
+                    GROUP BY c.gias_enabled
+                    UNION ALL
+                    SELECT 'ЕАЭС: резиденты СЭЗ', c.sez_enabled,
+                           EXTRACT(EPOCH FROM (now() - max(s.last_seen_at))) / 3600
+                    FROM eaeu_sez_resident_records s CROSS JOIN config c
+                    GROUP BY c.sez_enabled
+                    UNION ALL
+                    SELECT 'МНС: задолженности', c.nalog_enabled,
+                           EXTRACT(EPOCH FROM (now() - max(n.created_at))) / 3600
+                    FROM nalog_debt_records n CROSS JOIN config c
+                    GROUP BY c.nalog_enabled
+                ),
+                issues AS (
+                    SELECT 10 AS priority, 'critical' AS severity,
+                           CASE
+                               WHEN s.value IS NULL THEN 'ЕГР: отсутствует egr_last_sync_date'
+                               ELSE 'ЕГР: ежедневная синхронизация отстаёт более чем на 3 дня'
+                           END AS detail
+                    FROM (SELECT 1) seed
+                    LEFT JOIN egr_system_state s ON s.key = 'egr_last_sync_date'
+                    WHERE s.value IS NULL OR current_date - s.value::date > 3
 
-      # 3) Любой источник «молчит» больше 7 дней — мультисерийный алерт (по одному на источник).
-      #    Порог щадящий (168ч), чтобы не ложно-срабатывать на редко обновляемых источниках.
-      - uid: source_silent
-        title: "Внешний реестр не обновляется >7 дней"
-        condition: C
-        for: 30m
-        noDataState: OK
-        execErrState: Alerting
-        labels:
-          severity: warning
-        annotations:
-          summary: "Источник {{ index $labels \"source\" }} молчит {{ index $values \"A\" }} дн."
-        data:
-          - refId: A
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: egr-postgres
-            model:
-              refId: A
-              datasource:
-                type: postgres
-                uid: egr-postgres
-              format: table
-              rawSql: "SELECT source, round(age_hours/24.0)::float8 AS age_days FROM ( SELECT 'ЕГР: карточки' AS source, EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 AS age_hours FROM egr_companies UNION ALL SELECT 'ГРП: плательщики', EXTRACT(EPOCH FROM (now() - max(fetched_at)))/3600 FROM grp_taxpayer_data UNION ALL SELECT 'ЕГР Mobile: адреса', EXTRACT(EPOCH FROM (now() - max(fetched_at)))/3600 FROM egr_company_place_locations UNION ALL SELECT 'МАРТ: торговый реестр', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM trade_registry_records UNION ALL SELECT 'Лицензии', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM license_records UNION ALL SELECT 'ГИАС: аккред. заказчики', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM gias_accredited_customers UNION ALL SELECT 'ГИАС: недобросов. поставщики', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM locked_suppliers UNION ALL SELECT 'ПВТ: резиденты', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM pvt_resident_records UNION ALL SELECT 'ЕАЭС: резиденты СЭЗ', EXTRACT(EPOCH FROM (now() - max(last_seen_at)))/3600 FROM eaeu_sez_resident_records UNION ALL SELECT 'МНС: задолженности', EXTRACT(EPOCH FROM (now() - max(created_at)))/3600 FROM nalog_debt_records UNION ALL SELECT 'Банкротство: дела', EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 FROM bankrot_cases ) t WHERE age_hours IS NOT NULL AND age_hours > 168"
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              conditions:
-                - evaluator:
-                    type: gt
-                    params: [7]
+                    UNION ALL
 
-      # 4) Последний запуск Bankrot завершился общей ошибкой.
-      - uid: bankrot_sync_failed
-        title: "Bankrot: последний запуск завершился ошибкой"
-        condition: C
-        for: 5m
-        noDataState: OK
-        execErrState: Alerting
-        labels:
-          severity: critical
-        annotations:
-          summary: "Последняя синхронизация bankrot.gov.by завершилась со статусом failed."
-        data:
-          - refId: A
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: egr-postgres
-            model:
-              refId: A
-              datasource:
-                type: postgres
-                uid: egr-postgres
-              format: table
-              rawSql: "SELECT CASE WHEN status = 'failed' THEN 1::float8 ELSE 0::float8 END AS value FROM bankrot_sync_runs ORDER BY started_at DESC LIMIT 1"
+                    SELECT 20, 'warning',
+                           'ЕГР: очередь необработанных raw-строк превышает 50 000'
+                    FROM egr_raw_company_data
+                    WHERE processed_at IS NULL
+                    HAVING count(*) > 50000
+
+                    UNION ALL
+
+                    SELECT 30, 'warning',
+                           CASE
+                               WHEN age_hours IS NULL THEN source || ': синхронизация включена, но данных нет'
+                               ELSE source || ' не обновляется более 7 дней'
+                           END
+                    FROM source_ages
+                    WHERE enabled AND (age_hours IS NULL OR age_hours > 168)
+
+                    UNION ALL
+
+                    SELECT 5,
+                           CASE
+                               WHEN latest_status = 'failed' OR success_age_hours > 48 THEN 'critical'
+                               ELSE 'warning'
+                           END,
+                           'Bankrot: ' || concat_ws('; ',
+                               CASE WHEN latest_status = 'failed' THEN
+                                   'последний запуск failed — ' || replace(replace(replace(
+                                       left(
+                                           regexp_replace(COALESCE(error, 'причина не записана'), E'[\n\r]+', ' ', 'g'),
+                                           350
+                                       ),
+                                       '&', '&amp;'
+                                   ), '<', '&lt;'), '>', '&gt;')
+                               END,
+                               CASE WHEN latest_status = 'missing' THEN 'ещё не было ни одного запуска' END,
+                               CASE WHEN success_age_hours > 48 THEN
+                                   CASE WHEN success_age_hours >= 999999 THEN
+                                       'успешных запусков ещё не было'
+                                   ELSE
+                                       'нет успешной синхронизации более 48 часов'
+                                   END
+                               END,
+                               CASE WHEN success_pct < 95 THEN
+                                   format('качество дочерних данных %s%%', round(success_pct))
+                               END
+                           )
+                    FROM bankrot_health
+                    WHERE bankrot_enabled
+                      AND (
+                          latest_status IN ('failed', 'missing')
+                          OR success_age_hours > 48
+                          OR success_pct < 95
+                      )
+                )
+                SELECT
+                    count(*)::float8 AS value,
+                    CASE WHEN bool_or(severity = 'critical') THEN 'critical' ELSE 'warning' END AS severity,
+                    string_agg(detail, E'\n• ' ORDER BY priority, detail) AS details
+                FROM issues
+                HAVING count(*) > 0
           - refId: C
             datasourceUid: __expr__
             model:
@@ -158,79 +206,3 @@ groups:
                 - evaluator:
                     type: gt
                     params: [0]
-
-      # 5) При ежедневном расписании успешного Bankrot-запуска нет больше 48 часов.
-      - uid: bankrot_sync_stale
-        title: "Bankrot: нет успешной синхронизации более 48 часов"
-        condition: C
-        for: 15m
-        noDataState: Alerting
-        execErrState: Alerting
-        labels:
-          severity: critical
-        annotations:
-          summary: "Bankrot.gov.by не обновлялся более 48 часов. Проверь heavy worker, beat и токен."
-        data:
-          - refId: A
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: egr-postgres
-            model:
-              refId: A
-              datasource:
-                type: postgres
-                uid: egr-postgres
-              format: table
-              rawSql: "SELECT COALESCE(EXTRACT(EPOCH FROM (now() - max(finished_at))) / 3600, 999999)::float8 AS hours_since_success FROM bankrot_sync_runs WHERE status = 'done'"
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              conditions:
-                - evaluator:
-                    type: gt
-                    params: [48]
-
-      # 6) Последняя успешная синхронизация сохранила слишком много ошибок дочерних наборов.
-      - uid: bankrot_dataset_errors
-        title: "Bankrot: качество дочерних данных ниже 95%"
-        condition: C
-        for: 15m
-        noDataState: OK
-        execErrState: Alerting
-        labels:
-          severity: warning
-        annotations:
-          summary: "Успешно загружено менее 95% дочерних наборов bankrot.gov.by."
-        data:
-          - refId: A
-            relativeTimeRange:
-              from: 600
-              to: 0
-            datasourceUid: egr-postgres
-            model:
-              refId: A
-              datasource:
-                type: postgres
-                uid: egr-postgres
-              format: table
-              rawSql: "SELECT COALESCE((stats_json ->> 'dataset_success_pct')::float8, 100) AS success_pct FROM bankrot_sync_runs WHERE status = 'done' ORDER BY finished_at DESC LIMIT 1"
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              conditions:
-                - evaluator:
-                    type: lt
-                    params: [95]
