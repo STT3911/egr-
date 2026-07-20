@@ -7,7 +7,7 @@ import { CompanyMap } from "@/components/CompanyMap";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
 import { motion, useScroll, useSpring } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, Store, Sun, Users } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   getCompanyProfile,
@@ -52,6 +52,7 @@ const SectionCard = ({ children, className = "" }: { children: React.ReactNode; 
 );
 
 type TradeRegistryRecord = NonNullable<CompanyProfile["trade_registry_records"]>[number];
+type PulseTone = "emerald" | "amber" | "red" | "sky" | "violet";
 
 // Skeleton block helper
 const Skeleton = ({ className = "" }: { className?: string }) => (
@@ -133,6 +134,30 @@ const Company = () => {
       });
     } finally {
       setReportDownloading(false);
+    }
+  };
+
+  const handleShareCompany = async () => {
+    if (!profile) return;
+
+    const title = profile.current_short_name_ru || profile.current_name_ru || `УНП ${profile.unp || unp}`;
+    const text = `${title}: карточка компании в EGR`;
+    const url = window.location.href;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast({ title: "Ссылка скопирована" });
+      }
+    } catch (shareError) {
+      if (shareError instanceof DOMException && shareError.name === "AbortError") return;
+      toast({
+        title: "Не удалось поделиться ссылкой",
+        description: shareError instanceof Error ? shareError.message : undefined,
+        variant: "destructive",
+      });
     }
   };
 
@@ -383,6 +408,52 @@ const Company = () => {
     return "bg-green-500 shadow-[0_0_18px_hsl(142_76%_36%/0.7)]";
   })();
 
+  const businessPulse = profile ? (() => {
+    const registeredAt = profile.registration_date ? new Date(profile.registration_date).getTime() : NaN;
+    const ageYears = Number.isFinite(registeredAt)
+      ? Math.max(0, Math.floor((Date.now() - registeredAt) / (365.25 * 24 * 60 * 60 * 1000)))
+      : null;
+    const taxDebtCount = taxDebtData?.count ?? 0;
+    const bankruptcyCount = profile.bankrot_cases?.length ?? 0;
+    const activeLicenses = profile.license_records?.filter((item) => item.activity_is_active).length ?? 0;
+    const inspectionsCount = profile.inspection_plan_records?.length ?? 0;
+    const tradeObjects = profile.trade_registry_records?.length ?? 0;
+    const relatedCount = (relatedData?.by_address.length ?? 0) + (relatedData?.by_contact.length ?? 0);
+    const riskScore = risk?.score ?? Math.min(100, taxDebtCount * 24 + bankruptcyCount * 30 + inspectionsCount * 8);
+    const sourceCount = [
+      profile.names?.length,
+      profile.addresses?.length,
+      profile.ved?.length,
+      profile.contacts?.length,
+      tradeObjects,
+      profile.license_records?.length,
+      inspectionsCount,
+      bankruptcyCount,
+      profile.pvt_resident ? 1 : 0,
+      taxDebtCount,
+      relatedCount,
+    ].filter((value) => Number(value) > 0).length;
+    const confidence = Math.min(99, 42 + sourceCount * 7 + Math.min((profile.names?.length ?? 0) + (profile.addresses?.length ?? 0), 12));
+    const healthLabel = riskScore >= 70 ? "Нужна ручная проверка" : riskScore >= 35 ? "Есть сигналы к проверке" : "Профиль выглядит спокойно";
+    const healthTone: PulseTone = riskScore >= 70 ? "red" : riskScore >= 35 ? "amber" : "emerald";
+    const timeline = [
+      profile.registration_date && { label: "Регистрация", value: formatDate(profile.registration_date), icon: CalendarDays },
+      profile.liquidation_date && { label: "Ликвидация", value: formatDate(profile.liquidation_date), icon: AlertTriangle },
+      taxDebtData?.latest_slice_date && { label: "Последний срез долгов", value: formatDate(taxDebtData.latest_slice_date), icon: AlertTriangle },
+      profile.pvt_resident?.last_seen_at && { label: "Обновление ПВТ", value: formatUpdatedAtUTC(profile.pvt_resident.last_seen_at), icon: Award },
+    ].filter(Boolean).slice(0, 4) as { label: string; value: string; icon: typeof CalendarDays }[];
+    const signals: { label: string; value: string; tone: PulseTone }[] = [
+      { label: "Уверенность данных", value: `${confidence}%`, tone: confidence >= 75 ? "emerald" : "sky" },
+      { label: "Возраст", value: ageYears === null ? "нет даты" : `${ageYears} лет`, tone: "violet" },
+      { label: "Активные лицензии", value: String(activeLicenses), tone: activeLicenses > 0 ? "emerald" : "sky" },
+      { label: "Торговые объекты", value: String(tradeObjects), tone: tradeObjects > 0 ? "emerald" : "sky" },
+      { label: "Проверки", value: String(inspectionsCount), tone: inspectionsCount > 0 ? "amber" : "emerald" },
+      { label: "Связи", value: String(relatedCount), tone: relatedCount > 0 ? "violet" : "sky" },
+    ];
+
+    return { confidence, healthLabel, healthTone, riskScore, signals, timeline };
+  })() : null;
+
   return (
     <div className="min-h-screen bg-background px-4 pb-12 pt-28 relative overflow-hidden" style={{
       background: 'linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--background)) 70%, hsl(var(--secondary) / 0.2) 100%)'
@@ -486,6 +557,16 @@ const Company = () => {
                 )}
                 Скачать досье
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleShareCompany}
+                disabled={!profile}
+                className="flex-1 sm:flex-initial glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300"
+              >
+                <Share2 className="mr-2 h-4 w-4" />
+                Поделиться
+              </Button>
               <Link to={`/company/${unp}/raw`} className="flex-1 sm:flex-initial">
                 <Button variant="outline" className="w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base">
                   Raw данные
@@ -582,6 +663,95 @@ const Company = () => {
             animate="visible"
             className="space-y-6"
           >
+            {businessPulse && (() => {
+              const toneClasses: Record<PulseTone, string> = {
+                emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                amber: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                red: "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300",
+                sky: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+                violet: "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+              };
+
+              return (
+                <SectionCard>
+                  <Card className="relative overflow-hidden glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/25">
+                    <div className="absolute inset-0 registry-grid opacity-25" />
+                    <div className="absolute -right-24 -top-24 h-56 w-56 rounded-full bg-primary/15 blur-3xl" />
+                    <CardHeader className="relative rounded-t-lg" style={{
+                      background: "linear-gradient(120deg, hsl(var(--primary) / 0.12), hsl(var(--accent) / 0.10), transparent)",
+                    }}>
+                      <CardTitle className="text-foreground flex flex-wrap items-center gap-2 text-lg sm:text-xl">
+                        <Sparkles className="w-5 h-5 text-primary" />
+                        Business Pulse
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${toneClasses[businessPulse.healthTone]}`}>
+                          {businessPulse.healthLabel}
+                        </span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="relative space-y-5 p-4 sm:p-6">
+                      <div className="grid gap-3 md:grid-cols-[1.05fr_1.6fr]">
+                        <div className={`rounded-2xl border p-4 ${toneClasses[businessPulse.healthTone]}`}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-xs uppercase tracking-[0.2em] opacity-80">радар риска</div>
+                              <div className="mt-2 text-4xl font-bold leading-none">{businessPulse.riskScore}</div>
+                              <div className="mt-1 text-xs opacity-80">из 100 по открытым сигналам</div>
+                            </div>
+                            <div className="relative h-20 w-20">
+                              <div className="absolute inset-0 rounded-full border border-current/20" />
+                              <div className="absolute inset-3 rounded-full border border-current/30" />
+                              <div className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current shadow-[0_0_24px_currentColor]" />
+                              <Zap className="absolute right-2 top-2 h-4 w-4" />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {businessPulse.signals.map((signal) => (
+                            <div key={signal.label} className={`rounded-xl border p-3 ${toneClasses[signal.tone]}`}>
+                              <div className="text-[11px] uppercase tracking-wide opacity-80">{signal.label}</div>
+                              <div className="mt-1 text-lg font-semibold text-foreground">{signal.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="rounded-xl border border-border/60 bg-background/55 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+                            <Activity className="h-4 w-4 text-primary" />
+                            Быстрый вывод
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Карточка собрана из {businessPulse.confidence}% доступных сигналов: реестры, статусы, связи,
+                            долги, проверки и отраслевые признаки сведены в один обзор для первичного решения.
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl border border-border/60 bg-background/55 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+                            <ShieldCheck className="h-4 w-4 text-primary" />
+                            Таймлайн
+                          </div>
+                          <div className="space-y-2">
+                            {businessPulse.timeline.length > 0 ? businessPulse.timeline.map((event) => (
+                              <div key={`${event.label}-${event.value}`} className="flex items-center gap-2 text-sm">
+                                <event.icon className="h-3.5 w-3.5 text-primary" />
+                                <span className="text-muted-foreground">{event.label}</span>
+                                <span className="ml-auto text-right font-medium text-foreground">{event.value}</span>
+                              </div>
+                            )) : (
+                              <div className="text-sm text-muted-foreground">Событий для таймлайна пока недостаточно.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </SectionCard>
+              );
+            })()}
+
             {risk && (() => {
               const meta = {
                 high:   { color: "#dc2626", bg: "rgba(220,38,38,0.10)",  label: "Высокий риск" },
