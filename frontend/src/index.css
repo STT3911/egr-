@@ -83,7 +83,7 @@
       radial-gradient(circle at 85% 12%, hsl(var(--primary) / 0.14), transparent 28%),
       radial-gradient(circle at 50% 100%, hsl(var(--primary) / 0.07), transparent 32%),
       linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--secondary) / 0.58) 100%);
-    background-attachment: fixed;
+    background-attachment: scroll;
     min-height: 100vh;
   }
 
@@ -148,7 +148,6 @@
       linear-gradient(90deg, hsl(var(--foreground) / 0.05) 1px, transparent 1px);
     background-size: 48px 48px;
     mask-image: linear-gradient(to bottom, transparent 0%, black 18%, black 82%, transparent 100%);
-    animation: registry-grid-drift 24s linear infinite;
   }
 
   .registry-vignette {
@@ -169,20 +168,26 @@
   }
 
   .glass {
-    background-color: hsl(var(--card) / 0.88);
+    background-color: hsl(var(--card) / 0.96);
     border: 1px solid hsl(var(--border) / 0.8);
-    backdrop-filter: blur(18px);
   }
 
   .surface-card {
     background:
       linear-gradient(180deg, hsl(var(--card) / 0.98) 0%, hsl(var(--card) / 0.9) 100%);
     border: 1px solid hsl(var(--border) / 0.78);
-    backdrop-filter: blur(18px);
   }
 
   .surface-divider {
     position: relative;
+  }
+
+  .ambient-orb-primary {
+    background: radial-gradient(circle, hsl(var(--primary) / 0.14) 0%, transparent 70%);
+  }
+
+  .ambient-orb-accent {
+    background: radial-gradient(circle, hsl(var(--accent) / 0.12) 0%, transparent 70%);
   }
 
   .surface-divider::after {
@@ -199,14 +204,13 @@
     gap: 0.5rem;
     border-radius: 9999px;
     border: 1px solid hsl(var(--border) / 0.8);
-    background: hsl(var(--card) / 0.82);
+    background: hsl(var(--card) / 0.94);
     padding: 0.625rem 0.95rem;
     font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: hsl(var(--muted-foreground));
-    backdrop-filter: blur(16px);
   }
 
   .section-divider {
@@ -272,11 +276,6 @@
     transition: width 0.1s linear;
   }
 
-  .motion-safe-subtle {
-    transform: translateZ(0);
-    will-change: transform, opacity;
-  }
-
   .custom-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--primary) / 0.45) transparent;
@@ -330,15 +329,6 @@
   }
 }
 
-@keyframes registry-grid-drift {
-  0% {
-    background-position: 0 0, 0 0;
-  }
-  100% {
-    background-position: 48px 48px, 48px 48px;
-  }
-}
-
 @keyframes fadeInUp {
   0% {
     opacity: 0;
@@ -375,11 +365,6 @@
 }
 
 @media (max-width: 768px) {
-  .glass,
-  .surface-card {
-    backdrop-filter: blur(12px);
-  }
-
   .shadow-card {
     box-shadow: 0 12px 28px -18px hsl(var(--foreground) / 0.18);
   }
@@ -405,6 +390,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
   .registry-grid,
   .animate-float,
   .animate-glow,

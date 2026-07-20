@@ -492,24 +492,12 @@ const Company = () => {
       <div className="absolute inset-0 pointer-events-none registry-grid opacity-40" />
       {/* Background Decorative Elements */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="hidden sm:block absolute top-20 left-10 w-72 h-72 rounded-full blur-3xl animate-pulse dark:opacity-25" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.08)'
-        }} />
-        <div className="hidden sm:block absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl animate-pulse dark:opacity-30" style={{
-          backgroundColor: 'hsl(var(--accent) / 0.06)',
-          animationDelay: "2s"
-        }} />
-        <div className="hidden lg:block absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl dark:opacity-15" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.04)'
-        }} />
+        <div className="ambient-orb-primary absolute left-10 top-20 hidden h-72 w-72 dark:opacity-25 sm:block" />
+        <div className="ambient-orb-accent absolute bottom-20 right-10 hidden h-96 w-96 dark:opacity-30 sm:block" />
+        <div className="ambient-orb-primary absolute left-1/2 top-1/2 hidden h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 dark:opacity-15 lg:block" />
         {/* Mobile decorative elements */}
-        <div className="sm:hidden absolute top-10 right-10 w-32 h-32 rounded-full blur-2xl animate-pulse dark:opacity-20" style={{
-          backgroundColor: 'hsl(var(--primary) / 0.06)'
-        }} />
-        <div className="sm:hidden absolute bottom-10 left-10 w-24 h-24 rounded-full blur-xl animate-pulse dark:opacity-25" style={{
-          backgroundColor: 'hsl(var(--accent) / 0.05)',
-          animationDelay: "1.5s"
-        }} />
+        <div className="ambient-orb-primary absolute right-10 top-10 h-32 w-32 dark:opacity-20 sm:hidden" />
+        <div className="ambient-orb-accent absolute bottom-10 left-10 h-24 w-24 dark:opacity-25 sm:hidden" />
       </div>
 
       <motion.div
@@ -528,64 +516,62 @@ const Company = () => {
           </Link>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-2">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground leading-tight break-words">
-              {profile?.current_name_ru || profile?.current_short_name_ru || "Профиль компании"}
-            </h1>
-            {unp && (
-              <div className="flex items-center gap-2">
-                <span className="glass px-3 py-1 rounded-full text-sm text-primary font-medium">
-                  УНП {unp}
-                </span>
-              </div>
-            )}
-          </div>
+        <div className="space-y-3">
+          <h1 className="max-w-6xl text-2xl font-bold leading-tight text-foreground break-words sm:text-3xl md:text-4xl">
+            {profile?.current_name_ru || profile?.current_short_name_ru || "Профиль компании"}
+          </h1>
           {unp && (
-            <div className="flex gap-2 flex-wrap">
+            <span className="inline-flex rounded-full glass px-3 py-1 text-sm font-medium text-primary">
+              УНП {unp}
+            </span>
+          )}
+        </div>
+
+        {unp && (
+          <div className="rounded-2xl border border-border/70 bg-card/95 p-2.5 shadow-soft">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
               <Button
                 type="button"
                 variant="default"
                 onClick={handleDownloadReport}
                 disabled={reportDownloading || !profile}
-                className="flex-1 sm:flex-initial"
+                className="w-full"
               >
-                {reportDownloading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-2 h-4 w-4" />
-                )}
+                {reportDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                 Скачать досье
               </Button>
+              <SubscribeButton unp={unp} />
               <Button
                 type="button"
                 variant="outline"
                 onClick={handleShareCompany}
                 disabled={!profile}
-                className="flex-1 sm:flex-initial glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300"
+                className="w-full glass hover:bg-primary/10 dark:hover:bg-primary/20"
               >
-                <Share2 className="mr-2 h-4 w-4" />
+                <Share2 className="h-4 w-4" />
                 Поделиться
               </Button>
-              <Link to={`/company/${unp}/raw`} className="flex-1 sm:flex-initial">
-                <Button variant="outline" className="w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base">
+              <Button asChild variant="outline" className="w-full glass hover:bg-primary/10 dark:hover:bg-primary/20">
+                <Link to={`/company/${unp}/raw`}>
+                  <Database className="h-4 w-4" />
                   Raw данные
-                </Button>
-              </Link>
-              <Link to={`/company/${unp}/compare`} className="flex-1 sm:flex-initial">
-                <Button variant="outline" className="w-full sm:w-auto glass hover:bg-accent/10 dark:hover:bg-accent/20 transition-all duration-300 text-sm sm:text-base">
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="w-full glass hover:bg-accent/10 dark:hover:bg-accent/20">
+                <Link to={`/company/${unp}/compare`}>
+                  <Activity className="h-4 w-4" />
                   Сравнение API
-                </Button>
-              </Link>
-              <Link to={`/company/${unp}/relations`} className="flex-1 sm:flex-initial">
-                <Button variant="outline" className="w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base">
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="w-full glass hover:bg-primary/10 dark:hover:bg-primary/20">
+                <Link to={`/company/${unp}/relations`}>
+                  <Users className="h-4 w-4" />
                   Карта связей
-                </Button>
-              </Link>
-              <SubscribeButton unp={unp} />
+                </Link>
+              </Button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {loading && <CompanySkeleton />}
         {profile && (
@@ -594,13 +580,14 @@ const Company = () => {
             initial="hidden"
             animate="visible"
             transition={{ duration: 0.45, delay: 0.08 }}
-            className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card/80 shadow-card backdrop-blur-xl"
+            className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card/95 shadow-card"
           >
             <div className="absolute inset-0 registry-grid opacity-30" />
             <motion.div
               className="absolute inset-y-0 -left-32 w-28 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
+              initial={{ x: "0%" }}
               animate={{ x: ["0%", "950%"] }}
-              transition={{ duration: 4.5, ease: "easeInOut", repeat: Infinity, repeatDelay: 3 }}
+              transition={{ duration: 2.4, delay: 0.7, ease: "easeInOut" }}
             />
             <div className="relative p-5 sm:p-6">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -674,9 +661,9 @@ const Company = () => {
 
               return (
                 <SectionCard>
-                  <Card className="relative overflow-hidden glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/25">
+                  <Card className="relative overflow-hidden border-primary/25 bg-card/95 shadow-card transition-shadow duration-300 hover:shadow-glow">
                     <div className="absolute inset-0 registry-grid opacity-25" />
-                    <div className="absolute -right-24 -top-24 h-56 w-56 rounded-full bg-primary/15 blur-3xl" />
+                    <div className="ambient-orb-primary absolute -right-24 -top-24 h-56 w-56" />
                     <CardHeader className="relative rounded-t-lg" style={{
                       background: "linear-gradient(120deg, hsl(var(--primary) / 0.12), hsl(var(--accent) / 0.10), transparent)",
                     }}>

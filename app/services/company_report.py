@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,8 @@ EXCEL_CELL_LIMIT = 32_000
 JSON_CHUNK_SIZE = 30_000
 HEADER_FILL = PatternFill("solid", fgColor="1E3A5F")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
+SECTION_FILL = PatternFill("solid", fgColor="EAF2F8")
+LIGHT_BORDER = Border(bottom=Side(style="thin", color="D9E2F3"))
 
 
 def _value(value: Any) -> Any:
@@ -138,6 +140,143 @@ def _tax_debt_rows(db: Session, unp: int) -> list[dict[str, Any]]:
     ]
 
 
+def _display_date(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    text = str(value).strip()
+    return text[:10] if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-" else text
+
+
+def _compact_lines(rows: Iterable[dict[str, Any]], formatter: Any) -> str:
+    values: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        value = str(formatter(row) or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    if not values:
+        return "Нет данных"
+    return "\n".join(f"{index}. {value}" for index, value in enumerate(values, start=1))
+
+
+def _period_for_rows(
+    rows: Iterable[dict[str, Any]],
+    start_keys: tuple[str, ...] = (),
+    end_keys: tuple[str, ...] = (),
+    observed_keys: tuple[str, ...] = (),
+) -> str:
+    row_list = list(rows)
+    starts = sorted(
+        value
+        for row in row_list
+        for key in start_keys
+        if (value := _display_date(row.get(key)))
+    )
+    ends = sorted(
+        value
+        for row in row_list
+        for key in end_keys
+        if (value := _display_date(row.get(key)))
+    )
+    if starts or ends:
+        start = starts[0] if starts else "начало не указано"
+        has_open_period = bool(start_keys and end_keys) and any(
+            any(row.get(key) not in (None, "") for key in start_keys)
+            and not any(row.get(key) not in (None, "") for key in end_keys)
+            for row in row_list
+        )
+        end = "по настоящее время" if has_open_period else (ends[-1] if ends else starts[-1])
+        return f"{start} — {end}"
+
+    observed = sorted(
+        value
+        for row in row_list
+        for key in observed_keys
+        if (value := _display_date(row.get(key)))
+    )
+    if observed:
+        return f"Состояние на {observed[-1]}" if observed[0] == observed[-1] else f"{observed[0]} — {observed[-1]}"
+    return "Период в источнике не указан"
+
+
+def _add_overview_sheet(
+    workbook: Workbook,
+    unp: int,
+    company_name: str,
+    status: str | None,
+    generated_at: datetime,
+    company_period: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    sheet = workbook.create_sheet(title="Сводка")
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A7"
+
+    sheet.merge_cells("A1:E1")
+    title = sheet["A1"]
+    title.value = f"Досье компании {company_name or unp}"
+    title.fill = HEADER_FILL
+    title.font = Font(color="FFFFFF", bold=True, size=16)
+    title.alignment = Alignment(vertical="center")
+    sheet.row_dimensions[1].height = 30
+
+    sheet["A2"] = "УНП"
+    sheet["B2"] = unp
+    sheet["C2"] = "Статус"
+    sheet["D2"] = status or "—"
+    sheet.merge_cells("D2:E2")
+    sheet["A3"] = "Период компании"
+    sheet["B3"] = company_period
+    sheet.merge_cells("B3:C3")
+    sheet["D3"] = "Сформировано UTC"
+    sheet["E3"] = generated_at.replace(microsecond=0).isoformat()
+    for cell in (sheet["A2"], sheet["C2"], sheet["A3"], sheet["D3"]):
+        cell.font = Font(bold=True, color="1E3A5F")
+
+    headers = ["Раздел", "Количество", "Данные", "Период данных", "Полные данные"]
+    sheet.append([])
+    sheet.append([])
+    sheet.append(headers)
+    for cell in sheet[6]:
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    sheet.row_dimensions[6].height = 28
+
+    for item in rows:
+        sheet.append([
+            item["section"],
+            item["count"],
+            _value(item["data"]),
+            item["period"],
+            item["sheet"],
+        ])
+        row_number = sheet.max_row
+        sheet.cell(row=row_number, column=1).fill = SECTION_FILL
+        sheet.cell(row=row_number, column=1).font = Font(bold=True, color="1E3A5F")
+        link_cell = sheet.cell(row=row_number, column=5)
+        link_cell.hyperlink = f"#'{item['sheet']}'!A1"
+        link_cell.style = "Hyperlink"
+        for cell in sheet[row_number]:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = LIGHT_BORDER
+        sheet.cell(row=row_number, column=2).alignment = Alignment(horizontal="center", vertical="top")
+
+    sheet.auto_filter.ref = f"A6:E{sheet.max_row}"
+    sheet.column_dimensions["A"].width = 27
+    sheet.column_dimensions["B"].width = 12
+    sheet.column_dimensions["C"].width = 72
+    sheet.column_dimensions["D"].width = 28
+    sheet.column_dimensions["E"].width = 24
+    for row_number in range(7, sheet.max_row + 1):
+        line_count = str(sheet.cell(row=row_number, column=3).value or "").count("\n") + 1
+        sheet.row_dimensions[row_number].height = min(max(30, line_count * 15), 120)
+
+
 def build_company_report(db: Session, unp: int) -> bytes | None:
     company_crud = CompanyCRUD(db)
     profile = company_crud.get_full_dossier(unp)
@@ -159,76 +298,162 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     workbook.properties.subject = "Агрегированные данные по компании"
     workbook.properties.creator = "Tendex EGR Aggregator"
 
-    counts = {
-        "names": len(profile.get("names") or []),
-        "addresses": len(profile.get("addresses") or []),
-        "ved": len(profile.get("ved") or []),
-        "contacts": len(profile.get("contacts_aggregated") or profile.get("contacts") or []),
-        "events": len(events),
-        "tax_debt": len(tax_rows),
-        "bankruptcy": len(bankruptcy.get("cases") or []),
-        "trade": len(profile.get("trade_registry_records") or []),
-        "licenses": len(profile.get("license_records") or []),
-        "inspections": len(profile.get("inspection_plan_records") or []),
-        "related": len(related_by_contact) + len(related_by_address),
-    }
-    summary = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "unp": unp,
-        "name": profile.get("current_name_ru") or profile.get("current_short_name_ru"),
-        "status": profile.get("current_status_name"),
-        "registration_date": profile.get("registration_date"),
-        "liquidation_date": profile.get("liquidation_date"),
-        "address": profile.get("place_location_address"),
-        "latitude": profile.get("latitude"),
-        "longitude": profile.get("longitude"),
-        "risk_score": risk.get("score"),
-        "risk_level": risk.get("level"),
-        **{f"count_{key}": value for key, value in counts.items()},
-    }
-    _add_sheet(
+    generated_at = datetime.now(timezone.utc)
+    company_name = profile.get("current_name_ru") or profile.get("current_short_name_ru") or ""
+    names = profile.get("names") or []
+    addresses = profile.get("addresses") or []
+    ved_rows = profile.get("ved") or []
+    contacts = profile.get("contacts_aggregated") or profile.get("contacts") or []
+    trade_rows = profile.get("trade_registry_records") or []
+    license_rows = profile.get("license_records") or []
+    inspection_rows = profile.get("inspection_plan_records") or []
+    certificates = profile.get("belltpp_own_certificates") or []
+    bankrot_cases = bankruptcy.get("cases") or []
+    pvt = profile.get("pvt_resident")
+    accreditation = profile.get("gias_accreditation")
+    locked_suppliers = profile.get("gias_locked_suppliers") or []
+    sez_rows = profile.get("eaeu_sez_resident_records") or []
+    risk_rows = [{"kind": "risk", **item} for item in risk.get("factors") or []] + [
+        {"kind": "trust", **item} for item in risk.get("trust_signals") or []
+    ]
+    related_rows = [
+        {**item, "relation_type": "Совпадение контакта"} for item in related_by_contact
+    ] + [
+        {**item, "relation_type": "Совпадение адреса"} for item in related_by_address
+    ]
+
+    company_period = _period_for_rows(
+        [{"start": profile.get("registration_date"), "end": profile.get("liquidation_date")}],
+        ("start",),
+        ("end",),
+    )
+    overview_rows = [
+        {
+            "section": "Основные сведения",
+            "count": 1,
+            "data": "\n".join(filter(None, [
+                company_name,
+                f"Статус: {profile.get('current_status_name') or '—'}",
+                f"Адрес: {profile.get('place_location_address') or '—'}",
+            ])),
+            "period": company_period,
+            "sheet": "Названия ЕГР",
+        },
+        {
+            "section": "Названия ЕГР",
+            "count": len(names),
+            "data": _compact_lines(names, lambda row: row.get("full_name_ru") or row.get("short_name_ru") or row.get("full_name_by")),
+            "period": _period_for_rows(names, ("valid_from",), ("valid_to",)),
+            "sheet": "Названия ЕГР",
+        },
+        {
+            "section": "Адреса ЕГР",
+            "count": len(addresses),
+            "data": _compact_lines(addresses, lambda row: row.get("full_address")),
+            "period": _period_for_rows(addresses, ("valid_from",), ("valid_to",)),
+            "sheet": "Адреса ЕГР",
+        },
+        {
+            "section": "Виды деятельности",
+            "count": len(ved_rows),
+            "data": _compact_lines(ved_rows, lambda row: " — ".join(filter(None, [str(row.get("ved_code") or ""), str(row.get("ved_name") or "")]))),
+            "period": _period_for_rows(ved_rows, ("valid_from",), ("valid_to",)),
+            "sheet": "ВЭД ЕГР",
+        },
+        {
+            "section": "Контакты",
+            "count": len(contacts),
+            "data": _compact_lines(contacts, lambda row: f"{row.get('contact_type') or 'контакт'}: {row.get('value') or row.get('email') or row.get('phone') or row.get('website') or '—'}"),
+            "period": _period_for_rows(contacts, observed_keys=("last_seen_at", "updated_at")),
+            "sheet": "Контакты",
+        },
+        {
+            "section": "События ЕГР",
+            "count": len(events),
+            "data": _compact_lines(events, lambda row: " — ".join(filter(None, [_display_date(row.get("event_date")), str(row.get("event_type") or ""), str(row.get("document_number") or "")]))),
+            "period": _period_for_rows(events, observed_keys=("event_date", "document_date", "created_at")),
+            "sheet": "События ЕГР",
+        },
+        {
+            "section": "Задолженность МНС",
+            "count": len(tax_rows),
+            "data": _compact_lines(tax_rows, lambda row: f"{row.get('imns_name') or 'ИМНС'}: долг с {_display_date(row.get('debt_date')) or 'дата не указана'}, погашение {_display_date(row.get('repayment_date')) or 'не указано'}"),
+            "period": _period_for_rows(tax_rows, ("debt_date",), ("repayment_date",), ("slice_date",)),
+            "sheet": "Задолженность МНС",
+        },
+        {
+            "section": "Дела о банкротстве",
+            "count": len(bankrot_cases),
+            "data": _compact_lines(bankrot_cases, lambda row: " — ".join(filter(None, [str(row.get("number") or row.get("case_id") or ""), str(row.get("status") or ""), str(row.get("procedure_type") or "")]))),
+            "period": _period_for_rows(bankrot_cases, ("start_date",), ("end_date",), ("updated_at",)),
+            "sheet": "Дела о банкротстве",
+        },
+        {
+            "section": "Торговый реестр МАРТ",
+            "count": len(trade_rows),
+            "data": _compact_lines(trade_rows, lambda row: " — ".join(filter(None, [str(row.get("object_type") or ""), str(row.get("object_name") or row.get("internet_shop_domain") or ""), str(row.get("object_locality") or "")]))),
+            "period": _period_for_rows(trade_rows, observed_keys=("inclusion_date", "source_date", "last_seen_at")),
+            "sheet": "Торговый реестр МАРТ",
+        },
+        {
+            "section": "ПВТ",
+            "count": 1 if pvt else 0,
+            "data": _compact_lines([pvt] if pvt else [], lambda row: " — ".join(filter(None, [str(row.get("name") or ""), str(row.get("city") or ""), str(row.get("website") or "")]))),
+            "period": _period_for_rows([pvt] if pvt else [], observed_keys=("last_seen_at",)),
+            "sheet": "ПВТ",
+        },
+        {
+            "section": "Лицензии",
+            "count": len(license_rows),
+            "data": _compact_lines(license_rows, lambda row: " — ".join(filter(None, [str(row.get("generated_number") or ""), str(row.get("activity_type_name") or ""), "активна" if row.get("activity_is_active") else "неактивна"]))),
+            "period": _period_for_rows(license_rows, ("activity_date_start",), ("activity_date_end",), ("last_seen_at",)),
+            "sheet": "Лицензии",
+        },
+        {
+            "section": "Планы проверок",
+            "count": len(inspection_rows),
+            "data": _compact_lines(inspection_rows, lambda row: " — ".join(filter(None, [str(row.get("plan_period") or ""), str(row.get("controller_authority") or ""), str(row.get("start_month") or "")]))),
+            "period": _period_for_rows(inspection_rows, observed_keys=("plan_period", "last_seen_at")),
+            "sheet": "Планы проверок",
+        },
+        {
+            "section": "Связанные компании",
+            "count": len(related_rows),
+            "data": _compact_lines(related_rows, lambda row: f"{row.get('unp') or '—'} — {row.get('name') or 'Без названия'} ({row.get('relation_type')})"),
+            "period": f"Расчёт на {generated_at.date().isoformat()}",
+            "sheet": "Связи по контактам" if related_by_contact else "Связи по адресу",
+        },
+    ]
+    _add_overview_sheet(
         workbook,
-        "Сводка",
-        [
-            ("generated_at", "Сформировано UTC"), ("unp", "УНП"), ("name", "Наименование"),
-            ("status", "Статус"), ("registration_date", "Дата регистрации"),
-            ("liquidation_date", "Дата ликвидации"), ("address", "Адрес"),
-            ("latitude", "Широта"), ("longitude", "Долгота"),
-            ("risk_score", "Риск, баллы"), ("risk_level", "Уровень риска"),
-            ("count_names", "Названия"), ("count_addresses", "Адреса"),
-            ("count_ved", "ВЭД"), ("count_contacts", "Контакты"),
-            ("count_events", "События ЕГР"), ("count_tax_debt", "Записи МНС"),
-            ("count_bankruptcy", "Дела о банкротстве"), ("count_trade", "Объекты МАРТ"),
-            ("count_licenses", "Лицензии"), ("count_inspections", "Проверки"),
-            ("count_related", "Связанные компании"),
-        ],
-        [summary],
+        unp,
+        company_name,
+        profile.get("current_status_name"),
+        generated_at,
+        company_period,
+        overview_rows,
     )
 
-    _add_sheet(workbook, "Названия ЕГР", [("full_name_ru", "Полное RU"), ("short_name_ru", "Краткое RU"), ("full_name_by", "Полное BY"), ("valid_from", "С"), ("valid_to", "По")], profile.get("names") or [])
-    _add_sheet(workbook, "Адреса ЕГР", [("full_address", "Адрес"), ("postal_code", "Индекс"), ("region", "Область"), ("district", "Район"), ("valid_from", "С"), ("valid_to", "По")], profile.get("addresses") or [])
-    _add_sheet(workbook, "ВЭД ЕГР", [("ved_code", "Код"), ("ved_name", "Наименование"), ("valid_from", "С"), ("valid_to", "По")], profile.get("ved") or [])
-    _add_sheet(workbook, "Контакты", [("contact_type", "Тип"), ("value", "Значение"), ("full_name", "Контактное лицо"), ("position", "Должность"), ("sources", "Источники"), ("email", "Email"), ("phone", "Телефон"), ("website", "Сайт"), ("fax", "Факс")], profile.get("contacts_aggregated") or profile.get("contacts") or [])
+    _add_sheet(workbook, "Названия ЕГР", [("full_name_ru", "Полное RU"), ("short_name_ru", "Краткое RU"), ("full_name_by", "Полное BY"), ("valid_from", "С"), ("valid_to", "По")], names)
+    _add_sheet(workbook, "Адреса ЕГР", [("full_address", "Адрес"), ("postal_code", "Индекс"), ("region", "Область"), ("district", "Район"), ("valid_from", "С"), ("valid_to", "По")], addresses)
+    _add_sheet(workbook, "ВЭД ЕГР", [("ved_code", "Код"), ("ved_name", "Наименование"), ("valid_from", "С"), ("valid_to", "По")], ved_rows)
+    _add_sheet(workbook, "Контакты", [("contact_type", "Тип"), ("value", "Значение"), ("full_name", "Контактное лицо"), ("position", "Должность"), ("sources", "Источники"), ("email", "Email"), ("phone", "Телефон"), ("website", "Сайт"), ("fax", "Факс")], contacts)
     _add_sheet(workbook, "События ЕГР", [("event_record_id", "ID"), ("event_type", "Тип"), ("event_date", "Дата"), ("cancel_date", "Отмена"), ("document_date", "Документ"), ("deadline_date", "Срок"), ("suspension_end_date", "Окончание приостановления"), ("document_number", "Номер документа"), ("decision_authority", "Орган решения"), ("document_authority", "Орган документа"), ("foundation", "Основание"), ("notes", "Примечание")], events)
     _add_sheet(workbook, "ГРП МНС", [("full_name", "Полное название"), ("short_name", "Краткое название"), ("registration_date", "Регистрация"), ("inspectorate_code", "Код инспекции"), ("inspectorate_name", "Инспекция"), ("status_code", "Статус"), ("status_date", "Дата статуса"), ("address", "Адрес"), ("fetched_at", "Получено"), ("updated_at", "Обновлено")], grp_rows)
     _add_sheet(workbook, "Задолженность МНС", [("imns_code", "Код ИМНС"), ("imns_name", "ИМНС"), ("debt_date", "Дата долга"), ("repayment_date", "Погашение"), ("slice_date", "Дата среза")], tax_rows)
 
-    risk_rows = [{"kind": "risk", **item} for item in risk.get("factors") or []] + [{"kind": "trust", **item} for item in risk.get("trust_signals") or []]
     _add_sheet(workbook, "Риск-профиль", [("kind", "Тип"), ("code", "Код"), ("title", "Фактор"), ("weight", "Вес"), ("detail", "Детали")], risk_rows)
     _add_sheet(workbook, "Связи по контактам", [("unp", "УНП"), ("name", "Наименование"), ("matched_type", "Тип"), ("matched_value", "Совпадение")], related_by_contact)
     _add_sheet(workbook, "Связи по адресу", [("unp", "УНП"), ("name", "Наименование"), ("address", "Адрес")], related_by_address)
 
-    pvt = profile.get("pvt_resident")
     _add_sheet(workbook, "ПВТ", [("name", "Наименование"), ("city", "Город"), ("legal_address", "Адрес"), ("phone", "Телефон"), ("website", "Сайт"), ("activity_directions", "Направления"), ("description", "Описание"), ("profile_url", "Профиль"), ("last_seen_at", "Проверено")], [pvt] if pvt else [])
-    _add_sheet(workbook, "Торговый реестр МАРТ", [("registration_number", "Номер"), ("legal_name", "Юр. название"), ("legal_address", "Юр. адрес"), ("object_type", "Тип объекта"), ("object_name", "Объект"), ("internet_shop_domain", "Интернет-магазин"), ("trade_network_name", "Сеть"), ("object_region", "Область"), ("object_locality", "Населённый пункт"), ("object_street", "Улица"), ("object_building", "Дом"), ("object_office", "Помещение"), ("object_contacts", "Контакты"), ("goods_groups", "Группы товаров"), ("inclusion_date", "Включено"), ("source_date", "Дата источника")], profile.get("trade_registry_records") or [])
-    accreditation = profile.get("gias_accreditation")
+    _add_sheet(workbook, "Торговый реестр МАРТ", [("registration_number", "Номер"), ("legal_name", "Юр. название"), ("legal_address", "Юр. адрес"), ("object_type", "Тип объекта"), ("object_name", "Объект"), ("internet_shop_domain", "Интернет-магазин"), ("trade_network_name", "Сеть"), ("object_region", "Область"), ("object_locality", "Населённый пункт"), ("object_street", "Улица"), ("object_building", "Дом"), ("object_office", "Помещение"), ("object_contacts", "Контакты"), ("goods_groups", "Группы товаров"), ("inclusion_date", "Включено"), ("source_date", "Дата источника")], trade_rows)
     _add_sheet(workbook, "ГИАС аккредитация", [("state", "Статус"), ("summary", "Описание"), ("phone", "Телефон"), ("email", "Email"), ("web_site", "Сайт"), ("city_name", "Город"), ("placements_address", "Адрес"), ("dt_from", "С"), ("dt_to", "По"), ("dt_update", "Обновлено")], [accreditation] if accreditation else [])
-    _add_sheet(workbook, "ГИАС поставщики", [("state", "Статус"), ("name", "Наименование"), ("location", "Место"), ("reg_number", "Номер"), ("add_date", "Включён"), ("del_date", "Исключён"), ("base_incl_text", "Основание включения"), ("base_excl_text", "Основание исключения"), ("author_initials", "Автор")], profile.get("gias_locked_suppliers") or [])
-    _add_sheet(workbook, "ЕАЭС и СЭЗ", [("country", "Страна"), ("full_name", "Название"), ("legal_address", "Адрес"), ("registration_agency", "Орган регистрации"), ("sez_name", "СЭЗ"), ("project_name", "Проект"), ("registry_entry_date", "Дата включения"), ("certificate", "Свидетельство"), ("source_url", "Источник")], profile.get("eaeu_sez_resident_records") or [])
-    _add_sheet(workbook, "Лицензии", [("generated_number", "Номер"), ("holder_name", "Владелец"), ("activity_type_name", "Вид деятельности"), ("activity_date_start", "С"), ("activity_date_end", "По"), ("activity_is_active", "Активна"), ("last_seen_at", "Проверено")], profile.get("license_records") or [])
-    _add_sheet(workbook, "Планы проверок", [("plan_period", "Период"), ("source_region", "Регион"), ("plan_title", "План"), ("plan_item_no", "Пункт"), ("approving_authority", "Утвердивший орган"), ("controller_unp", "УНП контролёра"), ("controller_authority", "Контролирующий орган"), ("executor_phone", "Телефон"), ("start_month", "Месяц"), ("source_file", "Источник")], profile.get("inspection_plan_records") or [])
+    _add_sheet(workbook, "ГИАС поставщики", [("state", "Статус"), ("name", "Наименование"), ("location", "Место"), ("reg_number", "Номер"), ("add_date", "Включён"), ("del_date", "Исключён"), ("base_incl_text", "Основание включения"), ("base_excl_text", "Основание исключения"), ("author_initials", "Автор")], locked_suppliers)
+    _add_sheet(workbook, "ЕАЭС и СЭЗ", [("country", "Страна"), ("full_name", "Название"), ("legal_address", "Адрес"), ("registration_agency", "Орган регистрации"), ("sez_name", "СЭЗ"), ("project_name", "Проект"), ("registry_entry_date", "Дата включения"), ("certificate", "Свидетельство"), ("source_url", "Источник")], sez_rows)
+    _add_sheet(workbook, "Лицензии", [("generated_number", "Номер"), ("holder_name", "Владелец"), ("activity_type_name", "Вид деятельности"), ("activity_date_start", "С"), ("activity_date_end", "По"), ("activity_is_active", "Активна"), ("last_seen_at", "Проверено")], license_rows)
+    _add_sheet(workbook, "Планы проверок", [("plan_period", "Период"), ("source_region", "Регион"), ("plan_title", "План"), ("plan_item_no", "Пункт"), ("approving_authority", "Утвердивший орган"), ("controller_unp", "УНП контролёра"), ("controller_authority", "Контролирующий орган"), ("executor_phone", "Телефон"), ("start_month", "Месяц"), ("source_file", "Источник")], inspection_rows)
 
-    certificates = profile.get("belltpp_own_certificates") or []
     _add_sheet(workbook, "Сертификаты БелТПП", [("holder_name", "Владелец"), ("cert_number", "Номер"), ("blank_number", "Бланк"), ("issue_date", "Выдан"), ("valid_until", "Действует до"), ("verify_url", "Проверка"), ("last_seen_at", "Проверено")], certificates)
     product_rows = []
     for certificate in certificates:
@@ -236,7 +461,6 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
             product_rows.append({"cert_number": certificate.get("cert_number"), **product})
     _add_sheet(workbook, "Продукция БелТПП", [("cert_number", "Сертификат"), ("row_no", "Строка"), ("name", "Продукция"), ("code", "Код")], product_rows)
 
-    bankrot_cases = bankruptcy.get("cases") or []
     _add_sheet(workbook, "Дела о банкротстве", [("case_id", "ID"), ("number", "Номер"), ("start_date", "Начало"), ("end_date", "Окончание"), ("status", "Статус"), ("procedure_type", "Процедура"), ("court", "Суд"), ("judge", "Судья"), ("manager_id", "ID управляющего"), ("manager_name", "Управляющий"), ("last_judgment_id", "Последнее решение"), ("fetch_error", "Ошибка"), ("updated_at", "Обновлено")], bankrot_cases)
     dataset_rows = []
     for case in bankrot_cases:

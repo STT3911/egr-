@@ -7,7 +7,7 @@ const dataCards = [
   { label: "ES", value: "1.6M", className: "right-[14%] bottom-[22%]" },
 ];
 
-const lanes = Array.from({ length: 9 }, (_, index) => index);
+const lanes = Array.from({ length: 4 }, (_, index) => index);
 
 export const AnimatedHeroBackdrop = () => {
   const shouldReduceMotion = useReducedMotion();
@@ -27,10 +27,8 @@ export const AnimatedHeroBackdrop = () => {
         <div className="absolute right-16 top-20 h-1.5 w-1.5 rounded-full bg-primary/80" />
       </motion.div>
 
-      <motion.div
+      <div
         className="absolute left-1/2 top-1/2 h-[18rem] w-[18rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent/15 sm:h-[22rem] sm:w-[22rem] lg:h-[25rem] lg:w-[25rem]"
-        animate={shouldReduceMotion ? undefined : { rotate: -360 }}
-        transition={{ duration: 38, ease: "linear", repeat: Infinity }}
       />
 
       <div className="absolute inset-x-0 top-[18%] mx-auto hidden h-56 max-w-5xl overflow-hidden opacity-70 md:block">
@@ -57,24 +55,20 @@ export const AnimatedHeroBackdrop = () => {
       />
 
       {dataCards.map((card, index) => (
-        <motion.div
+        <div
           key={card.label}
           className={`hidden lg:block absolute ${card.className}`}
-          initial={{ opacity: 0, y: 14, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.7, delay: 0.35 + index * 0.12 }}
         >
-          <motion.div
-            className="glass rounded-xl px-4 py-3 shadow-card"
-            animate={shouldReduceMotion ? undefined : { y: [0, -8, 0] }}
-            transition={{ duration: 6 + index, ease: "easeInOut", repeat: Infinity }}
+          <div
+            className="glass animate-fade-in-up rounded-xl px-4 py-3 shadow-card"
+            style={{ animationDelay: `${0.35 + index * 0.12}s` }}
           >
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {card.label}
             </div>
             <div className="font-mono text-sm text-foreground">{card.value}</div>
-          </motion.div>
-        </motion.div>
+          </div>
+        </div>
       ))}
     </div>
   );

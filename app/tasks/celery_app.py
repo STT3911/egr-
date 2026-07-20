@@ -161,11 +161,12 @@ if settings.PVT_SCHEDULE_ENABLED:
         "task": "app.tasks.park_tasks.sync_pvt_residents",
         "schedule": timedelta(seconds=settings.PVT_SYNC_SCHEDULE_SECONDS),
         "kwargs": {
-            "limit": settings.PVT_SYNC_LIMIT,
+            "limit": None,
             "batch_size": settings.PVT_SYNC_BATCH_SIZE,
             "delay": settings.PVT_SYNC_DELAY_SECONDS,
             "timeout": settings.PVT_SYNC_TIMEOUT_SECONDS,
-            "only_missing": settings.PVT_SYNC_ONLY_MISSING,
+            "only_missing": False,
+            "source": "catalog",
         },
         "options": {"expires": settings.PVT_SYNC_SCHEDULE_SECONDS},
     }

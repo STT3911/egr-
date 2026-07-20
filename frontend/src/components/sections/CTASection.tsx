@@ -19,7 +19,7 @@ export const CTASection = () => {
   return (
     <section className="relative overflow-hidden px-4 py-20 sm:px-6 sm:py-28">
       <div className="absolute inset-0">
-        <div className="absolute left-1/2 top-1/2 h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl" />
+        <div className="ambient-orb-primary absolute left-1/2 top-1/2 h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2" />
       </div>
 
       <div className="container relative z-10 mx-auto max-w-5xl">

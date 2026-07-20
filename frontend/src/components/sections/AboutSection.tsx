@@ -19,8 +19,8 @@ export const AboutSection = () => {
   return (
     <section id="about" className="relative overflow-hidden px-4 py-20 sm:px-6 sm:py-28">
       <div className="absolute inset-0">
-        <div className="absolute left-[8%] top-10 h-48 w-48 rounded-full bg-accent/10 blur-3xl" />
-        <div className="absolute bottom-10 right-[10%] h-64 w-64 rounded-full bg-primary/10 blur-3xl" />
+        <div className="ambient-orb-accent absolute left-[8%] top-10 h-48 w-48" />
+        <div className="ambient-orb-primary absolute bottom-10 right-[10%] h-64 w-64" />
       </div>
 
       <div className="container relative z-10 mx-auto max-w-6xl">

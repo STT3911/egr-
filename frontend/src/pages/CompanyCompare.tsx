@@ -48,12 +48,10 @@ const CompanyCompare = () => {
 
       <div className="absolute inset-0 pointer-events-none">
         <div
-          className="absolute left-10 top-20 hidden h-72 w-72 rounded-full blur-3xl sm:block"
-          style={{ backgroundColor: "hsl(var(--primary) / 0.08)" }}
+          className="ambient-orb-primary absolute left-10 top-20 hidden h-72 w-72 sm:block"
         />
         <div
-          className="absolute bottom-20 right-10 hidden h-96 w-96 rounded-full blur-3xl sm:block"
-          style={{ backgroundColor: "hsl(var(--accent) / 0.06)" }}
+          className="ambient-orb-accent absolute bottom-20 right-10 hidden h-96 w-96 sm:block"
         />
       </div>
 

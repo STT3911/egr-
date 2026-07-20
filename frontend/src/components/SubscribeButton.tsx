@@ -23,7 +23,7 @@ import {
 } from "@/lib/api";
 
 const btnClass =
-  "w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base";
+  "w-full glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base";
 
 export function SubscribeButton({ unp }: { unp: string | number }) {
   const unpNum = Number(unp);
@@ -78,7 +78,7 @@ export function SubscribeButton({ unp }: { unp: string | number }) {
 
   if (!isAuthed) {
     return (
-      <Link to={`/login?next=/company/${unp}`} className="flex-1 sm:flex-initial">
+      <Link to={`/login?next=/company/${unp}`} className="w-full">
         <Button variant="outline" className={btnClass}>
           <Bell className="mr-2 h-4 w-4" />
           Подписаться
