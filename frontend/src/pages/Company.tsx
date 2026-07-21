@@ -7,7 +7,7 @@ import { CompanyMap } from "@/components/CompanyMap";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
 import { motion, type Variants, useScroll, useSpring } from "framer-motion";
-import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   getCompanyProfile,
@@ -59,6 +59,80 @@ const Skeleton = ({ className = "" }: { className?: string }) => (
   <div className={`animate-skeleton ${className}`} />
 );
 
+const RiskCategoryRadar = ({
+  categories,
+  color,
+}: {
+  categories: NonNullable<CompanyRisk["categories"]>;
+  color: string;
+}) => {
+  const categoryDefaults = [
+    { code: "legal", title: "Право", cap: 70 },
+    { code: "fiscal", title: "Налоги", cap: 25 },
+    { code: "compliance", title: "Реестры", cap: 35 },
+    { code: "behavioral", title: "Поведение", cap: 25 },
+  ];
+  const radarCategories = categoryDefaults.map((fallback) => {
+    const category = categories.find((item) => item.code === fallback.code);
+    return category ?? { ...fallback, score: 0, raw_score: 0, level: "low" as const, factor_count: 0 };
+  });
+  const center = 90;
+  const radius = 62;
+  const point = (index: number, ratio: number) => {
+    const angle = -Math.PI / 2 + (index * Math.PI * 2) / radarCategories.length;
+    return `${center + Math.cos(angle) * radius * ratio},${center + Math.sin(angle) * radius * ratio}`;
+  };
+  const polygon = radarCategories
+    .map((category, index) => point(index, Math.min(1, category.score / category.cap)))
+    .join(" ");
+
+  return (
+    <div className="rounded-2xl border border-border/60 bg-background/50 p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        Профиль по категориям
+      </div>
+      <svg viewBox="0 0 180 180" className="mx-auto mt-2 h-44 w-44" role="img" aria-label="Радар категорий риска">
+        {[0.25, 0.5, 0.75, 1].map((ratio) => (
+          <polygon
+            key={ratio}
+            points={radarCategories.map((_, index) => point(index, ratio)).join(" ")}
+            fill="none"
+            stroke="currentColor"
+            strokeOpacity={ratio === 1 ? 0.22 : 0.1}
+            strokeWidth="1"
+          />
+        ))}
+        {radarCategories.map((category, index) => (
+          <line
+            key={category.code}
+            x1={center}
+            y1={center}
+            x2={point(index, 1).split(",")[0]}
+            y2={point(index, 1).split(",")[1]}
+            stroke="currentColor"
+            strokeOpacity="0.14"
+          />
+        ))}
+        <polygon points={polygon} fill={color} fillOpacity="0.22" stroke={color} strokeWidth="2.5" />
+        {radarCategories.map((category, index) => {
+          const [coordinateX, coordinateY] = point(index, Math.min(1, category.score / category.cap)).split(",");
+          return <circle key={category.code} cx={coordinateX} cy={coordinateY} r="3.5" fill={color} />;
+        })}
+      </svg>
+      <div className="grid grid-cols-2 gap-2">
+        {radarCategories.map((category) => (
+          <div key={category.code} className="rounded-lg border border-border/50 bg-card/55 px-3 py-2">
+            <div className="text-[11px] text-muted-foreground">{category.title}</div>
+            <div className="mt-0.5 text-sm font-semibold text-foreground">
+              {category.score}<span className="text-xs font-normal text-muted-foreground">/{category.cap}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const CompanySkeleton = () => (
   <div className="space-y-6">
     <div className="relative overflow-hidden rounded-2xl border border-primary/10 bg-card/60 p-5 sm:p-6">
@@ -99,6 +173,8 @@ const Company = () => {
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
   const [relatedData, setRelatedData] = useState<CompanyRelatedResponse | null>(null);
   const [risk, setRisk] = useState<CompanyRisk | null>(null);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [riskError, setRiskError] = useState<string | null>(null);
   const [bankruptcyData, setBankruptcyData] = useState<CompanyBankrotResponse | null>(null);
   const [bankruptcyLoading, setBankruptcyLoading] = useState(false);
   const [bankruptcyError, setBankruptcyError] = useState<string | null>(null);
@@ -281,20 +357,28 @@ const Company = () => {
     loadRelated();
   }, [unp]);
 
-  useEffect(() => {
-    // Риск-профиль: второстепенный блок, при ошибке молча скрываем.
-    const loadRisk = async () => {
-      if (!unp) return;
-      const requestId = ++riskRequestRef.current;
-      setRisk(null);
-      try {
-        const data = await getCompanyRisk(unp);
-        if (requestId === riskRequestRef.current) setRisk(data);
-      } catch {
-        if (requestId === riskRequestRef.current) setRisk(null);
+  const loadRisk = async () => {
+    if (!unp) return;
+    const requestId = ++riskRequestRef.current;
+    setRiskLoading(true);
+    setRiskError(null);
+    setRisk(null);
+    try {
+      const data = await getCompanyRisk(unp);
+      if (requestId === riskRequestRef.current) setRisk(data);
+    } catch (riskLoadError) {
+      if (requestId === riskRequestRef.current) {
+        setRisk(null);
+        setRiskError(riskLoadError instanceof Error ? riskLoadError.message : "Не удалось рассчитать риск");
       }
-    };
+    } finally {
+      if (requestId === riskRequestRef.current) setRiskLoading(false);
+    }
+  };
+
+  useEffect(() => {
     loadRisk();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unp]);
 
   useEffect(() => {
@@ -445,41 +529,24 @@ const Company = () => {
     const taxDebtCount = taxDebtData?.count ?? 0;
     const currentTaxDebtCount = taxDebtData?.current_count ?? 0;
     const hasCurrentTaxDebt = taxDebtData?.has_current_debt ?? currentTaxDebtCount > 0;
-    const bankruptcyCount = profile.bankrot_cases?.length ?? 0;
     const activeLicenses = profile.license_records?.filter((item) => item.activity_is_active).length ?? 0;
     const inspectionsCount = profile.inspection_plan_records?.length ?? 0;
-    const tradeObjects = profile.trade_registry_records?.length ?? 0;
     const relatedCount = (relatedData?.by_address.length ?? 0) + (relatedData?.by_contact.length ?? 0);
-    const riskIncludesTaxDebt = risk?.factors.some((factor) => factor.code.startsWith("tax_debt")) ?? false;
-    const taxDebtFallbackWeight = !riskIncludesTaxDebt
-      ? hasCurrentTaxDebt
-        ? 20
-        : taxDebtCount > 0
-          ? 8
-          : 0
-      : 0;
-    const riskScore = Math.min(
-      100,
-      risk
-        ? risk.score + taxDebtFallbackWeight
-        : taxDebtFallbackWeight + bankruptcyCount * 30 + inspectionsCount * 8,
-    );
-    const sourceCount = [
-      profile.names?.length,
-      profile.addresses?.length,
-      profile.ved?.length,
-      profile.contacts?.length,
-      tradeObjects,
-      profile.license_records?.length,
-      inspectionsCount,
-      bankruptcyCount,
-      profile.pvt_resident ? 1 : 0,
-      taxDebtCount,
-      relatedCount,
-    ].filter((value) => Number(value) > 0).length;
-    const confidence = Math.min(99, 42 + sourceCount * 7 + Math.min((profile.names?.length ?? 0) + (profile.addresses?.length ?? 0), 12));
-    const healthLabel = riskScore >= 70 ? "Нужна ручная проверка" : riskScore >= 35 ? "Есть сигналы к проверке" : "Профиль выглядит спокойно";
-    const healthTone: PulseTone = riskScore >= 70 ? "red" : riskScore >= 35 ? "amber" : "emerald";
+    const riskScore = risk?.score ?? null;
+    const confidence = risk?.coverage?.score ?? null;
+    const healthLabel = risk?.decision_label
+      ?? (riskLoading ? "Скоринг рассчитывается" : riskError ? "Скоринг недоступен" : "Оценка не получена");
+    const healthTone: PulseTone = risk?.decision === "stop" || risk?.decision === "manual_review"
+      ? "red"
+      : risk?.decision === "review" || risk?.level === "medium"
+        ? "amber"
+        : risk?.decision === "clear" || risk?.level === "low"
+          ? "emerald"
+          : "sky";
+    const summary = risk?.summary
+      ?? (riskLoading
+        ? "Проверяем ключевые государственные источники и рассчитываем профиль риска."
+        : "Риск-профиль пока недоступен; фактические данные карточки показаны без подмены балла.");
     const timeline = [
       profile.registration_date && { label: "Регистрация", value: formatDate(profile.registration_date), icon: CalendarDays },
       profile.liquidation_date && { label: "Ликвидация", value: formatDate(profile.liquidation_date), icon: AlertTriangle },
@@ -487,7 +554,11 @@ const Company = () => {
       profile.pvt_resident?.last_seen_at && { label: "Обновление ПВТ", value: formatUpdatedAtUTC(profile.pvt_resident.last_seen_at), icon: Award },
     ].filter(Boolean).slice(0, 4) as { label: string; value: string; icon: typeof CalendarDays }[];
     const signals: { label: string; value: string; tone: PulseTone }[] = [
-      { label: "Уверенность данных", value: `${confidence}%`, tone: confidence >= 75 ? "emerald" : "sky" },
+      {
+        label: "Покрытие источников",
+        value: confidence === null ? "—" : `${confidence}%`,
+        tone: confidence !== null && confidence >= 80 ? "emerald" : "sky",
+      },
       { label: "Возраст", value: ageYears === null ? "нет даты" : `${ageYears} лет`, tone: "violet" },
       {
         label: "Долги МНС",
@@ -495,11 +566,11 @@ const Company = () => {
         tone: hasCurrentTaxDebt ? "red" : taxDebtCount > 0 ? "amber" : "emerald",
       },
       { label: "Активные лицензии", value: String(activeLicenses), tone: activeLicenses > 0 ? "emerald" : "sky" },
-      { label: "Проверки", value: String(inspectionsCount), tone: inspectionsCount > 0 ? "amber" : "emerald" },
+      { label: "Плановые проверки", value: String(inspectionsCount), tone: "sky" },
       { label: "Связи", value: String(relatedCount), tone: relatedCount > 0 ? "violet" : "sky" },
     ];
 
-    return { confidence, healthLabel, healthTone, riskScore, signals, timeline };
+    return { confidence, healthLabel, healthTone, riskScore, signals, summary, timeline };
   })() : null;
 
   return (
@@ -729,8 +800,10 @@ const Company = () => {
                           <div className="flex items-center justify-between gap-3">
                             <div>
                               <div className="text-xs uppercase tracking-[0.2em] opacity-80">радар риска</div>
-                              <div className="mt-2 text-4xl font-bold leading-none">{businessPulse.riskScore}</div>
-                              <div className="mt-1 text-xs opacity-80">из 100 по открытым сигналам</div>
+                              <div className="mt-2 text-4xl font-bold leading-none">{businessPulse.riskScore ?? "—"}</div>
+                              <div className="mt-1 text-xs opacity-80">
+                                {businessPulse.riskScore === null ? "ожидаем расчёт" : "из 100 по открытым сигналам"}
+                              </div>
                             </div>
                             <div className="relative h-20 w-20">
                               <div className="absolute inset-0 rounded-full border border-current/20" />
@@ -758,8 +831,10 @@ const Company = () => {
                             Быстрый вывод
                           </div>
                           <p className="text-sm text-muted-foreground">
-                            Карточка собрана из {businessPulse.confidence}% доступных сигналов: реестры, статусы, связи,
-                            долги, проверки и отраслевые признаки сведены в один обзор для первичного решения.
+                            {businessPulse.summary}
+                            {businessPulse.confidence !== null && (
+                              <> Покрытие ключевых источников: {businessPulse.confidence}%.</>
+                            )}
                           </p>
                         </div>
 
@@ -787,76 +862,132 @@ const Company = () => {
               );
             })()}
 
+            {riskLoading && (
+              <SectionCard>
+                <Card className="glass border-primary/25 shadow-card">
+                  <CardContent className="flex items-center gap-3 p-5 text-sm text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    Проверяем источники и рассчитываем объяснимый риск-профиль…
+                  </CardContent>
+                </Card>
+              </SectionCard>
+            )}
+
+            {riskError && !riskLoading && (
+              <SectionCard>
+                <Card className="glass border-amber-500/30 shadow-card">
+                  <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="font-semibold text-foreground">Риск-профиль временно недоступен</div>
+                      <div className="mt-1 text-sm text-muted-foreground">{riskError}</div>
+                    </div>
+                    <Button variant="outline" onClick={loadRisk} className="gap-2">
+                      <RefreshCw className="h-4 w-4" />
+                      Повторить
+                    </Button>
+                  </CardContent>
+                </Card>
+              </SectionCard>
+            )}
+
             {risk && (() => {
-              const hasTaxDebtFactor = risk.factors.some((factor) => factor.code.startsWith("tax_debt"));
-              const currentTaxDebtCount = taxDebtData?.current_count ?? 0;
-              const hasCurrentTaxDebt = taxDebtData?.has_current_debt ?? currentTaxDebtCount > 0;
-              const taxDebtFallbackFactor = (taxDebtData?.count ?? 0) > 0 && !hasTaxDebtFactor
-                ? {
-                    code: hasCurrentTaxDebt ? "tax_debt_fallback" : "tax_debt_history_fallback",
-                    title: hasCurrentTaxDebt ? "Налоговая задолженность (МНС)" : "Задолженность МНС в истории",
-                    weight: hasCurrentTaxDebt ? 20 : 8,
-                    detail: hasCurrentTaxDebt
-                      ? `Записей в актуальном срезе: ${currentTaxDebtCount}`
-                      : `Исторических записей: ${taxDebtData?.count ?? 0}`,
-                  }
-                : null;
-              const displayedFactors = taxDebtFallbackFactor
-                ? [...risk.factors, taxDebtFallbackFactor].sort((left, right) => right.weight - left.weight)
-                : risk.factors;
-              const displayedRiskScore = Math.min(100, risk.score + (taxDebtFallbackFactor?.weight ?? 0));
-              const displayedRiskLevel = displayedRiskScore >= 50
-                ? "high"
-                : displayedRiskScore >= 25
-                  ? "medium"
-                  : "low";
-              const meta = {
-                high:   { color: "#dc2626", bg: "rgba(220,38,38,0.10)",  label: "Высокий риск" },
-                medium: { color: "#d97706", bg: "rgba(217,119,6,0.10)",  label: "Средний риск" },
-                low:    { color: "#16a34a", bg: "rgba(22,163,74,0.10)",  label: "Низкий риск" },
-              }[displayedRiskLevel];
+              const decision = risk.decision ?? (risk.level === "high" ? "manual_review" : risk.level === "medium" ? "review" : "clear");
+              const decisionMeta = {
+                stop: { color: "#dc2626", bg: "rgba(220,38,38,0.10)", label: "Стоп-фактор" },
+                manual_review: { color: "#dc2626", bg: "rgba(220,38,38,0.10)", label: "Ручная проверка" },
+                review: { color: "#d97706", bg: "rgba(217,119,6,0.10)", label: "Требует внимания" },
+                incomplete: { color: "#0284c7", bg: "rgba(2,132,199,0.10)", label: "Неполные данные" },
+                clear: { color: "#16a34a", bg: "rgba(22,163,74,0.10)", label: "Стоп-сигналов нет" },
+              }[decision];
+              const severityLabels: Record<string, string> = {
+                critical: "критично",
+                high: "высокий",
+                medium: "средний",
+                low: "низкий",
+              };
+              const coverage = risk.coverage;
               return (
                 <SectionCard>
-                  <Card className="glass shadow-card hover:shadow-glow transition-all duration-300" style={{ borderColor: meta.color + "55" }}>
-                    <CardHeader className="rounded-t-lg" style={{ background: meta.bg }}>
+                  <Card className="glass overflow-hidden shadow-card transition-all duration-300 hover:shadow-glow" style={{ borderColor: decisionMeta.color + "55" }}>
+                    <CardHeader className="rounded-t-lg" style={{ background: decisionMeta.bg }}>
                       <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
-                        <AlertTriangle className="w-5 h-5" style={{ color: meta.color }} />
-                        Проверка контрагента
+                        <ShieldCheck className="h-5 w-5" style={{ color: decisionMeta.color }} />
+                        Радар риска
+                        <span className="ml-auto rounded-full border px-2.5 py-1 text-xs font-medium" style={{ color: decisionMeta.color, borderColor: decisionMeta.color + "55", background: decisionMeta.bg }}>
+                          Методика {risk.methodology_version ?? "1.0"}
+                        </span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-4 sm:p-6 space-y-5">
-                      <div className="flex items-center gap-4">
-                        <div
-                          className="flex-shrink-0 flex flex-col items-center justify-center rounded-2xl w-24 h-24 sm:w-28 sm:h-28"
-                          style={{ background: meta.bg, border: `2px solid ${meta.color}` }}
-                        >
-                          <span className="text-3xl sm:text-4xl font-bold leading-none" style={{ color: meta.color }}>
-                            {displayedRiskScore}
-                          </span>
-                          <span className="text-[10px] sm:text-xs text-muted-foreground mt-1">из 100</span>
+                      <div className="grid gap-4 lg:grid-cols-[0.8fr_1.15fr_1fr]">
+                        <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-border/60 bg-background/50 p-4 text-center">
+                          <div
+                            className="grid h-36 w-36 place-items-center rounded-full p-2"
+                            style={{ background: `conic-gradient(${decisionMeta.color} ${risk.score * 3.6}deg, hsl(var(--muted)) 0deg)` }}
+                          >
+                            <div className="grid h-full w-full place-items-center rounded-full bg-card shadow-inner">
+                              <div>
+                                <div className="text-4xl font-bold leading-none" style={{ color: decisionMeta.color }}>{risk.score}</div>
+                                <div className="mt-1 text-xs text-muted-foreground">из 100</div>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-4 text-lg font-bold" style={{ color: decisionMeta.color }}>{decisionMeta.label}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">Индекс не является кредитным рейтингом</div>
                         </div>
-                        <div>
-                          <div className="text-xl sm:text-2xl font-bold" style={{ color: meta.color }}>{meta.label}</div>
-                          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                            Оценка по данным банкротств, задолженности, реестров и истории компании.
+
+                        <RiskCategoryRadar categories={risk.categories ?? []} color={decisionMeta.color} />
+
+                        <div className="flex min-h-64 flex-col rounded-2xl border border-border/60 bg-background/50 p-4">
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Вывод</div>
+                          <div className="mt-3 text-xl font-bold text-foreground">{risk.decision_label ?? decisionMeta.label}</div>
+                          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                            {risk.summary ?? "Оценка рассчитана по доступным государственным источникам."}
                           </p>
+                          <div className="mt-auto pt-5">
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Покрытие источников</span>
+                              <span className="font-semibold text-foreground">{coverage?.score ?? "—"}%</span>
+                            </div>
+                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                              <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${coverage?.score ?? 0}%`, background: decisionMeta.color }} />
+                            </div>
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              {coverage ? `${coverage.checked_sources} из ${coverage.total_sources} ключевых источников` : "Нет данных о покрытии"}
+                            </div>
+                          </div>
                         </div>
                       </div>
 
-                      {displayedFactors.length > 0 ? (
+                      {risk.factors.length > 0 ? (
                         <div className="space-y-2">
-                          <div className="text-sm font-semibold text-foreground">Факторы риска</div>
-                          {displayedFactors.map((f) => (
-                            <div key={f.code} className="glass rounded-lg p-3 flex items-start gap-3">
+                          <div className="flex items-center justify-between gap-3 text-sm font-semibold text-foreground">
+                            <span>Почему такой балл</span>
+                            <span className="text-xs font-normal text-muted-foreground">Вклад категорий ограничен, чтобы не считать один риск дважды</span>
+                          </div>
+                          {risk.factors.map((factor) => (
+                            <div key={factor.code} className="glass rounded-xl p-3 flex items-start gap-3">
                               <span
                                 className="flex-shrink-0 text-xs font-bold px-2 py-1 rounded-md"
-                                style={{ color: meta.color, background: meta.bg }}
+                                style={{ color: decisionMeta.color, background: decisionMeta.bg }}
                               >
-                                +{f.weight}
+                                +{factor.weight}
                               </span>
                               <div className="min-w-0">
-                                <div className="text-sm font-medium text-foreground">{f.title}</div>
-                                <div className="text-xs text-muted-foreground">{f.detail}</div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="text-sm font-medium text-foreground">{factor.title}</div>
+                                  {factor.severity && (
+                                    <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                      {severityLabels[factor.severity] ?? factor.severity}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 text-xs text-muted-foreground">{factor.detail}</div>
+                                {(factor.source || factor.observed_at) && (
+                                  <div className="mt-1.5 text-[11px] text-muted-foreground/80">
+                                    {[factor.source, factor.observed_at ? `данные на ${formatDate(factor.observed_at)}` : null].filter(Boolean).join(" · ")}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -869,16 +1000,40 @@ const Company = () => {
                         <div className="space-y-2">
                           <div className="text-sm font-semibold text-foreground">Сигналы доверия</div>
                           <div className="flex flex-wrap gap-2">
-                            {risk.trust_signals.map((t) => (
+                            {risk.trust_signals.map((signal) => (
                               <span
-                                key={t.code}
+                                key={signal.code}
                                 className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full"
                                 style={{ color: "#16a34a", background: "rgba(22,163,74,0.10)" }}
-                                title={t.detail}
+                                title={`${signal.detail}${signal.source ? ` · ${signal.source}` : ""}`}
                               >
                                 <Award className="w-3 h-3" />
-                                {t.title}
+                                {signal.title}
                               </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {coverage && (
+                        <div className="rounded-xl border border-border/60 bg-background/45 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+                            <Database className="h-4 w-4 text-primary" />
+                            Проверенные источники
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {coverage.sources.map((source) => (
+                              <div key={source.code} className="flex items-center gap-2 rounded-lg border border-border/50 bg-card/50 px-3 py-2">
+                                <span className={`h-2 w-2 rounded-full ${source.status === "fresh" || (source.available && !source.status) ? "bg-emerald-500" : source.status === "stale" ? "bg-amber-500" : "bg-slate-400"}`} />
+                                <div className="min-w-0">
+                                  <div className="truncate text-xs font-medium text-foreground">{source.title}</div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    {source.checked_at
+                                      ? `${source.status === "stale" ? "устарел · " : ""}${formatDate(source.checked_at)}`
+                                      : "нет подтверждённого среза"}
+                                  </div>
+                                </div>
+                              </div>
                             ))}
                           </div>
                         </div>

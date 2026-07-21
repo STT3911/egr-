@@ -313,9 +313,15 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     accreditation = profile.get("gias_accreditation")
     locked_suppliers = profile.get("gias_locked_suppliers") or []
     sez_rows = profile.get("eaeu_sez_resident_records") or []
-    risk_rows = [{"kind": "risk", **item} for item in risk.get("factors") or []] + [
-        {"kind": "trust", **item} for item in risk.get("trust_signals") or []
-    ]
+    risk_rows = (
+        [{"kind": "risk", **item} for item in risk.get("factors") or []]
+        + [{"kind": "trust", **item} for item in risk.get("trust_signals") or []]
+        + [{"kind": "category", **item} for item in risk.get("categories") or []]
+        + [
+            {"kind": "coverage", **item}
+            for item in (risk.get("coverage") or {}).get("sources") or []
+        ]
+    )
     related_rows = [
         {**item, "relation_type": "Совпадение контакта"} for item in related_by_contact
     ] + [
@@ -389,6 +395,19 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
             "sheet": "Дела о банкротстве",
         },
         {
+            "section": "Риск-профиль",
+            "count": len(risk.get("factors") or []),
+            "data": "\n".join(filter(None, [
+                f"Индекс: {risk.get('score', '—')}/100",
+                f"Вывод: {risk.get('decision_label') or '—'}",
+                risk.get("summary"),
+                f"Покрытие источников: {(risk.get('coverage') or {}).get('score', '—')}%",
+                f"Методика: {risk.get('methodology_version') or '—'}",
+            ])),
+            "period": f"Расчёт на {generated_at.date().isoformat()}",
+            "sheet": "Риск-профиль",
+        },
+        {
             "section": "Торговый реестр МАРТ",
             "count": len(trade_rows),
             "data": _compact_lines(trade_rows, lambda row: " — ".join(filter(None, [str(row.get("object_type") or ""), str(row.get("object_name") or row.get("internet_shop_domain") or ""), str(row.get("object_locality") or "")]))),
@@ -442,7 +461,29 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     _add_sheet(workbook, "ГРП МНС", [("full_name", "Полное название"), ("short_name", "Краткое название"), ("registration_date", "Регистрация"), ("inspectorate_code", "Код инспекции"), ("inspectorate_name", "Инспекция"), ("status_code", "Статус"), ("status_date", "Дата статуса"), ("address", "Адрес"), ("fetched_at", "Получено"), ("updated_at", "Обновлено")], grp_rows)
     _add_sheet(workbook, "Задолженность МНС", [("imns_code", "Код ИМНС"), ("imns_name", "ИМНС"), ("debt_date", "Дата долга"), ("repayment_date", "Погашение"), ("slice_date", "Дата среза")], tax_rows)
 
-    _add_sheet(workbook, "Риск-профиль", [("kind", "Тип"), ("code", "Код"), ("title", "Фактор"), ("weight", "Вес"), ("detail", "Детали")], risk_rows)
+    _add_sheet(
+        workbook,
+        "Риск-профиль",
+        [
+            ("kind", "Тип"),
+            ("code", "Код"),
+            ("title", "Фактор / источник"),
+            ("category", "Категория"),
+            ("severity", "Критичность"),
+            ("weight", "Вес"),
+            ("earned_weight", "Учтённый вес"),
+            ("raw_score", "Балл до лимита"),
+            ("score", "Балл"),
+            ("cap", "Лимит категории"),
+            ("status", "Состояние источника"),
+            ("source", "Источник"),
+            ("observed_at", "Дата сигнала"),
+            ("available", "Доступен"),
+            ("checked_at", "Дата проверки"),
+            ("detail", "Детали"),
+        ],
+        risk_rows,
+    )
     _add_sheet(workbook, "Связи по контактам", [("unp", "УНП"), ("name", "Наименование"), ("matched_type", "Тип"), ("matched_value", "Совпадение")], related_by_contact)
     _add_sheet(workbook, "Связи по адресу", [("unp", "УНП"), ("name", "Наименование"), ("address", "Адрес")], related_by_address)
 

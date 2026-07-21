@@ -446,14 +446,56 @@ export type CompanyRiskFactor = {
   title: string;
   weight: number;
   detail: string;
+  category?: "legal" | "fiscal" | "compliance" | "behavioral" | "trust";
+  severity?: "critical" | "high" | "medium" | "low" | "positive";
+  source?: string;
+  observed_at?: string | null;
+};
+
+export type CompanyRiskCategory = {
+  code: "legal" | "fiscal" | "compliance" | "behavioral";
+  title: string;
+  score: number;
+  raw_score: number;
+  cap: number;
+  level: "high" | "medium" | "low";
+  factor_count: number;
+};
+
+export type CompanyRiskSource = {
+  code: string;
+  title: string;
+  weight: number;
+  earned_weight?: number;
+  available: boolean;
+  fresh?: boolean;
+  status?: "fresh" | "stale" | "missing";
+  checked_at: string | null;
+};
+
+export type CompanyRiskCoverage = {
+  score: number;
+  level: "high" | "medium" | "low";
+  checked_sources: number;
+  total_sources: number;
+  sources: CompanyRiskSource[];
+  missing_sources: string[];
+  stale_sources?: string[];
 };
 
 export type CompanyRisk = {
   unp: number;
   score: number;
   level: "high" | "medium" | "low";
+  decision?: "stop" | "manual_review" | "review" | "incomplete" | "clear";
+  decision_label?: string;
+  summary?: string;
+  critical_flags?: string[];
+  categories?: CompanyRiskCategory[];
   factors: CompanyRiskFactor[];
   trust_signals: CompanyRiskFactor[];
+  coverage?: CompanyRiskCoverage;
+  methodology_version?: string;
   computed_at: string;
 };
 
