@@ -495,7 +495,6 @@ export type CompanyRisk = {
   factors: CompanyRiskFactor[];
   trust_signals: CompanyRiskFactor[];
   coverage?: CompanyRiskCoverage;
-  methodology_version?: string;
   computed_at: string;
 };
 

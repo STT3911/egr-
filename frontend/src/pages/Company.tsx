@@ -913,9 +913,6 @@ const Company = () => {
                       <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
                         <ShieldCheck className="h-5 w-5" style={{ color: decisionMeta.color }} />
                         Радар риска
-                        <span className="ml-auto rounded-full border px-2.5 py-1 text-xs font-medium" style={{ color: decisionMeta.color, borderColor: decisionMeta.color + "55", background: decisionMeta.bg }}>
-                          Методика {risk.methodology_version ?? "1.0"}
-                        </span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-4 sm:p-6 space-y-5">
@@ -933,7 +930,6 @@ const Company = () => {
                             </div>
                           </div>
                           <div className="mt-4 text-lg font-bold" style={{ color: decisionMeta.color }}>{decisionMeta.label}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">Индекс не является кредитным рейтингом</div>
                         </div>
 
                         <RiskCategoryRadar categories={risk.categories ?? []} color={decisionMeta.color} />
@@ -963,7 +959,6 @@ const Company = () => {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-3 text-sm font-semibold text-foreground">
                             <span>Почему такой балл</span>
-                            <span className="text-xs font-normal text-muted-foreground">Вклад категорий ограничен, чтобы не считать один риск дважды</span>
                           </div>
                           {risk.factors.map((factor) => (
                             <div key={factor.code} className="glass rounded-xl p-3 flex items-start gap-3">
@@ -1998,21 +1993,42 @@ const Company = () => {
           )}
 
           {/* Банкротство */}
-          {profile.bankrot_cases && profile.bankrot_cases.length > 0 && (
+          {profile.bankrot_cases && (
             <SectionCard>
-            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-orange-500/30">
+            <Card className={`glass shadow-card hover:shadow-glow transition-all duration-300 ${
+              profile.bankrot_cases.length > 0 ? "border-orange-500/30" : "border-emerald-500/25"
+            }`}>
               <CardHeader className="rounded-t-lg" style={{
-                background: 'linear-gradient(90deg, hsl(25 95% 53% / 0.12) 0%, hsl(var(--destructive) / 0.08) 100%)'
+                background: profile.bankrot_cases.length > 0
+                  ? 'linear-gradient(90deg, hsl(25 95% 53% / 0.12) 0%, hsl(var(--destructive) / 0.08) 100%)'
+                  : 'linear-gradient(90deg, hsl(142 76% 36% / 0.10) 0%, hsl(var(--primary) / 0.06) 100%)'
               }}>
                 <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
-                  <AlertTriangle className="w-5 h-5 text-orange-500" />
+                  {profile.bankrot_cases.length > 0
+                    ? <AlertTriangle className="w-5 h-5 text-orange-500" />
+                    : <ShieldCheck className="w-5 h-5 text-emerald-500" />}
                   Банкротство
                   <span className="ml-auto text-sm font-normal text-muted-foreground">
-                    {profile.bankrot_cases.length} {profile.bankrot_cases.length === 1 ? "дело" : profile.bankrot_cases.length < 5 ? "дела" : "дел"}
+                    {profile.bankrot_cases.length === 0
+                      ? "не найдено"
+                      : `${profile.bankrot_cases.length} ${profile.bankrot_cases.length === 1 ? "дело" : profile.bankrot_cases.length < 5 ? "дела" : "дел"}`}
                   </span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
+                {profile.bankrot_cases.length === 0 && (
+                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                      Дел о банкротстве по этому УНП не найдено
+                    </div>
+                    {risk?.coverage?.sources.find((source) => source.code === "bankruptcy")?.checked_at && (
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        Реестр проверен: {formatDate(risk.coverage.sources.find((source) => source.code === "bankruptcy")?.checked_at ?? undefined)}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {profile.bankrot_cases.map((c) => {
                   const isActive = !c.end_date;
                   const fullCase = bankruptcyData?.cases.find((item) => item.case_id === c.case_id);
@@ -2119,22 +2135,26 @@ const Company = () => {
                     </div>
                   );
                 })}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={toggleBankruptcyDetails}
-                  disabled={bankruptcyLoading}
-                  className="w-full sm:w-auto"
-                >
-                  {bankruptcyLoading
-                    ? "Загрузка сведений..."
-                    : showBankruptcyDetails
-                      ? "Скрыть подробные сведения"
-                      : "Показать все сведения реестра"}
-                </Button>
-                {showBankruptcyDetails && bankruptcyError && (
-                  <p className="text-sm text-destructive">{bankruptcyError}</p>
+                {profile.bankrot_cases.length > 0 && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleBankruptcyDetails}
+                      disabled={bankruptcyLoading}
+                      className="w-full sm:w-auto"
+                    >
+                      {bankruptcyLoading
+                        ? "Загрузка сведений..."
+                        : showBankruptcyDetails
+                          ? "Скрыть подробные сведения"
+                          : "Показать все сведения реестра"}
+                    </Button>
+                    {showBankruptcyDetails && bankruptcyError && (
+                      <p className="text-sm text-destructive">{bankruptcyError}</p>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>

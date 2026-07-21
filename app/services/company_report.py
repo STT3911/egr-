@@ -402,7 +402,6 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
                 f"Вывод: {risk.get('decision_label') or '—'}",
                 risk.get("summary"),
                 f"Покрытие источников: {(risk.get('coverage') or {}).get('score', '—')}%",
-                f"Методика: {risk.get('methodology_version') or '—'}",
             ])),
             "period": f"Расчёт на {generated_at.date().isoformat()}",
             "sheet": "Риск-профиль",
