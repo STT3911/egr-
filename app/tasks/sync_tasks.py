@@ -31,16 +31,22 @@ logger = get_logger("tasks")
 
 
 def _is_retryable_grp_error(error_msg: str | None, status_code: int | None = None) -> bool:
+    if status_code is not None:
+        return status_code in {408, 425, 429} or 500 <= status_code < 600
+
     msg = (error_msg or "").lower()
-    return status_code == 429 or any(
+    return any(
         token in msg
-        for token in ("429", "rate limit", "timeout", "server disconnected", "temporarily unavailable")
+        for token in ("rate limit", "timeout", "server disconnected", "temporarily unavailable")
     )
 
 
 def _is_terminal_grp_error(error_msg: str | None, status_code: int | None = None) -> bool:
+    if status_code is not None:
+        return 400 <= status_code < 500 and status_code not in {408, 425, 429}
+
     msg = (error_msg or "").lower()
-    return status_code in {400, 404} or " 400 " in msg or " 404 " in msg or "not found" in msg
+    return " 400 " in msg or " 404 " in msg or "not found" in msg
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -145,6 +151,13 @@ async def _grp_one_with_retry(
             except Exception as e:
                 status_code = e.response.status_code if isinstance(e, httpx.HTTPStatusError) and e.response else None
                 error_msg = str(e)[:500]
+                if _is_terminal_grp_error(error_msg, status_code):
+                    logger.info(
+                        "GRP terminal response UNP %s (HTTP %s), no retry",
+                        unp,
+                        status_code or 400,
+                    )
+                    return unp, None, status_code or 400, error_msg
                 if retry < max_retries - 1 and _is_retryable_grp_error(error_msg, status_code):
                     delay = base_delay * (2 ** retry)
                     logger.warning(
@@ -153,8 +166,6 @@ async def _grp_one_with_retry(
                     )
                     await asyncio.sleep(delay)
                     continue
-                if _is_terminal_grp_error(error_msg, status_code):
-                    return unp, None, status_code or 400, error_msg
                 return unp, None, status_code, error_msg
         return unp, None, None, f"timeout after {max_retries} retries"
 
@@ -871,11 +882,17 @@ def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
                     GrpRawData.unp == None,
                     and_(
                         or_(
-                            GrpRawData.last_error.ilike("%429%"),
-                            GrpRawData.last_error.ilike("%rate limit%"),
-                            GrpRawData.last_error.ilike("%timeout%"),
-                            GrpRawData.last_error.ilike("%server disconnected%"),
-                            GrpRawData.last_error.ilike("%temporarily unavailable%"),
+                            GrpRawData.http_status.in_([408, 425, 429]),
+                            and_(GrpRawData.http_status >= 500, GrpRawData.http_status < 600),
+                            and_(
+                                GrpRawData.http_status.is_(None),
+                                or_(
+                                    GrpRawData.last_error.ilike("%rate limit%"),
+                                    GrpRawData.last_error.ilike("%timeout%"),
+                                    GrpRawData.last_error.ilike("%server disconnected%"),
+                                    GrpRawData.last_error.ilike("%temporarily unavailable%"),
+                                ),
+                            ),
                         ),
                         or_(GrpRawData.updated_at == None, GrpRawData.updated_at <= retry_before),
                     ),
@@ -2349,8 +2366,17 @@ def sync_grp_for_all(self, limit: int = 5000, only_missing: bool = True, batch_s
                 .filter(
                     or_(
                         GrpRawData.unp == None,           # никогда не пробовали
-                        GrpRawData.http_status.is_(None), # таймаут/обрыв — повторяем
-                        GrpRawData.http_status.notin_([400, 404]),  # не терминальный
+                        GrpRawData.http_status.in_([408, 425, 429]),
+                        and_(GrpRawData.http_status >= 500, GrpRawData.http_status < 600),
+                        and_(
+                            GrpRawData.http_status.is_(None),
+                            or_(
+                                GrpRawData.last_error.ilike("%rate limit%"),
+                                GrpRawData.last_error.ilike("%timeout%"),
+                                GrpRawData.last_error.ilike("%server disconnected%"),
+                                GrpRawData.last_error.ilike("%temporarily unavailable%"),
+                            ),
+                        ),
                     )
                 )
             )
