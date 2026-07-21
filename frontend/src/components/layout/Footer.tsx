@@ -3,24 +3,26 @@ import { Link } from "react-router-dom";
 export const Footer = () => {
   return (
     <footer className="relative overflow-hidden px-4 pb-10 pt-6 sm:px-6 sm:pb-14">
-      <div className="container mx-auto max-w-6xl">
+      <div className="container mx-auto max-w-7xl">
         <div className="surface-card shadow-card rounded-[2rem] p-8 sm:p-10">
-          <div className="grid gap-10 lg:grid-cols-[1.3fr_0.7fr_0.7fr]">
+          <div className="grid gap-10 md:grid-cols-[1fr_auto] md:items-start">
             <div className="space-y-5">
               <Link to="/" className="flex items-center gap-3">
                 <div className="gradient-primary flex h-12 w-12 items-center justify-center rounded-2xl text-lg font-extrabold text-primary-foreground shadow-soft">
-                  E
+                  T
                 </div>
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                    EGR
+                    Tendex
                   </div>
                   <div className="text-xl font-semibold text-foreground">
-                    Реестр компаний Беларуси
+                    ЕГР · бизнес-разведка
                   </div>
                 </div>
               </Link>
-
+              <p className="max-w-xl text-sm leading-6 text-muted-foreground">
+                Поиск, проверка и понятное досье компаний Беларуси в одном сервисе.
+              </p>
             </div>
 
             <div className="space-y-4">
@@ -34,20 +36,18 @@ export const Footer = () => {
                 <a href="#about" className="hover:text-primary">
                   О сервисе
                 </a>
-                <Link to="/references" className="hover:text-primary">
-                  Справочники
-                </Link>
+                <a href="#hero-search" className="hover:text-primary">
+                  Проверить компанию
+                </a>
               </div>
-            </div>
-
-            <div className="space-y-4">
             </div>
           </div>
 
           <div className="section-divider my-8" />
 
           <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <p>© {new Date().getFullYear()} EGR Service. Все права защищены.</p>
+            <p>© {new Date().getFullYear()} Tendex. Все права защищены.</p>
+            <p>Данные ЕГР Беларуси · понятный интерфейс для решений</p>
           </div>
         </div>
       </div>

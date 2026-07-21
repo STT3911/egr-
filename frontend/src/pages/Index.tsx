@@ -12,23 +12,8 @@ const Index = () => {
 
       <main>
         <HeroSection />
-
-        <div className="container mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="section-divider" />
-        </div>
-
         <FeaturesSection />
-
-        <div className="container mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="section-divider" />
-        </div>
-
         <AboutSection />
-
-        <div className="container mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="section-divider" />
-        </div>
-
         <CTASection />
       </main>
 

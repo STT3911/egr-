@@ -1,181 +1,148 @@
 import { motion } from "framer-motion";
 import {
-  BarChart3,
+  ArrowRight,
   Building2,
-  FileText,
-  Lock,
+  FileDown,
+  Network,
   Search,
-  Shield,
-  Users,
-  Zap,
+  ShieldAlert,
+  Sparkles,
 } from "lucide-react";
 
-const features = [
-  {
-    icon: Search,
-    title: "Поиск по УНП",
-    description: "Находите компании по номеру, названию и историческим вариантам наименования.",
-  },
+const capabilities = [
   {
     icon: Building2,
-    title: "Карточка компании",
-    description: "Смотрите статус, даты регистрации, адреса и связанные сведения в одном месте.",
+    number: "01",
+    title: "Полная карточка",
+    description: "Статус, адреса, регистрация и история названий без переходов между источниками.",
   },
   {
-    icon: FileText,
-    title: "Справочники ЕГР",
-    description: "Открывайте статусы, типы, коды и другие справочники, связанные с данными реестра.",
+    icon: Network,
+    number: "02",
+    title: "Карта связей",
+    description: "Связанные компании и общие контакты превращаются в понятную структуру.",
   },
   {
-    icon: BarChart3,
-    title: "Аналитика по данным",
-    description: "Быстрее ориентируйтесь в больших массивах информации по компаниям и категориям.",
+    icon: ShieldAlert,
+    number: "03",
+    title: "Сигналы риска",
+    description: "Важные события не теряются в массиве исходных данных.",
   },
   {
-    icon: Shield,
-    title: "Проверка контрагентов",
-    description: "Собирайте базовые сведения о компании перед сделкой или внутренней проверкой.",
-  },
-  {
-    icon: Users,
-    title: "Работа для команды",
-    description: "Интерфейс подходит для ежедневной работы юристов, аналитиков и операционных команд.",
-  },
-  {
-    icon: Zap,
-    title: "REST API",
-    description: "Подключайте поиск и данные ЕГР к своим внутренним сервисам и автоматизациям.",
-  },
-  {
-    icon: Lock,
-    title: "Безопасность",
-    description: "Сервис сохраняет понятный доступ к данным и предсказуемое поведение выдачи.",
+    icon: FileDown,
+    number: "04",
+    title: "Готовое досье",
+    description: "Собирайте результат проверки в единый отчёт для команды или сделки.",
   },
 ];
 
-const featured = features[0];
-const expanded = features.slice(1, 5);
-const secondary = features.slice(5);
-
-const iconBadgeClass =
-  "flex h-11 w-11 items-center justify-center rounded-2xl border border-border/80 bg-background/60 text-primary shadow-[inset_0_1px_0_hsl(var(--card)/0.8)]";
+const steps = [
+  { label: "Запрос", value: "Название или УНП" },
+  { label: "Сбор", value: "Официальные источники" },
+  { label: "Анализ", value: "Связи и события" },
+  { label: "Решение", value: "Понятное досье" },
+];
 
 export const FeaturesSection = () => {
   return (
-    <section id="features" className="relative overflow-hidden px-4 py-20 sm:px-6 sm:py-28">
-      <div className="absolute inset-0 pointer-events-none registry-grid opacity-25" />
+    <section id="features" className="landing-section relative scroll-mt-28 overflow-hidden px-4 py-20 sm:px-6 sm:py-28">
+      <div className="absolute inset-0 pointer-events-none registry-grid opacity-20" />
 
-      <div className="container relative z-10 mx-auto max-w-6xl">
+      <div className="container relative z-10 mx-auto max-w-7xl">
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
+          viewport={{ once: true, margin: "-80px" }}
           transition={{ duration: 0.5 }}
-          className="mb-12 max-w-3xl"
+          className="mb-12 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end"
         >
-          <div className="eyebrow mb-5">Возможности</div>
-          <h2 className="text-3xl font-extrabold leading-tight text-foreground sm:text-4xl lg:text-5xl">
-            Всё, что нужно для
-            <span className="text-gradient"> работы с данными ЕГР</span>
-          </h2>
-          <p className="mt-5 text-base leading-7 text-muted-foreground sm:text-lg">
-            Сервис объединяет поиск компаний, карточки организаций, справочники и
-            базовую проверку данных, чтобы по реестру Беларуси можно было работать
-            быстро и без лишних переходов.
+          <div className="max-w-3xl">
+            <div className="eyebrow mb-5">Возможности</div>
+            <h2 className="text-3xl font-extrabold leading-tight text-foreground sm:text-4xl lg:text-5xl">
+              От первого запроса
+              <span className="text-gradient"> до уверенного решения</span>
+            </h2>
+          </div>
+          <p className="max-w-xl text-base leading-7 text-muted-foreground lg:max-w-sm">
+            Tendex собирает разрозненные сведения в один рабочий сценарий проверки.
           </p>
         </motion.div>
 
-        <div className="grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
-          <motion.div
-            initial={{ opacity: 0, y: 24 }}
+        <div className="grid gap-5 lg:grid-cols-12">
+          <motion.article
+            id="workflow"
+            initial={{ opacity: 0, y: 28 }}
             whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
+            viewport={{ once: true, margin: "-80px" }}
             transition={{ duration: 0.55 }}
-            className="surface-card shadow-card relative overflow-hidden rounded-[2rem] p-7 sm:p-8"
+            className="feature-spotlight scroll-mt-28 lg:col-span-7 lg:row-span-2"
           >
-            <div className="absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-accent/8" />
-            <div className="relative">
-              <div className={`${iconBadgeClass} mb-6`}>
-                <featured.icon className="h-5 w-5" />
-              </div>
-
-              <h3 className="max-w-md text-2xl font-bold text-foreground sm:text-3xl">
-                {featured.title}
-              </h3>
-              <p className="mt-4 max-w-xl text-base leading-7 text-muted-foreground">
-                {featured.description}
-              </p>
-
-              <div className="mt-8 grid gap-3 sm:grid-cols-3">
-                <div className="glass rounded-[1.35rem] p-4">
-                  <div className="text-sm font-semibold text-foreground">Автоподсказки</div>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    Результаты появляются по мере ввода запроса.
-                  </div>
+            <div className="feature-spotlight-glow" />
+            <div className="relative z-10 flex h-full flex-col">
+              <div className="flex items-start justify-between gap-4">
+                <div className="feature-icon">
+                  <Search className="h-5 w-5" />
                 </div>
-                <div className="glass rounded-[1.35rem] p-4">
-                  <div className="text-sm font-semibold text-foreground">История имен</div>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    Можно искать не только по текущему названию компании.
-                  </div>
-                </div>
-                <div className="glass rounded-[1.35rem] p-4">
-                  <div className="text-sm font-semibold text-foreground">Быстрый переход</div>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    Полный УНП сразу открывает карточку организации.
-                  </div>
+                <div className="feature-live-badge">
+                  <span /> Live workflow
                 </div>
               </div>
 
-              <div className="section-divider my-7" />
+              <div className="mt-8 max-w-xl">
+                <h3 className="text-2xl font-bold text-foreground sm:text-3xl">
+                  Проверка, которая сама ведёт к ответу
+                </h3>
+                <p className="mt-3 text-base leading-7 text-muted-foreground">
+                  Не нужно знать структуру реестров: начните с компании, а сервис сам раскроет важные слои данных.
+                </p>
+              </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                {expanded.map((feature) => (
-                  <div key={feature.title} className="surface-card rounded-[1.35rem] p-4">
-                    <div className="flex items-start gap-3">
-                      <div className={iconBadgeClass}>
-                        <feature.icon className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-foreground">{feature.title}</div>
-                        <div className="mt-1 text-sm leading-6 text-muted-foreground">
-                          {feature.description}
-                        </div>
-                      </div>
+              <div className="workflow-track mt-9">
+                {steps.map((step, index) => (
+                  <div key={step.label} className="workflow-step">
+                    <div className="workflow-step-number">0{index + 1}</div>
+                    <div className="workflow-step-copy">
+                      <strong>{step.label}</strong>
+                      <span>{step.value}</span>
                     </div>
+                    {index < steps.length - 1 && <ArrowRight className="workflow-arrow" />}
                   </div>
                 ))}
               </div>
-            </div>
-          </motion.div>
 
-          <div className="grid gap-4">
-            {secondary.map((feature, index) => (
-              <motion.div
-                key={feature.title}
-                initial={{ opacity: 0, y: 24 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.45, delay: index * 0.05 }}
-                whileHover={{ y: -6 }}
-                className="surface-card rounded-[1.6rem] p-5 sm:p-6"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className={iconBadgeClass}>
-                    <feature.icon className="h-5 w-5" />
-                  </div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    0{index + 6}
+              <div className="mt-auto pt-9">
+                <div className="feature-query">
+                  <Search className="h-4 w-4 text-primary" />
+                  <span>ООО «ИНФУБЕРИ»</span>
+                  <div className="feature-query-status">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Досье готово
                   </div>
                 </div>
+              </div>
+            </div>
+          </motion.article>
 
-                <h3 className="mt-5 text-lg font-semibold text-foreground">{feature.title}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {feature.description}
-                </p>
-              </motion.div>
-            ))}
-          </div>
+          {capabilities.map((capability, index) => (
+            <motion.article
+              key={capability.title}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-70px" }}
+              transition={{ duration: 0.45, delay: index * 0.05 }}
+              whileHover={{ y: -5 }}
+              className="feature-tile lg:col-span-5"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="feature-icon">
+                  <capability.icon className="h-5 w-5" />
+                </div>
+                <span className="font-mono text-xs text-muted-foreground">{capability.number}</span>
+              </div>
+              <h3 className="mt-5 text-xl font-bold text-foreground">{capability.title}</h3>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{capability.description}</p>
+            </motion.article>
+          ))}
         </div>
       </div>
     </section>
