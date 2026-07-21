@@ -20,22 +20,60 @@ import { geocodeCompany } from "@/lib/api";
 
 const YANDEX_API_KEY = import.meta.env.VITE_YANDEX_MAPS_API_KEY as string | undefined;
 
-// Загрузчик скрипта Яндекс.Карт. Грузим один раз на всё приложение.
-let ymapsPromise: Promise<any> | null = null;
+type YandexCoordinates = [number, number];
 
-function loadYmaps(apiKey: string): Promise<any> {
+interface YandexMapInstance {
+  destroy: () => void;
+  geoObjects: { add: (object: unknown) => void };
+}
+
+interface YandexGeoObject {
+  geometry: { getCoordinates: () => number[] };
+}
+
+interface YandexMapsApi {
+  ready: (callback: () => void) => void;
+  Map: new (
+    container: HTMLElement,
+    state: { center: YandexCoordinates; zoom: number; controls: string[] },
+  ) => YandexMapInstance;
+  Placemark: new (
+    coordinates: YandexCoordinates,
+    properties: { balloonContent: string; hintContent: string },
+    options: { preset: string },
+  ) => unknown;
+  geocode: (
+    query: string,
+    options: { results: number },
+  ) => Promise<{ geoObjects: { get: (index: number) => YandexGeoObject | undefined } }>;
+}
+
+type YandexWindow = Window & { ymaps?: YandexMapsApi };
+
+// Загрузчик скрипта Яндекс.Карт. Грузим один раз на всё приложение.
+let ymapsPromise: Promise<YandexMapsApi> | null = null;
+
+function loadYmaps(apiKey: string): Promise<YandexMapsApi> {
   if (ymapsPromise) return ymapsPromise;
 
   ymapsPromise = new Promise((resolve, reject) => {
-    const w = window as any;
-    if (w.ymaps && typeof w.ymaps.ready === "function") {
-      w.ymaps.ready(() => resolve(w.ymaps));
+    const w = window as YandexWindow;
+    const existingYmaps = w.ymaps;
+    if (existingYmaps && typeof existingYmaps.ready === "function") {
+      existingYmaps.ready(() => resolve(existingYmaps));
       return;
     }
     const script = document.createElement("script");
     script.src = `https://api-maps.yandex.ru/2.1/?apikey=${encodeURIComponent(apiKey)}&lang=ru_RU`;
     script.async = true;
-    script.onload = () => w.ymaps.ready(() => resolve(w.ymaps));
+    script.onload = () => {
+      if (!w.ymaps) {
+        ymapsPromise = null;
+        reject(new Error("Яндекс.Карты загрузились без API"));
+        return;
+      }
+      w.ymaps.ready(() => resolve(w.ymaps as YandexMapsApi));
+    };
     script.onerror = () => {
       ymapsPromise = null;
       reject(new Error("Не удалось загрузить Яндекс.Карты"));
@@ -60,7 +98,7 @@ interface CompanyMapProps {
 
 export const CompanyMap = ({ address, name, unp, lat, lon }: CompanyMapProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
+  const mapRef = useRef<YandexMapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>("loading");
 
   const hasStoredCoords =
@@ -77,7 +115,7 @@ export const CompanyMap = ({ address, name, unp, lat, lon }: CompanyMapProps) =>
     let cancelled = false;
     setStatus("loading");
 
-    const drawAt = (ymaps: any, coords: [number, number]) => {
+    const drawAt = (ymaps: YandexMapsApi, coords: YandexCoordinates) => {
       if (cancelled || !containerRef.current) return;
       if (mapRef.current) {
         mapRef.current.destroy();
@@ -99,7 +137,7 @@ export const CompanyMap = ({ address, name, unp, lat, lon }: CompanyMapProps) =>
     };
 
     const run = async () => {
-      let coords: [number, number] | null = hasStoredCoords
+      let coords: YandexCoordinates | null = hasStoredCoords
         ? [lat as number, lon as number]
         : null;
 
@@ -133,7 +171,16 @@ export const CompanyMap = ({ address, name, unp, lat, lon }: CompanyMapProps) =>
           setStatus("notfound");
           return;
         }
-        drawAt(ymaps, obj.geometry.getCoordinates());
+        const resolvedCoordinates = obj.geometry.getCoordinates();
+        if (
+          resolvedCoordinates.length < 2 ||
+          !Number.isFinite(resolvedCoordinates[0]) ||
+          !Number.isFinite(resolvedCoordinates[1])
+        ) {
+          setStatus("notfound");
+          return;
+        }
+        drawAt(ymaps, [resolvedCoordinates[0], resolvedCoordinates[1]]);
         return;
       }
       setStatus("notfound");

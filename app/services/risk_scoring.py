@@ -47,6 +47,8 @@ RECENT_WINDOW_DAYS = 730     # окно «за последние 2 года»
 
 LEVEL_HIGH = 50
 LEVEL_MEDIUM = 25
+TAX_DEBT_CURRENT_WEIGHT = 20
+TAX_DEBT_HISTORY_WEIGHT = 8
 
 
 def _factor(code: str, title: str, weight: int, detail: str) -> Dict[str, Any]:
@@ -55,6 +57,39 @@ def _factor(code: str, title: str, weight: int, detail: str) -> Dict[str, Any]:
 
 def _days_ago(days: int) -> date:
     return date.today() - timedelta(days=days)
+
+
+def _tax_debt_factors(db: Session, unp: int) -> List[Dict[str, Any]]:
+    latest_slice = db.query(func.max(NalogDebtRecord.slice_date)).scalar()
+    company_debt_slice = (
+        db.query(func.max(NalogDebtRecord.slice_date))
+        .filter(NalogDebtRecord.debtor_unp == unp)
+        .scalar()
+    )
+    if company_debt_slice is None:
+        return []
+
+    debt_rows = (
+        db.query(func.count(NalogDebtRecord.id))
+        .filter(
+            NalogDebtRecord.debtor_unp == unp,
+            NalogDebtRecord.slice_date == company_debt_slice,
+        )
+        .scalar()
+    ) or 0
+    if not debt_rows:
+        return []
+
+    if company_debt_slice == latest_slice:
+        return [_factor(
+            "tax_debt", "Налоговая задолженность (МНС)", TAX_DEBT_CURRENT_WEIGHT,
+            f"Записей в актуальном срезе {company_debt_slice.isoformat()}: {debt_rows}",
+        )]
+
+    return [_factor(
+        "tax_debt_history", "Задолженность МНС в истории", TAX_DEBT_HISTORY_WEIGHT,
+        f"Последний срез с задолженностью {company_debt_slice.isoformat()}: {debt_rows} записей",
+    )]
 
 
 def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
@@ -104,21 +139,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         ))
 
     # --- Налоговая задолженность (МНС) --------------------------------
-    latest_slice = db.query(func.max(NalogDebtRecord.slice_date)).scalar()
-    if latest_slice is not None:
-        debt_rows = (
-            db.query(func.count(NalogDebtRecord.id))
-            .filter(
-                NalogDebtRecord.debtor_unp == unp_int,
-                NalogDebtRecord.slice_date == latest_slice,
-            )
-            .scalar()
-        ) or 0
-        if debt_rows:
-            factors.append(_factor(
-                "tax_debt", "Налоговая задолженность (МНС)", 20,
-                f"Записей в срезе {latest_slice.isoformat()}: {debt_rows}",
-            ))
+    factors.extend(_tax_debt_factors(db, unp_int))
 
     # --- Реестр недобросовестных поставщиков (МАРТ) -------------------
     locked_active = (

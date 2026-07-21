@@ -38,11 +38,17 @@ def sync_nalog_debt_task(self, out_dir: Optional[str] = None) -> Dict[str, Any]:
     target_dir = Path(out_dir or settings.NALOG_DEBT_OUT_DIR)
     logger.info("Nalog debt sync started (monthly), out_dir=%s", target_dir)
 
-    run_fetcher(mode="monthly", out_dir=target_dir, perm=None)
+    run_fetcher(mode="monthly", out_dir=target_dir, perm=None, overwrite=True)
 
     db = SessionLocal()
     try:
-        imported = run_import_to_db(target_dir, db)
+        imported = run_import_to_db(
+            target_dir,
+            db,
+            latest_only=True,
+            replace_existing_slice=True,
+            raise_on_error=True,
+        )
     finally:
         db.close()
 

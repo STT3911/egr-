@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,7 +6,7 @@ import { SubscribeButton } from "@/components/SubscribeButton";
 import { CompanyMap } from "@/components/CompanyMap";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
-import { motion, useScroll, useSpring } from "framer-motion";
+import { motion, type Variants, useScroll, useSpring } from "framer-motion";
 import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -39,9 +39,9 @@ const fieldLabels: Record<string, string> = {
   liquidation_decision_no: "Номер решения о ликвидации",
 };
 
-const cardReveal = {
+const cardReveal: Variants = {
   hidden: { opacity: 0, y: 18 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] as const } },
 };
 
 // Wrapper for staggered card sections
@@ -107,6 +107,12 @@ const Company = () => {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [expandedBeltppProducts, setExpandedBeltppProducts] = useState<Set<string>>(new Set());
   const [reportDownloading, setReportDownloading] = useState(false);
+  const profileRequestRef = useRef(0);
+  const grpRequestRef = useRef(0);
+  const taxDebtRequestRef = useRef(0);
+  const relatedRequestRef = useRef(0);
+  const riskRequestRef = useRef(0);
+  const bankruptcyRequestRef = useRef(0);
   const { toast } = useToast();
 
   const { scrollYProgress } = useScroll();
@@ -175,13 +181,16 @@ const Company = () => {
   }, []);
 
   useEffect(() => {
+    bankruptcyRequestRef.current += 1;
     setBankruptcyData(null);
     setBankruptcyError(null);
+    setBankruptcyLoading(false);
     setShowBankruptcyDetails(false);
   }, [unp]);
 
   useEffect(() => {
     const load = async () => {
+      const requestId = ++profileRequestRef.current;
       if (!unp) {
         setError("УНП не указан");
         setLoading(false);
@@ -189,14 +198,17 @@ const Company = () => {
       }
       setLoading(true);
       setError(null);
+      setProfile(null);
       try {
         const data = await getCompanyProfile(unp);
-        setProfile(data);
+        if (requestId === profileRequestRef.current) setProfile(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Ошибка загрузки профиля");
-        setProfile(null);
+        if (requestId === profileRequestRef.current) {
+          setError(err instanceof Error ? err.message : "Ошибка загрузки профиля");
+          setProfile(null);
+        }
       } finally {
-        setLoading(false);
+        if (requestId === profileRequestRef.current) setLoading(false);
       }
     };
     load();
@@ -204,16 +216,20 @@ const Company = () => {
 
   const loadGrp = async (forceRefresh = false) => {
     if (!unp) return;
+    const requestId = ++grpRequestRef.current;
     setGrpLoading(true);
     setGrpError(null);
+    if (!forceRefresh) setGrpData(null);
     try {
       const data = await getGrpTaxpayerData(unp, forceRefresh);
-      setGrpData(data);
+      if (requestId === grpRequestRef.current) setGrpData(data);
     } catch (err) {
-      setGrpError(err instanceof Error ? err.message : "Ошибка загрузки данных ГРП");
-      setGrpData(null);
+      if (requestId === grpRequestRef.current) {
+        setGrpError(err instanceof Error ? err.message : "Ошибка загрузки данных ГРП");
+        setGrpData(null);
+      }
     } finally {
-      setGrpLoading(false);
+      if (requestId === grpRequestRef.current) setGrpLoading(false);
     }
   };
 
@@ -227,18 +243,22 @@ const Company = () => {
   useEffect(() => {
     const loadTaxDebt = async () => {
       if (!unp) return;
+      const requestId = ++taxDebtRequestRef.current;
       setTaxDebtLoading(true);
       setTaxDebtError(null);
+      setTaxDebtData(null);
       try {
         const data = await getCompanyTaxDebt(unp);
-        setTaxDebtData(data);
+        if (requestId === taxDebtRequestRef.current) setTaxDebtData(data);
       } catch (err) {
-        setTaxDebtError(
-          err instanceof Error ? err.message : "Ошибка загрузки данных по налоговой задолженности"
-        );
-        setTaxDebtData(null);
+        if (requestId === taxDebtRequestRef.current) {
+          setTaxDebtError(
+            err instanceof Error ? err.message : "Ошибка загрузки данных по налоговой задолженности"
+          );
+          setTaxDebtData(null);
+        }
       } finally {
-        setTaxDebtLoading(false);
+        if (requestId === taxDebtRequestRef.current) setTaxDebtLoading(false);
       }
     };
 
@@ -249,11 +269,13 @@ const Company = () => {
     // Второстепенный блок: молча ничего не показываем при ошибке/отсутствии совпадений.
     const loadRelated = async () => {
       if (!unp) return;
+      const requestId = ++relatedRequestRef.current;
+      setRelatedData(null);
       try {
         const data = await getCompanyRelated(unp);
-        setRelatedData(data);
+        if (requestId === relatedRequestRef.current) setRelatedData(data);
       } catch {
-        setRelatedData(null);
+        if (requestId === relatedRequestRef.current) setRelatedData(null);
       }
     };
     loadRelated();
@@ -263,10 +285,13 @@ const Company = () => {
     // Риск-профиль: второстепенный блок, при ошибке молча скрываем.
     const loadRisk = async () => {
       if (!unp) return;
+      const requestId = ++riskRequestRef.current;
+      setRisk(null);
       try {
-        setRisk(await getCompanyRisk(unp));
+        const data = await getCompanyRisk(unp);
+        if (requestId === riskRequestRef.current) setRisk(data);
       } catch {
-        setRisk(null);
+        if (requestId === riskRequestRef.current) setRisk(null);
       }
     };
     loadRisk();
@@ -298,16 +323,20 @@ const Company = () => {
     setShowBankruptcyDetails(true);
     if (!unp || bankruptcyData || bankruptcyLoading) return;
 
+    const requestId = ++bankruptcyRequestRef.current;
     setBankruptcyLoading(true);
     setBankruptcyError(null);
     try {
-      setBankruptcyData(await getCompanyBankruptcy(unp));
+      const data = await getCompanyBankruptcy(unp);
+      if (requestId === bankruptcyRequestRef.current) setBankruptcyData(data);
     } catch (err) {
-      setBankruptcyError(
-        err instanceof Error ? err.message : "Ошибка загрузки данных о банкротстве"
-      );
+      if (requestId === bankruptcyRequestRef.current) {
+        setBankruptcyError(
+          err instanceof Error ? err.message : "Ошибка загрузки данных о банкротстве"
+        );
+      }
     } finally {
-      setBankruptcyLoading(false);
+      if (requestId === bankruptcyRequestRef.current) setBankruptcyLoading(false);
     }
   };
 
@@ -414,12 +443,27 @@ const Company = () => {
       ? Math.max(0, Math.floor((Date.now() - registeredAt) / (365.25 * 24 * 60 * 60 * 1000)))
       : null;
     const taxDebtCount = taxDebtData?.count ?? 0;
+    const currentTaxDebtCount = taxDebtData?.current_count ?? 0;
+    const hasCurrentTaxDebt = taxDebtData?.has_current_debt ?? currentTaxDebtCount > 0;
     const bankruptcyCount = profile.bankrot_cases?.length ?? 0;
     const activeLicenses = profile.license_records?.filter((item) => item.activity_is_active).length ?? 0;
     const inspectionsCount = profile.inspection_plan_records?.length ?? 0;
     const tradeObjects = profile.trade_registry_records?.length ?? 0;
     const relatedCount = (relatedData?.by_address.length ?? 0) + (relatedData?.by_contact.length ?? 0);
-    const riskScore = risk?.score ?? Math.min(100, taxDebtCount * 24 + bankruptcyCount * 30 + inspectionsCount * 8);
+    const riskIncludesTaxDebt = risk?.factors.some((factor) => factor.code.startsWith("tax_debt")) ?? false;
+    const taxDebtFallbackWeight = !riskIncludesTaxDebt
+      ? hasCurrentTaxDebt
+        ? 20
+        : taxDebtCount > 0
+          ? 8
+          : 0
+      : 0;
+    const riskScore = Math.min(
+      100,
+      risk
+        ? risk.score + taxDebtFallbackWeight
+        : taxDebtFallbackWeight + bankruptcyCount * 30 + inspectionsCount * 8,
+    );
     const sourceCount = [
       profile.names?.length,
       profile.addresses?.length,
@@ -445,8 +489,12 @@ const Company = () => {
     const signals: { label: string; value: string; tone: PulseTone }[] = [
       { label: "Уверенность данных", value: `${confidence}%`, tone: confidence >= 75 ? "emerald" : "sky" },
       { label: "Возраст", value: ageYears === null ? "нет даты" : `${ageYears} лет`, tone: "violet" },
+      {
+        label: "Долги МНС",
+        value: hasCurrentTaxDebt ? `${currentTaxDebtCount} акт.` : taxDebtCount > 0 ? `${taxDebtCount} ист.` : "0",
+        tone: hasCurrentTaxDebt ? "red" : taxDebtCount > 0 ? "amber" : "emerald",
+      },
       { label: "Активные лицензии", value: String(activeLicenses), tone: activeLicenses > 0 ? "emerald" : "sky" },
-      { label: "Торговые объекты", value: String(tradeObjects), tone: tradeObjects > 0 ? "emerald" : "sky" },
       { label: "Проверки", value: String(inspectionsCount), tone: inspectionsCount > 0 ? "amber" : "emerald" },
       { label: "Связи", value: String(relatedCount), tone: relatedCount > 0 ? "violet" : "sky" },
     ];
@@ -740,11 +788,33 @@ const Company = () => {
             })()}
 
             {risk && (() => {
+              const hasTaxDebtFactor = risk.factors.some((factor) => factor.code.startsWith("tax_debt"));
+              const currentTaxDebtCount = taxDebtData?.current_count ?? 0;
+              const hasCurrentTaxDebt = taxDebtData?.has_current_debt ?? currentTaxDebtCount > 0;
+              const taxDebtFallbackFactor = (taxDebtData?.count ?? 0) > 0 && !hasTaxDebtFactor
+                ? {
+                    code: hasCurrentTaxDebt ? "tax_debt_fallback" : "tax_debt_history_fallback",
+                    title: hasCurrentTaxDebt ? "Налоговая задолженность (МНС)" : "Задолженность МНС в истории",
+                    weight: hasCurrentTaxDebt ? 20 : 8,
+                    detail: hasCurrentTaxDebt
+                      ? `Записей в актуальном срезе: ${currentTaxDebtCount}`
+                      : `Исторических записей: ${taxDebtData?.count ?? 0}`,
+                  }
+                : null;
+              const displayedFactors = taxDebtFallbackFactor
+                ? [...risk.factors, taxDebtFallbackFactor].sort((left, right) => right.weight - left.weight)
+                : risk.factors;
+              const displayedRiskScore = Math.min(100, risk.score + (taxDebtFallbackFactor?.weight ?? 0));
+              const displayedRiskLevel = displayedRiskScore >= 50
+                ? "high"
+                : displayedRiskScore >= 25
+                  ? "medium"
+                  : "low";
               const meta = {
                 high:   { color: "#dc2626", bg: "rgba(220,38,38,0.10)",  label: "Высокий риск" },
                 medium: { color: "#d97706", bg: "rgba(217,119,6,0.10)",  label: "Средний риск" },
                 low:    { color: "#16a34a", bg: "rgba(22,163,74,0.10)",  label: "Низкий риск" },
-              }[risk.level];
+              }[displayedRiskLevel];
               return (
                 <SectionCard>
                   <Card className="glass shadow-card hover:shadow-glow transition-all duration-300" style={{ borderColor: meta.color + "55" }}>
@@ -761,7 +831,7 @@ const Company = () => {
                           style={{ background: meta.bg, border: `2px solid ${meta.color}` }}
                         >
                           <span className="text-3xl sm:text-4xl font-bold leading-none" style={{ color: meta.color }}>
-                            {risk.score}
+                            {displayedRiskScore}
                           </span>
                           <span className="text-[10px] sm:text-xs text-muted-foreground mt-1">из 100</span>
                         </div>
@@ -773,10 +843,10 @@ const Company = () => {
                         </div>
                       </div>
 
-                      {risk.factors.length > 0 ? (
+                      {displayedFactors.length > 0 ? (
                         <div className="space-y-2">
                           <div className="text-sm font-semibold text-foreground">Факторы риска</div>
-                          {risk.factors.map((f) => (
+                          {displayedFactors.map((f) => (
                             <div key={f.code} className="glass rounded-lg p-3 flex items-start gap-3">
                               <span
                                 className="flex-shrink-0 text-xs font-bold px-2 py-1 rounded-md"
@@ -1943,21 +2013,42 @@ const Company = () => {
               {!taxDebtLoading && !taxDebtError && taxDebtData && taxDebtData.count === 0 && (
                 <div className="space-y-2">
                   <p className="text-muted-foreground text-sm">
-                    Записей о налоговой задолженности по этой компании сейчас нет.
+                    В доступных срезах записей о налоговой задолженности по этой компании нет.
                   </p>
+                  {taxDebtData.latest_global_slice_date && (
+                    <p className="text-xs text-muted-foreground">
+                      Актуальность общего среза МНС: {formatDate(taxDebtData.latest_global_slice_date)}
+                    </p>
+                  )}
                 </div>
               )}
 
               {taxDebtData && taxDebtData.count > 0 && (
                 <div className="space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
-                    <div className="text-foreground font-medium">
-                      Найдено записей: {taxDebtData.count}
+                  <div className="grid gap-2 text-sm sm:grid-cols-3">
+                    <div className="rounded-lg border border-border/60 bg-background/50 p-3">
+                      <div className="text-xs text-muted-foreground">Актуальная задолженность</div>
+                      <div className={`mt-1 font-semibold ${taxDebtData.has_current_debt ? "text-destructive" : "text-emerald-600"}`}>
+                        {taxDebtData.has_current_debt ? `${taxDebtData.current_count ?? 0} записей` : "Не найдена"}
+                      </div>
                     </div>
-                    <div className="text-muted-foreground">
-                      Последний срез: {formatDate(taxDebtData.latest_slice_date)}
+                    <div className="rounded-lg border border-border/60 bg-background/50 p-3">
+                      <div className="text-xs text-muted-foreground">История по компании</div>
+                      <div className="mt-1 font-semibold text-foreground">{taxDebtData.count} записей</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-background/50 p-3">
+                      <div className="text-xs text-muted-foreground">Актуальность данных МНС</div>
+                      <div className="mt-1 font-semibold text-foreground">
+                        {formatDate(taxDebtData.latest_global_slice_date)}
+                      </div>
                     </div>
                   </div>
+
+                  {taxDebtData.count > taxDebtData.items.length && (
+                    <p className="text-xs text-muted-foreground">
+                      Показаны первые {taxDebtData.items.length} из {taxDebtData.count} записей.
+                    </p>
+                  )}
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">

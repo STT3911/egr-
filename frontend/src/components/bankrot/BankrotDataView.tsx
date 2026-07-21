@@ -394,6 +394,8 @@ const JudgementView = ({ value }: { value: unknown }) => {
               const directory = isObject(judgment.directory) ? judgment.directory : {};
               const judge = isObject(judgment.judge) ? judgment.judge : {};
               const court = isObject(judgment.court) ? judgment.court : {};
+              const judgeName = typeof judge.fullName === "string" ? judge.fullName : "";
+              const courtName = typeof court.name === "string" ? court.name : "";
               const title = directory.value || judgment.type || `Решение ${index + 1}`;
               const details = Object.fromEntries(
                 Object.entries(judgment).filter(([key]) => !["directory", "judge", "court", "date", "info", "documents"].includes(key))
@@ -408,10 +410,10 @@ const JudgementView = ({ value }: { value: unknown }) => {
                       </span>
                     )}
                   </div>
-                  {(judge.fullName || court.name) && (
+                  {(judgeName || courtName) && (
                     <div className="grid gap-2 text-sm sm:grid-cols-2">
-                      {court.name && <div><span className="text-muted-foreground">Суд:</span> {String(court.name)}</div>}
-                      {judge.fullName && <div><span className="text-muted-foreground">Судья:</span> {String(judge.fullName)}</div>}
+                      {courtName && <div><span className="text-muted-foreground">Суд:</span> {courtName}</div>}
+                      {judgeName && <div><span className="text-muted-foreground">Судья:</span> {judgeName}</div>}
                     </div>
                   )}
                   {typeof judgment.info === "string" && stripHtml(judgment.info) && (

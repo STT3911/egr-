@@ -582,7 +582,11 @@ def run_fetcher(
     return out_dir
 
 
-def load_json_file_to_db(json_path: Path, session) -> int:
+def load_json_file_to_db(
+    json_path: Path,
+    session,
+    replace_existing_slice: bool = False,
+) -> int:
     """
     Р вЂ”Р В°Р С–РЎР‚РЎС“Р В¶Р В°Р ВµРЎвЂљ Р С•Р Т‘Р С‘Р Р… JSON-РЎвЂћР В°Р в„–Р В» РЎРѓРЎР‚Р ВµР В·Р В° (Р Т‘Р В°РЎвЂљР В° Р Р† Р С‘Р СР ВµР Р…Р С‘: YYYY-MM-DD.json) Р Р† РЎвЂљР В°Р В±Р В»Р С‘РЎвЂ РЎС“ nalog_debt_records.
     Р вЂ™Р С•Р В·Р Р†РЎР‚Р В°РЎвЂ°Р В°Р ВµРЎвЂљ Р С”Р С•Р В»Р С‘РЎвЂЎР ВµРЎРѓРЎвЂљР Р†Р С• Р Р†РЎРѓРЎвЂљР В°Р Р†Р В»Р ВµР Р…Р Р…РЎвЂ№РЎвЂ¦ Р В·Р В°Р С—Р С‘РЎРѓР ВµР в„– (РЎРѓ РЎС“РЎвЂЎРЎвЂРЎвЂљР С•Р С ON CONFLICT DO NOTHING Р С‘Р В»Р С‘ merge).
@@ -601,6 +605,11 @@ def load_json_file_to_db(json_path: Path, session) -> int:
     data = json.loads(text)
     items = data.get("items") if isinstance(data, dict) else []
     if not items:
+        if replace_existing_slice:
+            raise ValueError(
+                f"Актуальный срез задолженности {json_path.name} пуст; "
+                "существующие данные оставлены без изменений"
+            )
         return 0
 
     to_insert = []
@@ -626,33 +635,55 @@ def load_json_file_to_db(json_path: Path, session) -> int:
     if not to_insert:
         return 0
 
+    existing_slice_unps: set[int] = set()
+    if replace_existing_slice:
+        existing_slice_unps = {
+            row[0]
+            for row in session.query(NalogDebtRecord.debtor_unp)
+            .filter(NalogDebtRecord.slice_date == slice_d)
+            .distinct()
+            .all()
+        }
+
     # Событие подписки tax_debt: УНП, появившиеся в этом срезе, но отсутствовавшие
     # в предыдущем (новые должники). emit_company_event отсекает неотслеживаемых.
     try:
-        from sqlalchemy import func as _sa_func
-        from app.services.subscription_events import emit_company_event, EVENT_TAX_DEBT
+        with session.begin_nested():
+            from sqlalchemy import func as _sa_func
+            from app.services.subscription_events import emit_company_event, EVENT_TAX_DEBT
 
-        current_unps = {row["debtor_unp"] for row in to_insert}
-        prev_slice = (
-            session.query(_sa_func.max(NalogDebtRecord.slice_date))
-            .filter(NalogDebtRecord.slice_date < slice_d)
-            .scalar()
-        )
-        prev_unps: set[int] = set()
-        if prev_slice is not None:
-            prev_unps = {
-                r[0]
-                for r in session.query(NalogDebtRecord.debtor_unp)
-                .filter(NalogDebtRecord.slice_date == prev_slice)
-                .distinct()
-                .all()
-            }
-        for unp in current_unps - prev_unps:
-            emit_company_event(session, unp, EVENT_TAX_DEBT,
-                               new_value=f"задолженность на {slice_d.isoformat()}")
+            current_unps = {row["debtor_unp"] for row in to_insert}
+            prev_slice = (
+                session.query(_sa_func.max(NalogDebtRecord.slice_date))
+                .filter(NalogDebtRecord.slice_date < slice_d)
+                .scalar()
+            )
+            prev_unps: set[int] = existing_slice_unps
+            if not prev_unps and prev_slice is not None:
+                prev_unps = {
+                    r[0]
+                    for r in session.query(NalogDebtRecord.debtor_unp)
+                    .filter(NalogDebtRecord.slice_date == prev_slice)
+                    .distinct()
+                    .all()
+                }
+            for unp in current_unps - prev_unps:
+                emit_company_event(
+                    session,
+                    unp,
+                    EVENT_TAX_DEBT,
+                    new_value=f"задолженность на {slice_d.isoformat()}",
+                )
     except Exception:
         # Эмиссия событий не должна валить импорт задолженностей.
         pass
+
+    if replace_existing_slice:
+        (
+            session.query(NalogDebtRecord)
+            .filter(NalogDebtRecord.slice_date == slice_d)
+            .delete(synchronize_session=False)
+        )
 
     stmt = insert(NalogDebtRecord).values(to_insert)
     stmt = stmt.on_conflict_do_nothing(
@@ -669,16 +700,38 @@ def load_json_file_to_db(json_path: Path, session) -> int:
     return result.rowcount if hasattr(result, "rowcount") else len(to_insert)
 
 
-def run_import_to_db(json_dir: Path, session) -> int:
-    """Р ВР СР С—Р С•РЎР‚РЎвЂљ Р Р†РЎРѓР ВµРЎвЂ¦ JSON-РЎвЂћР В°Р в„–Р В»Р С•Р Р† Р С‘Р В· Р С”Р В°РЎвЂљР В°Р В»Р С•Р С–Р В° Р Р† Р вЂР вЂќ. Р ВР СР ВµР Р…Р В° РЎвЂћР В°Р в„–Р В»Р С•Р Р†: YYYY-MM-DD.json."""
+def run_import_to_db(
+    json_dir: Path,
+    session,
+    latest_only: bool = False,
+    replace_existing_slice: bool = False,
+    raise_on_error: bool = False,
+) -> int:
+    """Импортировать JSON-срезы задолженности из каталога в БД.
+
+    Для периодического обновления можно обработать только самый новый файл и
+    атомарно заменить соответствующий срез, чтобы погашенные долги не оставались
+    в актуальном месяце.
+    """
     total = 0
-    for path in sorted(json_dir.glob("*.json")):
+    paths = sorted(path for path in json_dir.glob("*.json") if not path.name.startswith("_"))
+    if latest_only and paths:
+        paths = paths[-1:]
+
+    for path in paths:
         if path.name.startswith("_"):
             continue
         try:
-            n = load_json_file_to_db(path, session)
+            n = load_json_file_to_db(
+                path,
+                session,
+                replace_existing_slice=replace_existing_slice,
+            )
             total += n
-            logger.info("Р ВР СР С—Р С•РЎР‚РЎвЂљ %s: %s Р В·Р В°Р С—Р С‘РЎРѓР ВµР в„–", path.name, n)
+            logger.info("Импорт %s: %s записей", path.name, n)
         except Exception as e:
-            logger.exception("Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р С‘Р СР С—Р С•РЎР‚РЎвЂљР В° %s: %s", path, e)
+            session.rollback()
+            logger.exception("Ошибка импорта %s: %s", path, e)
+            if raise_on_error:
+                raise
     return total

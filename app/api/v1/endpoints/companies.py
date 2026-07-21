@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Path, Depends
 from fastapi.responses import Response
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, text
+from sqlalchemy import desc, func, text
 from app.schemas.company import (
     CompanyBankrotResponse,
     CompanyLookupResponse,
@@ -704,6 +704,28 @@ async def get_company_tax_debt(
 ):
     """Return tax debt records for a company by UNP."""
     unp = int(identifier)
+    latest_global_slice = db.query(func.max(NalogDebtRecord.slice_date)).scalar()
+    latest_company_slice = (
+        db.query(func.max(NalogDebtRecord.slice_date))
+        .filter(NalogDebtRecord.debtor_unp == unp)
+        .scalar()
+    )
+    total_count = (
+        db.query(func.count(NalogDebtRecord.id))
+        .filter(NalogDebtRecord.debtor_unp == unp)
+        .scalar()
+    ) or 0
+    current_count = 0
+    if latest_global_slice is not None:
+        current_count = (
+            db.query(func.count(NalogDebtRecord.id))
+            .filter(
+                NalogDebtRecord.debtor_unp == unp,
+                NalogDebtRecord.slice_date == latest_global_slice,
+            )
+            .scalar()
+        ) or 0
+
     rows = (
         db.query(
             NalogDebtRecord.debtor_unp,
@@ -719,7 +741,6 @@ async def get_company_tax_debt(
         .all()
     )
 
-    latest_slice = rows[0].slice_date.isoformat() if rows and rows[0].slice_date else None
     items = [
         NalogDebtRecordResponse(
             debtor_unp=int(row.debtor_unp),
@@ -734,8 +755,12 @@ async def get_company_tax_debt(
 
     return CompanyNalogDebtResponse(
         unp=unp,
-        count=len(items),
-        latest_slice_date=latest_slice,
+        count=total_count,
+        returned_count=len(items),
+        current_count=current_count,
+        has_current_debt=current_count > 0,
+        latest_slice_date=latest_company_slice.isoformat() if latest_company_slice else None,
+        latest_global_slice_date=latest_global_slice.isoformat() if latest_global_slice else None,
         items=items,
     )
 

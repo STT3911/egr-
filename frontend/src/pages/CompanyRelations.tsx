@@ -10,6 +10,7 @@ import {
   MapPin,
   Network,
   Phone,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -152,20 +153,20 @@ const CompanyRelations = () => {
           <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               {[
-                ["Компаний", graph.stats.companies, Building2],
-                ["Связей", graph.stats.connections, Network],
-                ["Телефоны", graph.stats.phones, Phone],
-                ["Email", graph.stats.emails, Mail],
-                ["Адреса", graph.stats.addresses, MapPin],
-              ].map(([label, value, Icon]) => (
-                <Card key={String(label)}>
+                { label: "Компаний", value: graph.stats.companies, Icon: Building2 },
+                { label: "Связей", value: graph.stats.connections, Icon: Network },
+                { label: "Телефоны", value: graph.stats.phones, Icon: Phone },
+                { label: "Email", value: graph.stats.emails, Icon: Mail },
+                { label: "Адреса", value: graph.stats.addresses, Icon: MapPin },
+              ].map(({ label, value, Icon }: { label: string; value: number; Icon: LucideIcon }) => (
+                <Card key={label}>
                   <CardContent className="flex items-center gap-3 p-4">
                     <div className="rounded-xl bg-primary/10 p-2.5">
                       <Icon className="h-5 w-5 text-primary" />
                     </div>
                     <div>
-                      <div className="text-2xl font-bold">{String(value)}</div>
-                      <div className="text-xs text-muted-foreground">{String(label)}</div>
+                      <div className="text-2xl font-bold">{value}</div>
+                      <div className="text-xs text-muted-foreground">{label}</div>
                     </div>
                   </CardContent>
                 </Card>

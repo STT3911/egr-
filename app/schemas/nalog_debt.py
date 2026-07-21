@@ -22,6 +22,9 @@ class NalogDebtRecordResponse(BaseModel):
 class CompanyNalogDebtResponse(BaseModel):
     unp: int
     count: int
+    returned_count: int
+    current_count: int
+    has_current_debt: bool
     latest_slice_date: Optional[str] = None
+    latest_global_slice_date: Optional[str] = None
     items: list[NalogDebtRecordResponse]
-

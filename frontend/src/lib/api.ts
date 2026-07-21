@@ -270,7 +270,11 @@ export type CompanyTaxDebtItem = {
 export type CompanyTaxDebtResponse = {
   unp: number;
   count: number;
+  returned_count?: number;
+  current_count?: number;
+  has_current_debt?: boolean;
   latest_slice_date?: string;
+  latest_global_slice_date?: string;
   items: CompanyTaxDebtItem[];
 };
 

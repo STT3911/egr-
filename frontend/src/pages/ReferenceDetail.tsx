@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { Header } from "@/components/layout/Header";
@@ -14,7 +14,7 @@ const ReferenceDetail = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     if (!type) return;
     setLoading(true);
     setError(null);
@@ -27,11 +27,11 @@ const ReferenceDetail = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [type]);
 
   useEffect(() => {
-    loadAll();
-  }, [type]);
+    void loadAll();
+  }, [loadAll]);
 
   const handleSearch = async (event: FormEvent) => {
     event.preventDefault();
