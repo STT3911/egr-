@@ -28,12 +28,12 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Literal, Set
+from typing import Literal
 
 from pathlib import Path
 
 import httpx
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,19 +52,24 @@ logger = get_logger("unp_enumerate")
 CHECKPOINT_PATH = str(ROOT / "data" / "unp_enumerate_checkpoint.json")
 
 
-def load_known_unps(known_tables: List[str]) -> Set[int]:
-    """Множество уже известных УНП (int) из перечисленных таблиц."""
-    known: Set[int] = set()
+def find_known_unps(unps: list[int], known_tables: list[str]) -> set[int]:
+    """Return known UNPs without loading entire database tables into memory."""
+    if not unps:
+        return set()
+
+    known: set[int] = set()
     db = SessionLocal()
     try:
-        for tbl in known_tables:
+        for table_name in known_tables:
             try:
-                rows = db.execute(text(f"SELECT unp FROM {tbl} WHERE unp IS NOT NULL"))
+                stmt = text(
+                    f"SELECT unp FROM {table_name} WHERE unp IN :unps"
+                ).bindparams(bindparam("unps", expanding=True))
+                rows = db.execute(stmt, {"unps": unps})
                 for (unp,) in rows:
                     known.add(int(unp))
-                logger.info("known: загружено из %s (итого %d)", tbl, len(known))
-            except Exception as e:  # таблицы может не быть — пропускаем
-                logger.warning("known: пропуск %s: %s", tbl, e)
+            except Exception as exc:
+                logger.warning("known lookup skipped %s: %s", table_name, exc)
                 db.rollback()
     finally:
         db.close()
@@ -253,8 +258,8 @@ def is_hit(payload: dict) -> bool:
 
 async def run(args) -> None:
     regions = [int(x) for x in args.regions.split(",") if x.strip()]
-    known = load_known_unps(args.known_tables.split(","))
-    logger.info("Известных УНП в БД: %d", len(known))
+    known_tables = [name.strip() for name in args.known_tables.split(",") if name.strip()]
+    logger.info("Known UNPs will be checked in small DB batches: %s", known_tables)
 
     # резюме из чекпойнта: пропускаем уже пройденные регионы и стартуем с seq
     resume_region, resume_seq = None, None
@@ -299,20 +304,21 @@ async def run(args) -> None:
                 seq_start = int(resume_seq)
             seq = seq_start
             while seq <= args.seq_end:
-                # собрать батч НЕизвестных кандидатов (с сохранением порядка),
-                # известные по пути считаем «существует» и сбрасываем empty_run
-                batch: list = []
-                while seq <= args.seq_end and len(batch) < args.concurrency:
+                candidates: list[str] = []
+                while seq <= args.seq_end and len(candidates) < args.concurrency:
                     unp = build_unp(region, seq)
                     seq += 1
                     if unp is None:
                         continue
-                    if int(unp) in known:
-                        empty_run = 0
-                        continue
-                    batch.append(unp)
-                if not batch:
+                    candidates.append(unp)
+                if not candidates:
                     break
+
+                known = find_known_unps(
+                    [int(unp) for unp in candidates],
+                    known_tables,
+                )
+                batch = [unp for unp in candidates if int(unp) not in known]
 
                 results = await asyncio.gather(*[
                     fetch_one(client, u, args.max_retries, args.base_delay, args.cooldown)
@@ -320,22 +326,24 @@ async def run(args) -> None:
                 ])
                 queried += len(batch)
 
-                stop_region = False
                 failed_unps: list[str] = []
-                for u, result in zip(batch, results):
+                results_by_unp = dict(zip(batch, results))
+                for u in candidates:
                     last_unp = u
+                    if int(u) in known:
+                        empty_run = 0
+                        continue
+
+                    result = results_by_unp[u]
                     if result.outcome == "hit" and result.payload:
                         payload = result.payload
                         pending.append((int(u), payload))
-                        known.add(int(u))
                         found += 1
                         empty_run = 0
                         logger.info("HIT %s  %s", u, payload.get("vnaimp") or payload.get("VNAIMP") or "")
                     elif result.outcome == "miss":
                         misses += 1
                         empty_run += 1
-                        if empty_run >= args.empty_stop:
-                            stop_region = True
                     else:
                         errors += 1
                         failed_unps.append(u)
@@ -398,7 +406,7 @@ async def run(args) -> None:
                 # вежливая пауза между батчами
                 await asyncio.sleep(args.delay)
 
-                if stop_region:
+                if args.empty_stop > 0 and empty_run >= args.empty_stop:
                     logger.info("регион %d: %d пустых подряд — стоп (фронтир выдачи)", region, args.empty_stop)
                     break
 
@@ -457,7 +465,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--regions", default="1,2,3,4,5,6,7", help="первые знаки УНП (коды регионов) через запятую")
     p.add_argument("--seq-start", type=int, default=0, help="начальный порядковый номер (знаки 2-8)")
     p.add_argument("--seq-end", type=int, default=SEQ_MAX, help="конечный порядковый номер")
-    p.add_argument("--empty-stop", type=int, default=20000, help="стоп по региону после N пустых подряд")
+    p.add_argument(
+        "--empty-stop",
+        type=int,
+        default=20000,
+        help="стоп по региону после N пустых подряд; 0 отключает раннюю остановку",
+    )
     p.add_argument("--concurrency", type=int, default=settings.GRP_FETCH_CONCURRENCY, help="одновременных запросов")
     p.add_argument("--delay", type=float, default=settings.GRP_FETCH_SUCCESS_DELAY_SECONDS, help="пауза между батчами, сек")
     p.add_argument("--max-retries", type=int, default=settings.GRP_FETCH_MAX_RETRIES)
