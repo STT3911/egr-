@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     # Security - Rate Limiting (requests per minute)
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_PER_MINUTE: int = 60
-    RATE_LIMIT_LOOKUP_PER_MINUTE: Optional[int] = 20  # Stricter for lookup/search (anti-parser)
+    RATE_LIMIT_LOOKUP_PER_MINUTE: Optional[int] = 80  # Lookup/search requests per client
 
     # Nalog debt (portal.nalog.gov.by) — папка для выгрузки JSON.
     # Обязательно под /app/data (это записываемый том; корень /app доступен
