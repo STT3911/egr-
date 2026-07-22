@@ -72,8 +72,18 @@ class AggregatorService:
             if not raw_data:
                 logger.warning(f"No data for {unp} in both APIs")
                 return False
-            
-            # 3. Save to DB (data + по эндпоинтам колонки)
+
+            self.save_raw_payload(unp, raw_data)
+            return True
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Raw save error {unp}: {e}")
+            raise
+
+    def save_raw_payload(self, unp: int, raw_data: dict) -> RawCompanyData:
+        """Persist an already fetched full EGR payload without another API request."""
+        try:
             now = datetime.now()
             raw_entry = self.db.query(RawCompanyData).filter(RawCompanyData.unp == unp).first()
             if raw_entry:
@@ -106,10 +116,10 @@ class AggregatorService:
                     names_fetched_at=now,
                 )
                 self.db.add(raw_entry)
-            
+
             self.db.commit()
-            return True
-            
+            return raw_entry
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"Raw save error {unp}: {e}")
