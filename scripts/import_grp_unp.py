@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+from sqlalchemy import select
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,7 @@ if str(ROOT) not in sys.path:
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.crud.grp import GrpCRUD
+from app.database.models import Company
 from app.services.aggregator import AggregatorService
 from app.services.company_registry import sync_company_from_grp
 from app.services.grp_client import GRPClient
@@ -40,9 +42,6 @@ REPORT_FIELDS = (
     "grp_http_status",
     "error",
 )
-FINAL_STATUSES = {"found", "not_found", "invalid"}
-
-
 @dataclass(frozen=True)
 class SourceResult:
     unp: str
@@ -81,6 +80,39 @@ def load_report(path: Path) -> dict[str, dict[str, str]]:
         }
 
 
+def find_existing_companies(unps: list[str], batch_size: int = 1000) -> set[int]:
+    numeric_unps = [int(unp) for unp in unps if unp.isdigit()]
+    existing: set[int] = set()
+    db = SessionLocal()
+    try:
+        for offset in range(0, len(numeric_unps), batch_size):
+            batch = numeric_unps[offset : offset + batch_size]
+            rows = db.execute(
+                select(Company.unp).where(Company.unp.in_(batch))
+            ).scalars()
+            existing.update(int(unp) for unp in rows)
+    finally:
+        db.close()
+    return existing
+
+
+def existing_company_row(unp: str, previous: dict[str, str] | None = None) -> dict[str, str]:
+    previous = previous or {}
+    return {
+        "unp": unp,
+        "status": "already_in_db",
+        "egr_status": previous.get("egr_status") or "skipped",
+        "grp_status": previous.get("grp_status") or "skipped",
+        "egr_parsed": previous.get("egr_parsed") or "existing",
+        "grp_parsed": previous.get("grp_parsed") or "existing",
+        "egr_name": previous.get("egr_name") or "",
+        "grp_name": previous.get("grp_name") or "",
+        "egr_source": previous.get("egr_source") or "database",
+        "grp_http_status": previous.get("grp_http_status") or "",
+        "error": "",
+    }
+
+
 def _write_list(path: Path, values: list[str]) -> None:
     path.write_text("".join(f"{value}\n" for value in values), encoding="utf-8")
 
@@ -101,7 +133,7 @@ def write_outputs(
                 writer.writerow({field: row.get(field, "") for field in REPORT_FIELDS})
     os.replace(tmp_path, report_path)
 
-    for status in ("found", "not_found", "error", "invalid"):
+    for status in ("already_in_db", "found", "not_found", "error", "invalid"):
         values = [unp for unp in ordered_unps if results.get(unp, {}).get("status") == status]
         _write_list(report_path.with_name(f"{report_path.stem}.{status}.txt"), values)
 
@@ -122,6 +154,7 @@ def print_summary(report_path: Path, results: dict[str, dict[str, str]]) -> None
     print("=" * 72)
     print(f"report: {report_path}")
     print(f"processed: {sum(overall.values())}")
+    print(f"already_in_database: {overall['already_in_db']}")
     print(f"found_any_source: {overall['found']}")
     print(f"not_found_in_both: {overall['not_found']}")
     print(f"errors: {overall['error']}")
@@ -132,6 +165,7 @@ def print_summary(report_path: Path, results: dict[str, dict[str, str]]) -> None
     print(f"grp_not_found: {grp['not_found']}")
     print(f"found_in_both: {found_both}")
     print(f"found_list: {report_path.with_name(report_path.stem + '.found.txt')}")
+    print(f"already_in_db_list: {report_path.with_name(report_path.stem + '.already_in_db.txt')}")
     print(f"not_found_list: {report_path.with_name(report_path.stem + '.not_found.txt')}")
     print(f"egr_found_list: {report_path.with_name(report_path.stem + '.egr_found.txt')}")
     print(f"grp_found_list: {report_path.with_name(report_path.stem + '.grp_found.txt')}")
@@ -161,34 +195,109 @@ def _grp_name(payload: dict | None) -> str:
     ).strip()
 
 
-async def fetch_egr(aggregator: AggregatorService, unp: str) -> SourceResult:
+def _first_dict(payload: object) -> dict | None:
+    if isinstance(payload, dict):
+        return payload or None
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        return payload[0]
+    return None
+
+
+def _dict_list(payload: object) -> list[dict]:
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+async def _egr_request(client_object: object, endpoint: str, params: dict | None = None) -> object | None:
+    http_client = await client_object._get_client()
+    response = await http_client.get(f"{client_object.base_url}/{endpoint}", params=params)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise ValueError(f"EGR returned non-JSON for {endpoint}: {exc}") from exc
+
+
+async def _fetch_egr_once(aggregator: AggregatorService, unp: str) -> tuple[dict | None, str]:
+    legacy_payload = await _egr_request(
+        aggregator.egr_client,
+        f"getBaseInfoByRegNum/{int(unp)}",
+    )
+    base_info = _first_dict(legacy_payload)
+    if base_info:
+        is_juridical = base_info.get("nsi00211", {}).get("nkvob") == 1
+        name_endpoint = "getAllJurNamesByRegNum" if is_juridical else "getAllIPFIOByRegNum"
+        addresses_raw, ved_raw, names_raw = await asyncio.gather(
+            _egr_request(aggregator.egr_client, f"getAllAddressByRegNum/{int(unp)}"),
+            _egr_request(aggregator.egr_client, f"getAllVEDByRegNum/{int(unp)}"),
+            _egr_request(aggregator.egr_client, f"{name_endpoint}/{int(unp)}"),
+        )
+        return {
+            "base_info": base_info,
+            "addresses": _dict_list(addresses_raw),
+            "ved": _dict_list(ved_raw),
+            "names": _dict_list(names_raw),
+        }, "legacy"
+
+    if aggregator.mobile_client is not None:
+        params = {"pan": unp} if len(unp) == 9 else {"unn": unp}
+        mobile_payload = await _egr_request(
+            aggregator.mobile_client,
+            "extracts/commonInfo",
+            params=params,
+        )
+        common_info = _first_dict(mobile_payload)
+        if common_info:
+            return {"common_info": common_info, "place_location": None}, "mobile"
+
+    return None, ""
+
+
+async def fetch_egr(
+    aggregator: AggregatorService,
+    unp: str,
+    max_retries: int,
+    retry_delay: float,
+    cooldown: float,
+) -> SourceResult:
     if not unp.isdigit():
         return SourceResult(unp=unp, source="egr", status="invalid", error="UNP must contain digits only")
-    try:
-        payload = await aggregator.egr_client.get_full_company_history(int(unp))
-        if payload:
-            return SourceResult(
-                unp=unp,
-                source="egr",
-                status="found",
-                payload=payload,
-                http_status=200,
-                source_variant="legacy",
-            )
-        if aggregator.mobile_client is not None:
-            common_info = await aggregator.mobile_client.get_common_info(unp)
-            if common_info:
+
+    attempt = 0
+    while True:
+        try:
+            payload, source_variant = await _fetch_egr_once(aggregator, unp)
+            if payload:
                 return SourceResult(
                     unp=unp,
                     source="egr",
                     status="found",
-                    payload={"common_info": common_info, "place_location": None},
+                    payload=payload,
                     http_status=200,
-                    source_variant="mobile",
+                    source_variant=source_variant,
                 )
-        return SourceResult(unp=unp, source="egr", status="not_found", http_status=404)
-    except Exception as exc:
-        return SourceResult(unp=unp, source="egr", status="error", error=repr(exc))
+            return SourceResult(unp=unp, source="egr", status="not_found", http_status=404)
+        except httpx.HTTPStatusError as exc:
+            http_status = exc.response.status_code if exc.response is not None else None
+            attempt += 1
+            retryable = http_status == 429 or http_status is None or http_status >= 500
+            if not retryable or attempt > max_retries:
+                return SourceResult(
+                    unp=unp,
+                    source="egr",
+                    status="error",
+                    http_status=http_status,
+                    error=str(exc),
+                )
+            await asyncio.sleep(cooldown if http_status == 429 else retry_delay * attempt)
+        except (httpx.HTTPError, ValueError) as exc:
+            attempt += 1
+            if attempt > max_retries:
+                return SourceResult(unp=unp, source="egr", status="error", error=str(exc))
+            await asyncio.sleep(retry_delay * attempt)
 
 
 async def fetch_grp(
@@ -323,15 +432,45 @@ async def run(args: argparse.Namespace) -> int:
 
     input_unps = set(unps)
     loaded_results = {} if args.fresh else load_report(report_path)
-    results = {unp: row for unp, row in loaded_results.items() if unp in input_unps}
-    all_pending = [unp for unp in unps if results.get(unp, {}).get("status") not in FINAL_STATUSES]
-    pending = all_pending[: args.limit] if args.limit is not None else all_pending
+    loaded_results = {unp: row for unp, row in loaded_results.items() if unp in input_unps}
 
     print(f"input: {len(unps)} unique UNPs")
+    print("checking all UNPs in egr_companies...", flush=True)
+    existing_companies = find_existing_companies(unps)
+    results: dict[str, dict[str, str]] = {}
+    for unp in unps:
+        previous = loaded_results.get(unp)
+        if unp.isdigit() and int(unp) in existing_companies:
+            results[unp] = existing_company_row(unp, previous)
+        elif previous:
+            results[unp] = previous
+
+    terminal_missing_statuses = {"not_found", "invalid"}
+    all_pending = [
+        unp
+        for unp in unps
+        if not (unp.isdigit() and int(unp) in existing_companies)
+        and (
+            results.get(unp, {}).get("status") not in terminal_missing_statuses
+            or (
+                args.retry_egr_not_found
+                and results.get(unp, {}).get("egr_status") == "not_found"
+            )
+        )
+    ]
+    pending = all_pending[: args.limit] if args.limit is not None else all_pending
+
+    print(f"already in database: {len(existing_companies)}")
+    print(f"missing in database: {len(unps) - len(existing_companies)}")
     print(f"already processed: {len(unps) - len(all_pending)}")
     print(f"to request from EGR and GRP: {len(pending)}")
     if len(all_pending) > len(pending):
         print(f"left after this run: {len(all_pending) - len(pending)}")
+
+    write_outputs(report_path, unps, results)
+    if not pending:
+        print_summary(report_path, results)
+        return 1 if any(row.get("status") == "error" for row in results.values()) else 0
 
     aggregator = AggregatorService()
     grp_client = GRPClient(timeout=args.timeout)
@@ -341,7 +480,15 @@ async def run(args: argparse.Namespace) -> int:
             batch = pending[offset : offset + args.concurrency]
             source_tasks = []
             for unp in batch:
-                source_tasks.append(fetch_egr(aggregator, unp))
+                source_tasks.append(
+                    fetch_egr(
+                        aggregator,
+                        unp,
+                        max_retries=args.max_retries,
+                        retry_delay=args.retry_delay,
+                        cooldown=args.cooldown,
+                    )
+                )
                 source_tasks.append(
                     fetch_grp(
                         grp_client,
@@ -388,6 +535,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--file", help="TXT file with one UNP per line")
     parser.add_argument("--report", default="data/client_unp_report.csv", help="CSV report path")
     parser.add_argument("--fresh", action="store_true", help="request every UNP again")
+    parser.add_argument(
+        "--retry-egr-not-found",
+        action="store_true",
+        help="recheck rows previously marked EGR not_found by older importer versions",
+    )
     parser.add_argument("--status", action="store_true", help="show current report statistics and exit")
     parser.add_argument("--limit", type=int, help="process at most N pending UNPs")
     parser.add_argument("--concurrency", type=int, default=2)
