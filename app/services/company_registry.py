@@ -12,12 +12,85 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
+from app.database.models import (
+    Company,
+    CompanyNameHistory,
+    CompanyPlaceLocation,
+    GrpTaxpayerData,
+)
+from app.services.search_index import enqueue_company_for_indexing
+from app.utils.search_normalizer import normalize_company_name
 
 logger = get_logger("company_registry")
+
+
+def sync_company_from_grp(db: Session, unp: int) -> bool:
+    """Create or enrich one central company record from parsed GRP data."""
+    grp = db.query(GrpTaxpayerData).filter(GrpTaxpayerData.unp == unp).first()
+    if not grp:
+        return False
+
+    company = db.query(Company).filter(Company.unp == unp).first()
+    if company is None:
+        company = Company(
+            unp=unp,
+            source="grp",
+            registration_date=grp.registration_date,
+        )
+        db.add(company)
+        db.flush()
+    elif company.source == "grp" and not company.registration_date and grp.registration_date:
+        company.registration_date = grp.registration_date
+
+    current_name = (
+        db.query(CompanyNameHistory)
+        .filter(
+            CompanyNameHistory.company_id == company.id,
+            CompanyNameHistory.valid_to.is_(None),
+        )
+        .first()
+    )
+    if current_name is None and (grp.full_name or grp.short_name):
+        full_name = grp.full_name or grp.short_name
+        db.add(
+            CompanyNameHistory(
+                company_id=company.id,
+                full_name_ru=full_name,
+                short_name_ru=grp.short_name,
+                search_name=normalize_company_name(full_name),
+                valid_from=grp.registration_date,
+                valid_to=None,
+            )
+        )
+
+    if grp.address:
+        place = (
+            db.query(CompanyPlaceLocation)
+            .filter(CompanyPlaceLocation.unp == unp)
+            .first()
+        )
+        if place is None:
+            place = CompanyPlaceLocation(
+                unp=unp,
+                raw_json={"source": "grp"},
+                address=grp.address,
+                fetched_at=datetime.now(),
+            )
+            db.add(place)
+        elif not place.address:
+            place.address = grp.address
+            place.fetched_at = datetime.now()
+
+    enqueue_company_for_indexing(db, unp)
+    db.flush()
+    return True
 
 
 def sync_companies_from_grp() -> dict:

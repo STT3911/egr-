@@ -14,6 +14,7 @@ from app.schemas.nalog_debt import CompanyNalogDebtResponse, NalogDebtRecordResp
 from app.crud.company import CompanyCRUD
 from app.services.aggregator import AggregatorService
 from app.services.company_report import build_company_report
+from app.services.grp_discovery import discover_company_from_grp
 from app.core.config import settings
 from app.services.egr_client import EGRClient, MobileEGRClient
 from app.core.logger import get_logger
@@ -126,7 +127,7 @@ def _looks_like_address(query: str) -> bool:
 
 
 @router.get("/lookup", response_model=CompanyLookupResponse)
-def lookup_companies(
+async def lookup_companies(
     q: str = Query(..., min_length=1, description="Поиск по УНП, названию, телефону, email или адресу"),
     limit: int = Query(10, ge=1, le=50, description="Максимум результатов"),
     db: Session = Depends(get_db),
@@ -301,6 +302,11 @@ def lookup_companies(
                     exact_sql,
                     {"unp_exact": int(cleaned_query)},
                 ).mappings().all()
+                if not rows and await discover_company_from_grp(db, int(cleaned_query)):
+                    rows = db.execute(
+                        exact_sql,
+                        {"unp_exact": int(cleaned_query)},
+                    ).mappings().all()
             except Exception as e:
                 logger.error(f"Error in exact UNP search: {str(e)}")
                 raise HTTPException(status_code=500, detail="РћС€РёР±РєР° РїРѕРёСЃРєР° РїРѕ РЈРќРџ")
@@ -609,6 +615,10 @@ async def get_company_profile(
 
         company_crud = CompanyCRUD(db)
         cached = company_crud.get_full_dossier(unp)
+
+        if not cached and not db_only:
+            if await discover_company_from_grp(db, unp):
+                cached = company_crud.get_full_dossier(unp)
 
         if not cached:
             raise HTTPException(

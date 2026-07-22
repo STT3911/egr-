@@ -26,7 +26,9 @@ import json
 import os
 import sys
 import time
-from typing import List, Set
+from dataclasses import dataclass
+from datetime import datetime
+from typing import List, Literal, Set
 
 from pathlib import Path
 
@@ -47,7 +49,7 @@ from app.services.unp_enum import build_unp, SEQ_MAX
 
 logger = get_logger("unp_enumerate")
 
-CHECKPOINT_PATH = os.path.join("data", "unp_enumerate_checkpoint.json")
+CHECKPOINT_PATH = str(ROOT / "data" / "unp_enumerate_checkpoint.json")
 
 
 def load_known_unps(known_tables: List[str]) -> Set[int]:
@@ -69,13 +71,55 @@ def load_known_unps(known_tables: List[str]) -> Set[int]:
     return known
 
 
-def save_checkpoint(region: int, seq: int, found: int) -> None:
+def _save_checkpoint_legacy(region: int, seq: int, found: int) -> None:
     try:
         os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
         with open(CHECKPOINT_PATH, "w", encoding="utf-8") as f:
             json.dump({"region": region, "seq": seq, "found": found, "ts": time.time()}, f)
     except Exception as e:
         logger.warning("checkpoint: не удалось записать: %s", e)
+
+
+def _next_candidate_unp(region: int, seq: int) -> str | None:
+    candidate_seq = max(0, seq)
+    while candidate_seq <= SEQ_MAX:
+        unp = build_unp(region, candidate_seq)
+        if unp is not None:
+            return unp
+        candidate_seq += 1
+    return None
+
+
+def save_checkpoint(
+    region: int,
+    seq: int,
+    found: int,
+    *,
+    queried: int = 0,
+    misses: int = 0,
+    errors: int = 0,
+    last_unp: str | None = None,
+) -> None:
+    try:
+        os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
+        payload = {
+            "region": region,
+            "seq": seq,
+            "last_unp": last_unp,
+            "next_unp": _next_candidate_unp(region, seq),
+            "queried": queried,
+            "found": found,
+            "misses": misses,
+            "errors": errors,
+            "pid": os.getpid(),
+            "ts": time.time(),
+        }
+        tmp_path = f"{CHECKPOINT_PATH}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as checkpoint_file:
+            json.dump(payload, checkpoint_file, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, CHECKPOINT_PATH)
+    except Exception as exc:
+        logger.warning("checkpoint write failed: %s", exc)
 
 
 def upsert_hits(rows: list) -> None:
@@ -108,7 +152,7 @@ def upsert_hits(rows: list) -> None:
         db.close()
 
 
-async def fetch_one(client: GRPClient, unp: str, max_retries: int, base_delay: float, cooldown: float) -> dict:
+async def _fetch_one_legacy(client: GRPClient, unp: str, max_retries: int, base_delay: float, cooldown: float) -> dict:
     """Запрос к ГРП с ретраями. Возвращает dict (пустой если не найден)."""
     attempt = 0
     while True:
@@ -139,6 +183,65 @@ async def fetch_one(client: GRPClient, unp: str, max_retries: int, base_delay: f
             await asyncio.sleep(base_delay * attempt)
 
 
+@dataclass(frozen=True)
+class FetchResult:
+    outcome: Literal["hit", "miss", "error"]
+    payload: dict | None = None
+    status_code: int | None = None
+    error: str | None = None
+
+
+async def fetch_one(
+    client: GRPClient,
+    unp: str,
+    max_retries: int,
+    base_delay: float,
+    cooldown: float,
+) -> FetchResult:
+    """Fetch one UNP without confusing a transport failure with a confirmed miss."""
+    attempt = 0
+    while True:
+        try:
+            payload = await client.get_taxpayer(int(unp))
+            if not payload:
+                return FetchResult(outcome="miss", status_code=404)
+            if is_hit(payload):
+                return FetchResult(outcome="hit", payload=payload, status_code=200)
+            return FetchResult(
+                outcome="error",
+                payload=payload,
+                status_code=200,
+                error="GRP returned an unexpected payload shape",
+            )
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status is not None and 400 <= status < 500 and status != 429:
+                return FetchResult(outcome="miss", status_code=status)
+
+            attempt += 1
+            wait = cooldown if status == 429 else base_delay * attempt
+            if attempt > max_retries:
+                return FetchResult(
+                    outcome="error",
+                    status_code=status,
+                    error=str(exc),
+                )
+            logger.warning(
+                "GRP retry UNP %s, HTTP %s, attempt %s/%s in %.1fs",
+                unp,
+                status,
+                attempt,
+                max_retries,
+                wait,
+            )
+            await asyncio.sleep(wait)
+        except (httpx.HTTPError, ValueError) as exc:
+            attempt += 1
+            if attempt > max_retries:
+                return FetchResult(outcome="error", error=str(exc))
+            await asyncio.sleep(base_delay * attempt)
+
+
 def is_hit(payload: dict) -> bool:
     """ГРП вернул реальную запись (а не пусто/404)."""
     if not payload:
@@ -155,27 +258,44 @@ async def run(args) -> None:
 
     # резюме из чекпойнта: пропускаем уже пройденные регионы и стартуем с seq
     resume_region, resume_seq = None, None
+    checkpoint = {}
     if args.resume:
         try:
-            with open(CHECKPOINT_PATH, encoding="utf-8") as f:
-                cp = json.load(f)
-            resume_region, resume_seq = cp.get("region"), cp.get("seq")
+            with open(CHECKPOINT_PATH, encoding="utf-8-sig") as f:
+                checkpoint = json.load(f)
+            resume_region, resume_seq = checkpoint.get("region"), checkpoint.get("seq")
             logger.info("resume: продолжаю с региона %s, seq %s", resume_region, resume_seq)
         except Exception as e:
             logger.warning("resume: чекпойнт не прочитан (%s), старт с начала", e)
 
     client = GRPClient()
-    found = 0
-    queried = 0
-    last_logged = 0
+    found = int(checkpoint.get("found") or 0)
+    queried = int(checkpoint.get("queried") or 0)
+    misses = int(checkpoint.get("misses") or 0)
+    errors = int(checkpoint.get("errors") or 0)
+    last_logged = queried
+    last_checkpointed = queried
+    last_unp = checkpoint.get("last_unp")
     pending: list = []  # (unp_int, raw_json)
+    waiting_for_resume_region = resume_region is not None
+    if waiting_for_resume_region and resume_region not in regions:
+        logger.warning(
+            "resume region %s is not present in --regions=%s; starting from the beginning",
+            resume_region,
+            regions,
+        )
+        waiting_for_resume_region = False
+        resume_region = None
+        resume_seq = None
     try:
         for region in regions:
-            if resume_region is not None and region < resume_region:
-                continue
+            if waiting_for_resume_region:
+                if region != resume_region:
+                    continue
+                waiting_for_resume_region = False
             empty_run = 0
             seq_start = args.seq_start
-            if resume_region is not None and region == resume_region and resume_seq:
+            if resume_region is not None and region == resume_region and resume_seq is not None:
                 seq_start = int(resume_seq)
             seq = seq_start
             while seq <= args.seq_end:
@@ -201,28 +321,79 @@ async def run(args) -> None:
                 queried += len(batch)
 
                 stop_region = False
-                for u, payload in zip(batch, results):
-                    if is_hit(payload):
+                failed_unps: list[str] = []
+                for u, result in zip(batch, results):
+                    last_unp = u
+                    if result.outcome == "hit" and result.payload:
+                        payload = result.payload
                         pending.append((int(u), payload))
                         known.add(int(u))
                         found += 1
                         empty_run = 0
                         logger.info("HIT %s  %s", u, payload.get("vnaimp") or payload.get("VNAIMP") or "")
-                    else:
+                    elif result.outcome == "miss":
+                        misses += 1
                         empty_run += 1
                         if empty_run >= args.empty_stop:
                             stop_region = True
+                    else:
+                        errors += 1
+                        failed_unps.append(u)
+                        logger.error(
+                            "UNP %s was not checked: HTTP %s, %s",
+                            u,
+                            result.status_code,
+                            result.error or "unknown GRP error",
+                        )
+
+                if failed_unps:
+                    retry_seq = min(int(unp[1:8]) for unp in failed_unps)
+                    upsert_hits(pending)
+                    pending.clear()
+                    save_checkpoint(
+                        region,
+                        retry_seq,
+                        found,
+                        queried=queried,
+                        misses=misses,
+                        errors=errors,
+                        last_unp=last_unp,
+                    )
+                    logger.error(
+                        "Enumeration stopped without skipping data; rerun with --resume. Next UNP: %s",
+                        _next_candidate_unp(region, retry_seq),
+                    )
+                    return
 
                 if len(pending) >= args.flush_every:
                     upsert_hits(pending)
                     pending.clear()
-                    save_checkpoint(region, seq, found)
 
                 if queried - last_logged >= args.progress_every:
                     last_logged = queried
                     logger.info("регион %d seq~%d | запросов=%d найдено=%d пустых_подряд=%d",
                                 region, seq, queried, found, empty_run)
-                    save_checkpoint(region, seq, found)
+                    save_checkpoint(
+                        region,
+                        seq,
+                        found,
+                        queried=queried,
+                        misses=misses,
+                        errors=errors,
+                        last_unp=last_unp,
+                    )
+
+                if queried - last_checkpointed >= args.checkpoint_every:
+                    last_checkpointed = queried
+                    save_checkpoint(
+                        region,
+                        seq,
+                        found,
+                        queried=queried,
+                        misses=misses,
+                        errors=errors,
+                        last_unp=last_unp,
+                    )
 
                 # вежливая пауза между батчами
                 await asyncio.sleep(args.delay)
@@ -233,12 +404,52 @@ async def run(args) -> None:
 
             upsert_hits(pending)
             pending.clear()
-            save_checkpoint(region, seq, found)
+            save_checkpoint(
+                region,
+                seq,
+                found,
+                queried=queried,
+                misses=misses,
+                errors=errors,
+                last_unp=last_unp,
+            )
     finally:
         upsert_hits(pending)
         await client.close()
 
     logger.info("ГОТОВО. Запросов к ГРП: %d, найдено новых: %d", queried, found)
+
+
+def print_status() -> int:
+    try:
+        with open(CHECKPOINT_PATH, encoding="utf-8-sig") as checkpoint_file:
+            checkpoint = json.load(checkpoint_file)
+    except FileNotFoundError:
+        print(f"Checkpoint not found: {CHECKPOINT_PATH}")
+        return 1
+    except Exception as exc:
+        print(f"Cannot read checkpoint {CHECKPOINT_PATH}: {exc}")
+        return 1
+
+    updated_at = None
+    age_seconds = None
+    if checkpoint.get("ts"):
+        updated_at = datetime.fromtimestamp(float(checkpoint["ts"])).astimezone()
+        age_seconds = max(0, int(time.time() - float(checkpoint["ts"])))
+
+    print(f"checkpoint: {CHECKPOINT_PATH}")
+    print(f"updated_at: {updated_at.isoformat(timespec='seconds') if updated_at else '-'}")
+    print(f"age_seconds: {age_seconds if age_seconds is not None else '-'}")
+    print(f"pid: {checkpoint.get('pid', '-')}")
+    print(f"region: {checkpoint.get('region', '-')}")
+    print(f"last_unp: {checkpoint.get('last_unp', '-')}")
+    print(f"next_unp: {checkpoint.get('next_unp', '-')}")
+    print(f"next_seq: {checkpoint.get('seq', '-')}")
+    print(f"queried: {checkpoint.get('queried', 0)}")
+    print(f"found: {checkpoint.get('found', 0)}")
+    print(f"misses: {checkpoint.get('misses', 0)}")
+    print(f"errors: {checkpoint.get('errors', 0)}")
+    return 0
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -255,15 +466,24 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="пауза при 429, сек")
     p.add_argument("--flush-every", type=int, default=50, help="через сколько найденных писать в БД")
     p.add_argument("--progress-every", type=int, default=1000, help="лог прогресса каждые N запросов")
+    p.add_argument("--checkpoint-every", type=int, default=20,
+                   help="update checkpoint after every N GRP requests")
+    p.add_argument("--checkpoint-path", default=CHECKPOINT_PATH,
+                   help="checkpoint file path (use a separate file for audit runs)")
     p.add_argument("--known-tables", default="egr_raw_company_data,grp_raw_data,grp_taxpayer_data",
                    help="таблицы с известными УНП для дедупликации (через запятую)")
     p.add_argument("--resume", action="store_true",
                    help="продолжить с последнего чекпойнта (data/unp_enumerate_checkpoint.json)")
+    p.add_argument("--status", action="store_true", help="show current checkpoint and exit")
     return p
 
 
 def main():
+    global CHECKPOINT_PATH
     args = build_argparser().parse_args()
+    CHECKPOINT_PATH = os.path.abspath(args.checkpoint_path)
+    if args.status:
+        raise SystemExit(print_status())
     print("=" * 80)
     print("  НАПРАВЛЕННЫЙ ПЕРЕБОР УНП ЧЕРЕЗ ГРП")
     print("=" * 80)

@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     GRP_FETCH_SCHEDULE_SECONDS: int = 300
     GRP_PROCESS_LIMIT: int = 500
     GRP_PROCESS_SCHEDULE_SECONDS: int = 60
+    GRP_ON_DEMAND_ENABLED: bool = True
+    GRP_ON_DEMAND_TIMEOUT_SECONDS: float = 8.0
+    GRP_ON_DEMAND_NEGATIVE_CACHE_MINUTES: int = 1440
 
     # PVT/HTP residents sync from park.by. Disabled by default; enable when Celery Beat should run it.
     PVT_SCHEDULE_ENABLED: bool = False
