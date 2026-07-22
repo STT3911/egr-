@@ -244,14 +244,12 @@ class RequisiteService:
 
             # Юридический адрес из БД. Пишем его отдельным вызовом crm.address.*
             # после создания/обновления реквизита (надёжнее поля RQ_ADDR).
-            # Имена полей — штатные для адресов Битрикса (POSTAL_CODE, PROVINCE).
+            # Область уже входит в полный адрес, поэтому отдельный PROVINCE не заполняем.
             address_fields: dict | None = None
             if egr_info.full_address:
                 address_fields = {"ADDRESS_1": _strip_country_prefix(egr_info.full_address)}
                 if egr_info.postal_code:
                     address_fields["POSTAL_CODE"] = str(egr_info.postal_code)
-                if egr_info.region:
-                    address_fields["PROVINCE"] = egr_info.region
 
             # Шаг 6: Получаем старые реквизиты компании
             try:
