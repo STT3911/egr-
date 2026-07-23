@@ -10,11 +10,14 @@ SSL_CERT=/etc/nginx/ssl/fullchain.pem
 if [ ! -f "$SSL_CERT" ]; then
   echo "No SSL cert at $SSL_CERT — enabling HTTP-only fallback."
   [ -f "$MAIN_CONF" ] && mv "$MAIN_CONF" "${MAIN_CONF}.disabled"
-  cat > "$FALLBACK_CONF" << 'NGINX_HTTP'
+cat > "$FALLBACK_CONF" << 'NGINX_HTTP'
 # EGR Service - HTTP only (SSL certs not yet present)
+limit_req_zone $binary_remote_addr zone=api_per_ip:10m rate=80r/m;
+
 server {
   listen 80;
   server_name test.tendex.by _;
+  limit_req_status 429;
   resolver 127.0.0.11 valid=30s;
   client_max_body_size 100M;
   add_header X-Frame-Options "SAMEORIGIN" always;
@@ -30,6 +33,7 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
   }
   location /api {
+    limit_req zone=api_per_ip burst=80 nodelay;
     set $backend_upstream http://egr-api:8000;
     proxy_pass $backend_upstream;
     proxy_http_version 1.1;

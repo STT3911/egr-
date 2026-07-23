@@ -21,7 +21,7 @@ import hmac
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -58,7 +58,7 @@ async def verify_stable_token(
 
 
 @router.get("/companies/{unp}", response_model=StableCompanyV1)
-async def get_stable_company(
+def get_stable_company(
     unp: str = Path(..., regex=r"^\d{9}$", description="УНП (9 цифр)"),
     db: Session = Depends(get_db),
     token: str = Depends(verify_stable_token),
@@ -68,10 +68,10 @@ async def get_stable_company(
         company = (
             db.query(Company)
             .options(
-                joinedload(Company.names_history),
-                joinedload(Company.addresses_history),
-                joinedload(Company.ved_history),
-                joinedload(Company.contacts_history),
+                selectinload(Company.names_history),
+                selectinload(Company.addresses_history),
+                selectinload(Company.ved_history),
+                selectinload(Company.contacts_history),
             )
             .filter(Company.unp == int(unp))
             .first()
