@@ -10,9 +10,9 @@ The project keeps application code, import logic, source snapshots, and operatio
 app/                 Backend application: API, DB models, services, tasks.
 frontend/            React/Vite frontend.
 migrations/          Alembic migrations.
-scripts/             Operational scripts and compatibility entrypoints.
+scripts/             Operational scripts.
 scripts/imports/     Import and snapshot commands.
-scripts/legacy/      Old one-off scripts kept behind compatibility wrappers.
+scripts/legacy/      Old one-off scripts.
 scripts/deploy/      Deployment/SSL helper scripts.
 scripts/sql/         Manual and bootstrap SQL helpers.
 docs/                Detailed documentation and historical notes.
@@ -21,8 +21,6 @@ reference_tables/    Reference-table bootstrap helpers.
 tests/               Python tests.
 nginx/               Nginx configs.
 ```
-
-Root-level legacy files such as `Start.py`, `auto-import-data.py`, and `scripts/import_*.py` are compatibility wrappers. Prefer the organized paths under `scripts/` for new work.
 
 ## Main Data Sources
 
@@ -93,6 +91,65 @@ docker compose run --rm egr-api alembic upgrade head
 ```
 
 If only migrations changed, running `alembic upgrade head` is enough after the backend image/code is updated.
+
+## Autonomous UNP Pipeline
+
+The `egr-unp-pipeline` service continuously:
+
+1. enumerates valid UNP candidates through GRP;
+2. writes every discovered raw record before advancing the checkpoint;
+3. parses pending `grp_raw_data` batches;
+4. synchronizes GRP companies into `egr_companies`;
+5. periodically rebuilds `gov_organizations`.
+
+Build and start it once:
+
+```bash
+docker compose build egr-unp-pipeline
+docker compose up -d egr-unp-pipeline
+```
+
+Inspect status and logs:
+
+```bash
+docker exec egr_unp_pipeline python -m app.workers.unp_pipeline --status
+docker compose logs -f egr-unp-pipeline
+```
+
+Stop it gracefully:
+
+```bash
+docker compose stop -t 30 egr-unp-pipeline
+```
+
+The service resumes from `data/unp_enumerate_checkpoint.json`. Set
+`UNP_PIPELINE_EMPTY_STOP=0` in `.env` only when a complete region-wide scan is
+required; the default stops a region after 20,000 consecutive misses.
+
+## Parser Telegram Alerts
+
+Parser failures and retries are sent immediately. Routine `egr-unp-pipeline`
+progress is sent twice per day through the same operational Telegram channel.
+
+Configure `.env`:
+
+```dotenv
+ALERT_TELEGRAM_BOT_TOKEN=123456:telegram-bot-token
+ALERT_TELEGRAM_CHAT_ID=-1001234567890
+PARSER_ALERTS_ENABLED=true
+PARSER_ALERTS_NOTIFY_START=false
+PARSER_ALERTS_NOTIFY_SUCCESS=false
+PARSER_ALERTS_PROGRESS_INTERVAL_SECONDS=43200
+```
+
+After changing these values, recreate the parser containers so they receive
+the environment:
+
+```bash
+docker compose up -d --build --force-recreate \
+  egr-celery-worker egr-celery-worker-heavy egr-celery-worker-bankrot \
+  egr-celery-beat egr-unp-pipeline
+```
 
 ## Imports and Snapshots
 

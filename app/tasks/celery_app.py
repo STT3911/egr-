@@ -35,6 +35,7 @@ from app.tasks import contacts_tasks
 from app.tasks import eaeu_sez_tasks
 from app.tasks import address_tasks
 from app.tasks import nalog_debt_tasks
+from app.tasks import parser_alerts
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
 _beat_schedule = {

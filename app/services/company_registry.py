@@ -111,6 +111,7 @@ def sync_companies_from_grp() -> dict:
             FROM grp_taxpayer_data g
             LEFT JOIN egr_companies c ON c.unp = g.unp
             WHERE c.unp IS NULL
+            ON CONFLICT (unp) DO NOTHING
         """))
         stats["companies_added"] = res.rowcount or 0
         db.commit()

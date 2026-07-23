@@ -256,7 +256,7 @@ def is_hit(payload: dict) -> bool:
     return bool(keys & {"vunp", "vnaimp", "vnaimk"})
 
 
-async def run(args) -> None:
+async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]:
     regions = [int(x) for x in args.regions.split(",") if x.strip()]
     known_tables = [name.strip() for name in args.known_tables.split(",") if name.strip()]
     logger.info("Known UNPs will be checked in small DB batches: %s", known_tables)
@@ -304,6 +304,20 @@ async def run(args) -> None:
                 seq_start = int(resume_seq)
             seq = seq_start
             while seq <= args.seq_end:
+                if stop_event is not None and stop_event.is_set():
+                    upsert_hits(pending)
+                    pending.clear()
+                    save_checkpoint(
+                        region,
+                        seq,
+                        found,
+                        queried=queried,
+                        misses=misses,
+                        errors=errors,
+                        last_unp=last_unp,
+                    )
+                    return "stopped"
+
                 candidates: list[str] = []
                 while seq <= args.seq_end and len(candidates) < args.concurrency:
                     unp = build_unp(region, seq)
@@ -371,7 +385,7 @@ async def run(args) -> None:
                         "Enumeration stopped without skipping data; rerun with --resume. Next UNP: %s",
                         _next_candidate_unp(region, retry_seq),
                     )
-                    return
+                    return "retry"
 
                 if len(pending) >= args.flush_every:
                     upsert_hits(pending)
@@ -381,6 +395,8 @@ async def run(args) -> None:
                     last_logged = queried
                     logger.info("регион %d seq~%d | запросов=%d найдено=%d пустых_подряд=%d",
                                 region, seq, queried, found, empty_run)
+                    upsert_hits(pending)
+                    pending.clear()
                     save_checkpoint(
                         region,
                         seq,
@@ -393,6 +409,8 @@ async def run(args) -> None:
 
                 if queried - last_checkpointed >= args.checkpoint_every:
                     last_checkpointed = queried
+                    upsert_hits(pending)
+                    pending.clear()
                     save_checkpoint(
                         region,
                         seq,
@@ -426,6 +444,7 @@ async def run(args) -> None:
         await client.close()
 
     logger.info("ГОТОВО. Запросов к ГРП: %d, найдено новых: %d", queried, found)
+    return "completed"
 
 
 def print_status() -> int:
@@ -483,7 +502,7 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="update checkpoint after every N GRP requests")
     p.add_argument("--checkpoint-path", default=CHECKPOINT_PATH,
                    help="checkpoint file path (use a separate file for audit runs)")
-    p.add_argument("--known-tables", default="egr_raw_company_data,grp_raw_data,grp_taxpayer_data",
+    p.add_argument("--known-tables", default="egr_companies,egr_raw_company_data,grp_raw_data,grp_taxpayer_data",
                    help="таблицы с известными УНП для дедупликации (через запятую)")
     p.add_argument("--resume", action="store_true",
                    help="продолжить с последнего чекпойнта (data/unp_enumerate_checkpoint.json)")

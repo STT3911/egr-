@@ -14,28 +14,10 @@ Keep-alive Битрикс-токенов.
 import asyncio
 import logging
 
-import requests
-
-from app.core.config import settings
+from app.services.telegram_alerts import send_telegram_alert
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
-
-
-def _send_alert(text: str) -> None:
-    """Best-effort алерт в Telegram. Если токен/чат не заданы — тихо пропускаем."""
-    token = settings.ALERT_TELEGRAM_BOT_TOKEN
-    chat_id = settings.ALERT_TELEGRAM_CHAT_ID
-    if not token or not chat_id:
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text[:4096], "disable_web_page_preview": True},
-            timeout=8,
-        )
-    except Exception as ex:
-        logger.warning("keepalive alert send failed: %s", ex)
 
 
 async def _keepalive_all() -> list[dict]:
@@ -69,14 +51,14 @@ def bitrix_token_keepalive():
         results = asyncio.run(_keepalive_all())
     except Exception as ex:
         logger.error("bitrix keepalive FAILED (run): %s", ex, exc_info=True)
-        _send_alert(f"⚠️ Bitrix keep-alive упал целиком: {ex}")
+        send_telegram_alert(f"⚠️ Bitrix keep-alive упал целиком: {ex}")
         return {"ok": False, "error": str(ex)}
 
     failed = [r for r in results if not r["ok"]]
     logger.info("bitrix keepalive: %d portal(s), %d failed", len(results), len(failed))
     if failed:
         lines = "\n".join(f"• {r['domain'] or r['member_id']}: {r.get('error')}" for r in failed)
-        _send_alert(
+        send_telegram_alert(
             "⚠️ Bitrix keep-alive не смог обновить токен по порталам:\n"
             f"{lines}\nRefresh_token может протухнуть — проверьте интеграцию (возможно, нужна переустановка)."
         )

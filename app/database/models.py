@@ -992,7 +992,7 @@ class ReferenceOPF(Base):
 
 class NalogDebtRecord(Base):
     """
-    Записи задолженности с портала portal.nalog.gov.by (legacy wrapper Start.py).
+    Записи задолженности с портала portal.nalog.gov.by.
     Один срез по дате (slice_date) — множество записей по УНП/ИМНС/датам.
     """
     __tablename__ = "nalog_debt_records"

@@ -1,7 +1,6 @@
 # Scripts layout
 
-Top-level scripts are kept as stable compatibility entrypoints for existing deploy commands.
-New import and snapshot commands live in `scripts/imports/`.
+Import and snapshot commands live in `scripts/imports/`.
 
 ## Import and snapshot commands
 
@@ -20,8 +19,6 @@ New import and snapshot commands live in `scripts/imports/`.
 - `scripts/imports/import_park_residents_catalog.py`
   - import park.by resident catalog snapshots.
 
-Compatibility wrappers remain at `scripts/import_*.py`, so older commands keep working.
-
 ## Source fetchers
 
 Fetcher-only scripts stay at the top level for now:
@@ -34,6 +31,7 @@ Fetcher-only scripts stay at the top level for now:
 
 - `check_*.py` and `check-*.sh` are operational checks.
 - `run_*.py`, `run-*.sh`, `parse_*.py`, `load_*.py`, `fill_*.py`, and `reindex_*.py` are maintenance/manual operations.
+- Continuous UNP enumeration and GRP processing run through `egr-unp-pipeline` (`app.workers.unp_pipeline`).
 - Old one-off scripts live in `scripts/legacy/`.
 - Deployment helpers live in `scripts/deploy/`.
 - SQL helpers live in `scripts/sql/`.

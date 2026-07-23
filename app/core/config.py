@@ -156,6 +156,12 @@ class Settings(BaseSettings):
     # Алерты об сбоях фоновых задач (опционально; если не задано — только лог).
     ALERT_TELEGRAM_BOT_TOKEN: Optional[str] = None
     ALERT_TELEGRAM_CHAT_ID: Optional[str] = None
+    PARSER_ALERTS_ENABLED: bool = True
+    PARSER_ALERTS_NOTIFY_START: bool = False
+    PARSER_ALERTS_NOTIFY_SUCCESS: bool = False
+    PARSER_ALERTS_HTTP_TIMEOUT_SECONDS: float = 8.0
+    PARSER_ALERTS_RESULT_MAX_CHARS: int = 1200
+    PARSER_ALERTS_PROGRESS_INTERVAL_SECONDS: int = 43200
     
     # External service integration
     APP_URL: Optional[str] = None
