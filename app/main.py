@@ -69,8 +69,12 @@ async def rate_limit_middleware(request: Request, call_next):
     """Apply rate limiting to all requests."""
     from app.core.security import rate_limit_check
     
-    # Skip rate limiting for health checks
-    if request.url.path in ["/api/v1/health", "/api/v1/health/ready"]:
+    path = request.url.path
+
+    if (
+        path in ["/api/v1/health", "/api/v1/health/ready", "/api/v1/stable"]
+        or path.startswith("/api/v1/stable/")
+    ):
         return await call_next(request)
     
     # Check rate limit. Exceptions raised inside middleware bypass FastAPI's
