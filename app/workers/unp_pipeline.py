@@ -70,7 +70,7 @@ class UnpPipeline:
         self.stop_event = threading.Event()
         self.status = StatusStore(Path(args.status_path).resolve())
         self.pipeline_lock = threading.Lock()
-        self.last_gov_rebuild_at = 0.0
+        self.last_gov_rebuild_at = time.time()
         self.maintenance_thread: threading.Thread | None = None
         self.lock_file = None
         self.failed = False
@@ -139,9 +139,8 @@ class UnpPipeline:
         self.lock_file.write(str(os.getpid()))
         self.lock_file.flush()
 
-    def _run_pipeline_cycle(self, force_rebuild: bool = False) -> None:
+    def _run_pipeline_cycle(self, force_sync: bool = False) -> None:
         from app.services.company_registry import sync_companies_from_grp
-        from app.services.gov_organizations import rebuild
         from app.tasks.sync_tasks import grp_process_raw
 
         if not self.pipeline_lock.acquire(blocking=False):
@@ -169,7 +168,7 @@ class UnpPipeline:
                 return
 
             sync_stats = {"companies_added": 0, "names_added": 0}
-            if parsed_total or force_rebuild:
+            if parsed_total or force_sync:
                 self.status.update(state="syncing_companies")
                 sync_stats = sync_companies_from_grp()
             now = time.time()
@@ -179,17 +178,16 @@ class UnpPipeline:
                 or sync_stats.get("names_added")
             )
             rebuild_due = (
-                force_rebuild
-                or self.last_gov_rebuild_at == 0
-                or (
-                    has_new_data
-                    and now - self.last_gov_rebuild_at
-                    >= self.args.gov_rebuild_interval
-                )
+                self.args.gov_rebuild_enabled
+                and has_new_data
+                and now - self.last_gov_rebuild_at
+                >= self.args.gov_rebuild_interval
             )
             rebuild_stats: dict[str, Any] | None = None
 
             if rebuild_due and not self.stop_event.is_set():
+                from app.services.gov_organizations import rebuild
+
                 self.status.update(state="rebuilding_gov_organizations")
                 rebuild_stats = rebuild(
                     include_joint_stock=self.args.include_joint_stock,
@@ -222,7 +220,7 @@ class UnpPipeline:
     def _maintenance_loop(self) -> None:
         first_cycle = True
         while not self.stop_event.is_set():
-            self._run_pipeline_cycle(force_rebuild=first_cycle)
+            self._run_pipeline_cycle(force_sync=first_cycle)
             first_cycle = False
             self._send_progress_alert()
             if self.stop_event.wait(self.args.process_interval):
@@ -254,6 +252,12 @@ class UnpPipeline:
             self.args.checkpoint_path,
             "--known-tables",
             self.args.known_tables,
+            "--scan-mode",
+            self.args.scan_mode,
+            "--frontier-lookahead",
+            str(self.args.frontier_lookahead),
+            "--frontier-backtrack",
+            str(self.args.frontier_backtrack),
             "--resume",
         ]
         return unp_enumerate.build_argparser().parse_args(arguments)
@@ -268,12 +272,14 @@ class UnpPipeline:
             state="starting",
             checkpoint_path=unp_enumerate.CHECKPOINT_PATH,
             regions=self.args.regions,
+            scan_mode=self.args.scan_mode,
             seq_start=self.args.seq_start,
             seq_end=self.args.seq_end,
             empty_stop=self.args.empty_stop,
         )
         send_telegram_alert(
             "🚀 UNP pipeline запущен\n"
+            f"Режим: {self.args.scan_mode}\n"
             f"Регионы: {self.args.regions}\n"
             f"Диапазон seq: {self.args.seq_start}–{self.args.seq_end}"
         )
@@ -310,7 +316,17 @@ class UnpPipeline:
                     continue
 
                 if outcome == "completed":
-                    self._run_pipeline_cycle(force_rebuild=True)
+                    self._run_pipeline_cycle(force_sync=True)
+                    if self.args.scan_mode == "frontier":
+                        self.status.update(
+                            state="frontier_waiting",
+                            next_frontier_scan_at=(
+                                time.time() + self.args.frontier_interval
+                            ),
+                        )
+                        if self.stop_event.wait(self.args.frontier_interval):
+                            break
+                        continue
                     self.completed = True
                     self.status.update(state="completed")
                     send_telegram_alert("🏁 Перебор УНП завершён")
@@ -405,6 +421,29 @@ def build_argparser() -> argparse.ArgumentParser:
         default=os.getenv("UNP_PIPELINE_REGIONS", "1,2,3,4,5,6,7"),
     )
     parser.add_argument(
+        "--scan-mode",
+        choices=("frontier", "full"),
+        default=os.getenv("UNP_PIPELINE_SCAN_MODE", "frontier"),
+    )
+    parser.add_argument(
+        "--frontier-lookahead",
+        type=int,
+        default=_env_int("UNP_PIPELINE_FRONTIER_LOOKAHEAD", 50),
+    )
+    parser.add_argument(
+        "--frontier-backtrack",
+        type=int,
+        default=_env_int("UNP_PIPELINE_FRONTIER_BACKTRACK", 50),
+    )
+    parser.add_argument(
+        "--frontier-interval",
+        type=float,
+        default=_env_float(
+            "UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS",
+            21600.0,
+        ),
+    )
+    parser.add_argument(
         "--seq-start",
         type=int,
         default=_env_int("UNP_PIPELINE_SEQ_START", 0),
@@ -467,11 +506,16 @@ def build_argparser() -> argparse.ArgumentParser:
         default=_env_float("UNP_PIPELINE_PROCESS_INTERVAL_SECONDS", 60.0),
     )
     parser.add_argument(
+        "--gov-rebuild-enabled",
+        action="store_true",
+        default=_env_bool("UNP_PIPELINE_GOV_REBUILD_ENABLED", False),
+    )
+    parser.add_argument(
         "--gov-rebuild-interval",
         type=float,
         default=_env_float(
             "UNP_PIPELINE_GOV_REBUILD_INTERVAL_SECONDS",
-            1800.0,
+            86400.0,
         ),
     )
     parser.add_argument(

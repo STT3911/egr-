@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.logger import get_logger
 from app.database.models import Company, ReferenceStatus, CompanyPlaceLocation
+from app.services.grp_discovery import discover_company_from_grp
 from app.schemas.stable_company import (
     StableCompanyV1,
     StableAddressV1,
@@ -58,7 +59,7 @@ async def verify_stable_token(
 
 
 @router.get("/companies/{unp}", response_model=StableCompanyV1)
-def get_stable_company(
+async def get_stable_company(
     unp: str = Path(..., regex=r"^\d{9}$", description="УНП (9 цифр)"),
     db: Session = Depends(get_db),
     token: str = Depends(verify_stable_token),
@@ -76,6 +77,20 @@ def get_stable_company(
             .filter(Company.unp == int(unp))
             .first()
         )
+        if not company:
+            logger.info("Stable API DB miss for %s; trying GRP discovery", unp)
+            await discover_company_from_grp(db, int(unp))
+            company = (
+                db.query(Company)
+                .options(
+                    selectinload(Company.names_history),
+                    selectinload(Company.addresses_history),
+                    selectinload(Company.ved_history),
+                    selectinload(Company.contacts_history),
+                )
+                .filter(Company.unp == int(unp))
+                .first()
+            )
         if not company:
             raise HTTPException(status_code=404, detail=f"Компания {unp} не найдена")
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Directed brute-force enumeration of taxpayers via ГРП.
+"""Directed checksum-valid UNP frontier checks through EGR and GRP.
 
 Идея (см. app/services/unp_enum.py):
   1. Генерируем валидные УНП по формуле (контрольная цифра), а не все 10^9.
@@ -46,10 +46,45 @@ from app.core.logger import get_logger
 from app.database.models import GrpRawData
 from app.services.grp_client import GRPClient
 from app.services.unp_enum import build_unp, SEQ_MAX
+from app.services.unp_probe import DualSourceProbe
 
 logger = get_logger("unp_enumerate")
 
 CHECKPOINT_PATH = str(ROOT / "data" / "unp_enumerate_checkpoint.json")
+
+
+def find_latest_known_seq(region: int, known_tables: list[str]) -> int | None:
+    """Return the highest known seven-digit sequence for one region."""
+    lower_unp = region * 100_000_000
+    upper_unp = (region + 1) * 100_000_000
+    latest_unp: int | None = None
+    db = SessionLocal()
+    try:
+        for table_name in known_tables:
+            try:
+                value = db.execute(
+                    text(
+                        f"SELECT MAX(unp) FROM {table_name} "
+                        "WHERE unp >= :lower_unp AND unp < :upper_unp"
+                    ),
+                    {"lower_unp": lower_unp, "upper_unp": upper_unp},
+                ).scalar()
+                if value is not None:
+                    candidate = int(value)
+                    latest_unp = (
+                        candidate
+                        if latest_unp is None
+                        else max(latest_unp, candidate)
+                    )
+            except Exception as exc:
+                logger.warning("frontier lookup skipped %s: %s", table_name, exc)
+                db.rollback()
+    finally:
+        db.close()
+
+    if latest_unp is None:
+        return None
+    return (latest_unp // 10) % 10_000_000
 
 
 def find_known_unps(unps: list[int], known_tables: list[str]) -> set[int]:
@@ -74,6 +109,69 @@ def find_known_unps(unps: list[int], known_tables: list[str]) -> set[int]:
     finally:
         db.close()
     return known
+
+
+def find_source_presence(unps: list[int]) -> tuple[set[int], set[int]]:
+    """Return UNPs with successfully persisted EGR and GRP source data."""
+    if not unps:
+        return set(), set()
+
+    egr_present: set[int] = set()
+    grp_present: set[int] = set()
+    checks = (
+        (
+            egr_present,
+            """
+            SELECT unp FROM egr_raw_company_data
+            WHERE unp IN :unps
+              AND (data IS NOT NULL OR base_info IS NOT NULL)
+              AND processed_at IS NOT NULL
+              AND last_error IS NULL
+            """,
+        ),
+        (
+            egr_present,
+            """
+            SELECT unp FROM egr_companies
+            WHERE unp IN :unps AND source = 'egr'
+            """,
+        ),
+        (
+            grp_present,
+            "SELECT unp FROM grp_taxpayer_data WHERE unp IN :unps",
+        ),
+        (
+            grp_present,
+            """
+            SELECT unp FROM grp_raw_data
+            WHERE unp IN :unps
+              AND http_status = 200
+              AND raw_json <> '{}'::jsonb
+            """,
+        ),
+        (
+            grp_present,
+            """
+            SELECT unp FROM egr_companies
+            WHERE unp IN :unps AND source = 'grp'
+            """,
+        ),
+    )
+    db = SessionLocal()
+    try:
+        for target, sql in checks:
+            try:
+                rows = db.execute(
+                    text(sql).bindparams(bindparam("unps", expanding=True)),
+                    {"unps": unps},
+                )
+                target.update(int(unp) for (unp,) in rows)
+            except Exception as exc:
+                logger.warning("source presence lookup failed: %s", exc)
+                db.rollback()
+    finally:
+        db.close()
+    return egr_present, grp_present
 
 
 def _save_checkpoint_legacy(region: int, seq: int, found: int) -> None:
@@ -259,12 +357,19 @@ def is_hit(payload: dict) -> bool:
 async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]:
     regions = [int(x) for x in args.regions.split(",") if x.strip()]
     known_tables = [name.strip() for name in args.known_tables.split(",") if name.strip()]
+    frontier_mode = args.scan_mode == "frontier"
     logger.info("Known UNPs will be checked in small DB batches: %s", known_tables)
+    logger.info(
+        "UNP scan mode=%s frontier_lookahead=%s frontier_backtrack=%s",
+        args.scan_mode,
+        args.frontier_lookahead,
+        args.frontier_backtrack,
+    )
 
     # резюме из чекпойнта: пропускаем уже пройденные регионы и стартуем с seq
     resume_region, resume_seq = None, None
     checkpoint = {}
-    if args.resume:
+    if args.resume and not frontier_mode:
         try:
             with open(CHECKPOINT_PATH, encoding="utf-8-sig") as f:
                 checkpoint = json.load(f)
@@ -273,7 +378,7 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
         except Exception as e:
             logger.warning("resume: чекпойнт не прочитан (%s), старт с начала", e)
 
-    client = GRPClient()
+    probe = DualSourceProbe()
     found = int(checkpoint.get("found") or 0)
     queried = int(checkpoint.get("queried") or 0)
     misses = int(checkpoint.get("misses") or 0)
@@ -300,9 +405,28 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                 waiting_for_resume_region = False
             empty_run = 0
             seq_start = args.seq_start
-            if resume_region is not None and region == resume_region and resume_seq is not None:
+            if frontier_mode:
+                latest_known_seq = find_latest_known_seq(region, known_tables)
+                if latest_known_seq is not None:
+                    seq_start = max(
+                        args.seq_start,
+                        latest_known_seq + 1 - args.frontier_backtrack,
+                    )
+                logger.info(
+                    "region %d frontier: latest_known_seq=%s start_seq=%d lookahead=%d",
+                    region,
+                    latest_known_seq,
+                    seq_start,
+                    args.frontier_lookahead,
+                )
+            elif resume_region is not None and region == resume_region and resume_seq is not None:
                 seq_start = int(resume_seq)
             seq = seq_start
+            empty_stop = (
+                args.frontier_lookahead
+                if frontier_mode
+                else args.empty_stop
+            )
             while seq <= args.seq_end:
                 if stop_event is not None and stop_event.is_set():
                     upsert_hits(pending)
@@ -328,14 +452,25 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                 if not candidates:
                     break
 
-                known = find_known_unps(
+                egr_present, grp_present = find_source_presence(
                     [int(unp) for unp in candidates],
-                    known_tables,
                 )
-                batch = [unp for unp in candidates if int(unp) not in known]
+                batch = [
+                    unp
+                    for unp in candidates
+                    if int(unp) not in egr_present
+                    or int(unp) not in grp_present
+                ]
 
                 results = await asyncio.gather(*[
-                    fetch_one(client, u, args.max_retries, args.base_delay, args.cooldown)
+                    probe.probe(
+                        u,
+                        need_egr=int(u) not in egr_present,
+                        need_grp=int(u) not in grp_present,
+                        max_retries=args.max_retries,
+                        retry_delay=args.base_delay,
+                        cooldown=args.cooldown,
+                    )
                     for u in batch
                 ])
                 queried += len(batch)
@@ -344,17 +479,20 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                 results_by_unp = dict(zip(batch, results))
                 for u in candidates:
                     last_unp = u
-                    if int(u) in known:
+                    if int(u) in egr_present and int(u) in grp_present:
                         empty_run = 0
                         continue
 
                     result = results_by_unp[u]
-                    if result.outcome == "hit" and result.payload:
-                        payload = result.payload
-                        pending.append((int(u), payload))
-                        found += 1
+                    if result.outcome == "hit":
+                        found += result.new_found
                         empty_run = 0
-                        logger.info("HIT %s  %s", u, payload.get("vnaimp") or payload.get("VNAIMP") or "")
+                        logger.info(
+                            "HIT %s | EGR=%s GRP=%s",
+                            u,
+                            result.egr.status,
+                            result.grp.status,
+                        )
                     elif result.outcome == "miss":
                         misses += 1
                         empty_run += 1
@@ -362,10 +500,11 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                         errors += 1
                         failed_unps.append(u)
                         logger.error(
-                            "UNP %s was not checked: HTTP %s, %s",
+                            "UNP %s was not checked in both sources: EGR=%s GRP=%s, %s",
                             u,
-                            result.status_code,
-                            result.error or "unknown GRP error",
+                            result.egr.status,
+                            result.grp.status,
+                            result.error or "unknown source error",
                         )
 
                 if failed_unps:
@@ -424,8 +563,12 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                 # вежливая пауза между батчами
                 await asyncio.sleep(args.delay)
 
-                if args.empty_stop > 0 and empty_run >= args.empty_stop:
-                    logger.info("регион %d: %d пустых подряд — стоп (фронтир выдачи)", region, args.empty_stop)
+                if empty_stop > 0 and empty_run >= empty_stop:
+                    logger.info(
+                        "region %d: %d consecutive misses, frontier reached",
+                        region,
+                        empty_stop,
+                    )
                     break
 
             upsert_hits(pending)
@@ -441,9 +584,13 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
             )
     finally:
         upsert_hits(pending)
-        await client.close()
+        await probe.close()
 
-    logger.info("ГОТОВО. Запросов к ГРП: %d, найдено новых: %d", queried, found)
+    logger.info(
+        "ГОТОВО. Проверено кандидатов через ЕГР/ГРП: %d, найдено новых: %d",
+        queried,
+        found,
+    )
     return "completed"
 
 
@@ -499,11 +646,17 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--flush-every", type=int, default=50, help="через сколько найденных писать в БД")
     p.add_argument("--progress-every", type=int, default=1000, help="лог прогресса каждые N запросов")
     p.add_argument("--checkpoint-every", type=int, default=20,
-                   help="update checkpoint after every N GRP requests")
+                   help="update checkpoint after every N candidate checks")
     p.add_argument("--checkpoint-path", default=CHECKPOINT_PATH,
                    help="checkpoint file path (use a separate file for audit runs)")
     p.add_argument("--known-tables", default="egr_companies,egr_raw_company_data,grp_raw_data,grp_taxpayer_data",
                    help="таблицы с известными УНП для дедупликации (через запятую)")
+    p.add_argument("--scan-mode", choices=("frontier", "full"), default="frontier",
+                   help="frontier checks after the latest known regional UNP; full walks the configured range")
+    p.add_argument("--frontier-lookahead", type=int, default=50,
+                   help="stop a regional frontier after N consecutive confirmed misses")
+    p.add_argument("--frontier-backtrack", type=int, default=50,
+                   help="recheck this many sequence positions before the latest known regional UNP")
     p.add_argument("--resume", action="store_true",
                    help="продолжить с последнего чекпойнта (data/unp_enumerate_checkpoint.json)")
     p.add_argument("--status", action="store_true", help="show current checkpoint and exit")

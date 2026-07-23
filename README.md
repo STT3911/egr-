@@ -96,11 +96,12 @@ If only migrations changed, running `alembic upgrade head` is enough after the b
 
 The `egr-unp-pipeline` service continuously:
 
-1. enumerates valid UNP candidates through GRP;
-2. writes every discovered raw record before advancing the checkpoint;
-3. parses pending `grp_raw_data` batches;
-4. synchronizes GRP companies into `egr_companies`;
-5. periodically rebuilds `gov_organizations`.
+1. finds the highest known UNP sequence separately for every region;
+2. checks a small checksum-valid frontier after that sequence;
+3. requests every missing source independently from EGR and GRP;
+4. persists EGR responses into `egr_raw_company_data`;
+5. persists GRP responses into `grp_raw_data` and `grp_taxpayer_data`;
+6. synchronizes both sources into `egr_companies`.
 
 Build and start it once:
 
@@ -124,7 +125,29 @@ docker compose stop -t 30 egr-unp-pipeline
 
 The service resumes from `data/unp_enumerate_checkpoint.json`. Set
 `UNP_PIPELINE_EMPTY_STOP=0` in `.env` only when a complete region-wide scan is
-required; the default stops a region after 20,000 consecutive misses.
+required together with `UNP_PIPELINE_SCAN_MODE=full`.
+
+The default `frontier` mode starts 50 sequence positions before the highest
+known UNP in each region, skips known records, and continues until 50
+consecutive misses confirmed by both EGR and GRP. It repeats the regional check
+every six hours:
+
+```dotenv
+UNP_PIPELINE_SCAN_MODE=frontier
+UNP_PIPELINE_FRONTIER_LOOKAHEAD=50
+UNP_PIPELINE_FRONTIER_BACKTRACK=50
+UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS=21600
+```
+The expensive full `gov_organizations` rebuild is disabled in the continuous
+pipeline by default. Run it manually during a maintenance window:
+
+```bash
+docker exec egr_api python -c \
+  "from app.services.gov_organizations import rebuild; print(rebuild())"
+```
+
+To enable an automatic rebuild after new data, set
+`UNP_PIPELINE_GOV_REBUILD_ENABLED=true`; the default interval is 86,400 seconds.
 
 ## Parser Telegram Alerts
 
