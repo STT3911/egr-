@@ -246,6 +246,12 @@ def fetch_page(
             return ParsedPage(parser.rows, parser.next_params, parser.overall_count)
         except (requests.RequestException, ET.ParseError, RuntimeError) as exc:
             last_error = exc
+            if (
+                isinstance(exc, requests.HTTPError)
+                and exc.response is not None
+                and exc.response.status_code == 404
+            ):
+                break
             if attempt > retries:
                 break
             time.sleep(min(2 * attempt, 10))

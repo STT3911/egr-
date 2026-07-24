@@ -10,7 +10,10 @@ __pycache__/
 .ruff_cache/
 
 data/
+backups/
+logs/
 ssl/
+ssl_backup*/
 docs/
 tests/
 
@@ -20,6 +23,19 @@ frontend/.env
 frontend/.env.*
 
 *.log
+*.bak
+*.dump
+*.sql.gz
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+cookie*.txt
+cookies*.txt
+gias_all.tsv
+gias_unp.txt
+missing_unp.txt
+accredited_customers.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

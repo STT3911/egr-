@@ -281,6 +281,14 @@ def _upsert_cases(db: Session, rows: List[Dict[str, Any]]) -> None:
     if not rows:
         return
 
+    unique_rows = {row["case_id"]: row for row in rows}
+    if len(unique_rows) != len(rows):
+        logger.warning(
+            "Bankrot: removed %d duplicate case rows before upsert",
+            len(rows) - len(unique_rows),
+        )
+    rows = list(unique_rows.values())
+
     # До upsert: детект новых дел / смены статуса для подписчиков.
     _emit_bankruptcy_events(db, rows)
 
@@ -303,6 +311,17 @@ def _upsert_case_datasets(db: Session, rows: List[Dict[str, Any]]) -> None:
     """Upsert дочерних наборов без потери последнего успешного payload."""
     if not rows:
         return
+
+    unique_rows = {
+        (row["case_id"], row["dataset_type"]): row
+        for row in rows
+    }
+    if len(unique_rows) != len(rows):
+        logger.warning(
+            "Bankrot: removed %d duplicate dataset rows before upsert",
+            len(rows) - len(unique_rows),
+        )
+    rows = list(unique_rows.values())
 
     stmt = pg_insert(BankrotCaseDataset).values(rows)
     stmt = stmt.on_conflict_do_update(
@@ -415,6 +434,7 @@ def sync_bankrot_cases(
         "unknown_status_cases": 0,
         "datasets_fetched": 0,
         "datasets_failed": 0,
+        "duplicate_cases_skipped": 0,
     }
 
     def refresh_summary_stats() -> None:
@@ -434,6 +454,7 @@ def sync_bankrot_cases(
 
     pending: List[Dict] = []
     pending_datasets: List[Dict[str, Any]] = []
+    seen_case_ids: set[int] = set()
 
     try:
         with BankrotClient(token=token) as client, \
@@ -459,6 +480,15 @@ def sync_bankrot_cases(
                     logger.warning("Bankrot: non-integer case id=%r — skipping", case_id)
                     stats["failed"] += 1
                     continue
+
+                if case_id in seen_case_ids:
+                    stats["duplicate_cases_skipped"] += 1
+                    logger.debug(
+                        "Bankrot: duplicate case_id=%d in paginated response — skipping",
+                        case_id,
+                    )
+                    continue
+                seen_case_ids.add(case_id)
 
                 # ----- Fetch detail -----
                 detail_data: Optional[Dict] = None

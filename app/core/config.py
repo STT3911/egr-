@@ -207,6 +207,7 @@ class Settings(BaseSettings):
     SEZ_SCHEDULE_ENABLED: bool = False
     SEZ_SCHEDULE_SECONDS: int = 259200
     SEZ_COUNTRY: str = "Беларусь"
+    SEZ_SNAPSHOT_PATH: str = "data/eaeu/sez_residents_belarus.json"
 
     # license.gov.by license registry synchronization
     LICENSE_API_URL: str = "https://license.gov.by/api/licenses"

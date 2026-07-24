@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from app.core.config import settings
 
 
 TEXT_FIELDS = [
@@ -25,6 +28,8 @@ TEXT_FIELDS = [
     "certificate",
     "source_url",
 ]
+
+logger = logging.getLogger("egr_aggregator.eaeu_sez")
 
 
 def clean_text(value: Any) -> str | None:
@@ -70,12 +75,17 @@ def company_map_for_unps(db: Any, unps: set[int]) -> dict[int, Any]:
     return {int(unp): company_id for unp, company_id in rows}
 
 
-def normalize_row(row: dict[str, Any], company_id: Any, unp: int) -> dict[str, Any]:
+def normalize_row(
+    row: dict[str, Any],
+    company_id: Any,
+    unp: int,
+    observed_at: datetime | None = None,
+) -> dict[str, Any]:
     item_id = row.get("item_id")
     if item_id is None:
         raise ValueError("Missing item_id")
 
-    now = datetime.utcnow()
+    now = observed_at or datetime.utcnow()
     payload = {
         "item_id": int(item_id),
         "company_id": company_id,
@@ -94,6 +104,14 @@ def upsert_rows(db: Any, payloads: list[dict[str, Any]]) -> None:
 
     if not payloads:
         return
+    unique_payloads = {payload["item_id"]: payload for payload in payloads}
+    if len(unique_payloads) != len(payloads):
+        logger.warning(
+            "EAEU SEZ: removed %d duplicate rows before upsert",
+            len(payloads) - len(unique_payloads),
+        )
+    payloads = list(unique_payloads.values())
+
     stmt = pg_insert(EAEUSEZResidentRecord).values(payloads)
     stmt = stmt.on_conflict_do_update(
         index_elements=[EAEUSEZResidentRecord.item_id],
@@ -125,7 +143,12 @@ def upsert_rows(db: Any, payloads: list[dict[str, Any]]) -> None:
             emit_company_event(db, unp, EVENT_REGISTRY_APPEARANCE, new_value="Резидент СЭЗ ЕАЭС")
 
 
-def import_sez_snapshot_rows(db: Any, rows: list[dict[str, Any]], batch_size: int = 500) -> dict[str, int]:
+def import_sez_snapshot_rows(
+    db: Any,
+    rows: list[dict[str, Any]],
+    batch_size: int = 500,
+    observed_at: datetime | None = None,
+) -> dict[str, int]:
     stats = {
         "total": 0,
         "invalid_item_id": 0,
@@ -153,7 +176,7 @@ def import_sez_snapshot_rows(db: Any, rows: list[dict[str, Any]], batch_size: in
             stats["missing_company"] += 1
             continue
 
-        pending.append(normalize_row(row, company_id, unp))
+        pending.append(normalize_row(row, company_id, unp, observed_at))
         stats["found_company"] += 1
         stats["saved"] += 1
 
@@ -173,6 +196,16 @@ def import_sez_snapshot_json(db: Any, snapshot_path: Path, batch_size: int = 500
     return import_sez_snapshot_rows(db, load_snapshot(snapshot_path), batch_size=batch_size)
 
 
+def save_snapshot(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    temp_path.write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temp_path.replace(path)
+
+
 def sync_eaeu_sez_residents(
     db: Any,
     country: str = "Беларусь",
@@ -189,14 +222,66 @@ def sync_eaeu_sez_residents(
     """
     from app.services.eaeu_sez_fetch import fetch_rows
 
-    rows, fetch_stats = fetch_rows(
-        country=country,
-        timeout=timeout,
-        delay=delay,
-        limit_pages=limit_pages,
-        retries=retries,
-        quiet=True,
-        on_date=None,
+    snapshot_path = Path(settings.SEZ_SNAPSHOT_PATH)
+    observed_at: datetime | None = None
+    try:
+        rows, fetch_stats = fetch_rows(
+            country=country,
+            timeout=timeout,
+            delay=delay,
+            limit_pages=limit_pages,
+            retries=retries,
+            quiet=True,
+            on_date=None,
+        )
+        fetch_stats["status"] = "remote"
+        fetch_stats["source"] = "portal.eaeunion.org"
+        if rows and limit_pages is None:
+            save_snapshot(snapshot_path, rows)
+            fetch_stats["snapshot"] = str(snapshot_path)
+    except RuntimeError as exc:
+        logger.warning("EAEU SEZ source is unavailable: %s", exc)
+        if snapshot_path.is_file():
+            rows = load_snapshot(snapshot_path)
+            observed_at = datetime.utcfromtimestamp(snapshot_path.stat().st_mtime)
+            fetch_stats = {
+                "status": "snapshot_fallback",
+                "source": str(snapshot_path),
+                "source_error": str(exc),
+                "matched": len(rows),
+                "snapshot_created_at": observed_at.isoformat(),
+            }
+        else:
+            from app.database.models import EAEUSEZResidentRecord
+
+            preserved_records = db.query(EAEUSEZResidentRecord.id).count()
+            return {
+                "status": "source_unavailable",
+                "source_error": str(exc),
+                "snapshot": str(snapshot_path),
+                "preserved_records": preserved_records,
+                "fetch": {
+                    "status": "unavailable",
+                    "source": "portal.eaeunion.org",
+                },
+                "import": {
+                    "total": 0,
+                    "invalid_item_id": 0,
+                    "invalid_unp": 0,
+                    "found_company": 0,
+                    "missing_company": 0,
+                    "saved": 0,
+                },
+            }
+
+    import_stats = import_sez_snapshot_rows(
+        db,
+        rows,
+        batch_size=batch_size,
+        observed_at=observed_at,
     )
-    import_stats = import_sez_snapshot_rows(db, rows, batch_size=batch_size)
-    return {"fetch": fetch_stats, "import": import_stats}
+    return {
+        "status": fetch_stats["status"],
+        "fetch": fetch_stats,
+        "import": import_stats,
+    }

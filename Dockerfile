@@ -37,19 +37,16 @@ RUN curl -fsSL http://secure.globalsign.com/cacert/gsgccr6alphasslca2023.crt \
 RUN groupadd -r appuser && useradd -r -g appuser -m -d /home/appuser appuser
 
 # Copy installed packages from builder to appuser home
-COPY --from=builder /root/.local /home/appuser/.local
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 
 # Copy source code
-COPY . .
+COPY --chown=appuser:appuser . .
 
 # Copy and set executable permissions for entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
     && chmod +x /usr/local/bin/docker-entrypoint.sh \
     && if [ -f /app/scripts/init/run_sql_and_monitoring.sh ]; then sed -i 's/\r$//' /app/scripts/init/run_sql_and_monitoring.sh && chmod +x /app/scripts/init/run_sql_and_monitoring.sh; fi
-
-# Change ownership to appuser
-RUN chown -R appuser:appuser /app /home/appuser/.local
 
 # Environment variables
 ENV PATH=/home/appuser/.local/bin:$PATH
@@ -74,4 +71,3 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Command
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
