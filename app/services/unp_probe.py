@@ -90,7 +90,7 @@ async def _egr_request(
         f"{client_object.base_url}/{endpoint}",
         params=params,
     )
-    if response.status_code in {400, 404}:
+    if response.status_code in {204, 400, 404}:
         return None
     response.raise_for_status()
     try:

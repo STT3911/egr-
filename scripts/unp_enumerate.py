@@ -476,6 +476,15 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                 if frontier_mode
                 else args.empty_stop
             )
+            save_checkpoint(
+                region,
+                seq,
+                found,
+                queried=queried,
+                misses=misses,
+                errors=errors,
+                last_unp=last_unp,
+            )
             while seq <= args.seq_end:
                 if stop_event is not None and stop_event.is_set():
                     upsert_hits(pending)
