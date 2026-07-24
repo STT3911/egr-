@@ -258,6 +258,10 @@ class UnpPipeline:
             str(self.args.frontier_lookahead),
             "--frontier-backtrack",
             str(self.args.frontier_backtrack),
+            "--range-gap",
+            str(self.args.range_gap),
+            "--registry-refresh-interval",
+            str(self.args.registry_refresh_interval),
             "--resume",
         ]
         return unp_enumerate.build_argparser().parse_args(arguments)
@@ -434,6 +438,19 @@ def build_argparser() -> argparse.ArgumentParser:
         "--frontier-backtrack",
         type=int,
         default=_env_int("UNP_PIPELINE_FRONTIER_BACKTRACK", 50),
+    )
+    parser.add_argument(
+        "--range-gap",
+        type=int,
+        default=_env_int("UNP_PIPELINE_RANGE_GAP", 50),
+    )
+    parser.add_argument(
+        "--registry-refresh-interval",
+        type=float,
+        default=_env_float(
+            "UNP_PIPELINE_REGISTRY_REFRESH_INTERVAL_SECONDS",
+            86400.0,
+        ),
     )
     parser.add_argument(
         "--frontier-interval",

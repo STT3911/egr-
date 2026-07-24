@@ -47,6 +47,13 @@ from app.database.models import GrpRawData
 from app.services.grp_client import GRPClient
 from app.services.unp_enum import build_unp, SEQ_MAX
 from app.services.unp_probe import DualSourceProbe
+from app.services.unp_scan_registry import (
+    get_latest_issuance_range,
+    get_registry_status,
+    plan_candidates,
+    prepare_scan_registry,
+    record_probe_results,
+)
 
 logger = get_logger("unp_enumerate")
 
@@ -366,6 +373,24 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
         args.frontier_backtrack,
     )
 
+    registry_status = prepare_scan_registry(
+        gap_limit=args.range_gap,
+        frontier_backtrack=args.frontier_backtrack,
+        frontier_lookahead=args.frontier_lookahead,
+        force=args.prepare_only,
+        max_age_seconds=args.registry_refresh_interval,
+    )
+    logger.info(
+        "UNP registry prepared: candidates=%s known=%s ranges=%s planned=%s",
+        registry_status["candidates"],
+        registry_status["known"],
+        registry_status["ranges"],
+        registry_status["planned_candidates"],
+    )
+    if args.prepare_only:
+        print(json.dumps(registry_status, ensure_ascii=False, indent=2))
+        return "completed"
+
     # резюме из чекпойнта: пропускаем уже пройденные регионы и стартуем с seq
     resume_region, resume_seq = None, None
     checkpoint = {}
@@ -406,18 +431,42 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
             empty_run = 0
             seq_start = args.seq_start
             if frontier_mode:
-                latest_known_seq = find_latest_known_seq(region, known_tables)
-                if latest_known_seq is not None:
+                issuance_range = get_latest_issuance_range(region)
+                latest_database_seq = find_latest_known_seq(region, known_tables)
+                latest_known_seq = max(
+                    [
+                        value
+                        for value in (
+                            issuance_range.seq_end
+                            if issuance_range is not None
+                            else None,
+                            latest_database_seq,
+                        )
+                        if value is not None
+                    ],
+                    default=None,
+                )
+                if (
+                    issuance_range is not None
+                    and latest_known_seq == issuance_range.seq_end
+                ):
+                    seq_start = max(args.seq_start, issuance_range.scan_start)
+                elif latest_known_seq is not None:
                     seq_start = max(
                         args.seq_start,
                         latest_known_seq + 1 - args.frontier_backtrack,
                     )
                 logger.info(
-                    "region %d frontier: latest_known_seq=%s start_seq=%d lookahead=%d",
+                    "region %d frontier: latest_known_seq=%s start_seq=%d lookahead=%d range=%s",
                     region,
                     latest_known_seq,
                     seq_start,
                     args.frontier_lookahead,
+                    (
+                        f"{issuance_range.seq_start}-{issuance_range.seq_end}"
+                        if issuance_range is not None
+                        else "fallback"
+                    ),
                 )
             elif resume_region is not None and region == resume_region and resume_seq is not None:
                 seq_start = int(resume_seq)
@@ -455,6 +504,11 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                 egr_present, grp_present = find_source_presence(
                     [int(unp) for unp in candidates],
                 )
+                plan_candidates(
+                    candidates,
+                    egr_present=egr_present,
+                    grp_present=grp_present,
+                )
                 batch = [
                     unp
                     for unp in candidates
@@ -473,6 +527,7 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                     )
                     for u in batch
                 ])
+                record_probe_results(results)
                 queried += len(batch)
 
                 failed_unps: list[str] = []
@@ -623,6 +678,25 @@ def print_status() -> int:
     print(f"found: {checkpoint.get('found', 0)}")
     print(f"misses: {checkpoint.get('misses', 0)}")
     print(f"errors: {checkpoint.get('errors', 0)}")
+    try:
+        registry_status = get_registry_status()
+    except Exception as exc:
+        print(f"registry_error: {type(exc).__name__}: {exc}")
+    else:
+        print(f"registry_candidates: {registry_status['candidates']}")
+        print(f"registry_known: {registry_status['known']}")
+        print(f"registry_pending: {registry_status['pending']}")
+        print(f"registry_not_found: {registry_status['not_found']}")
+        print(f"registry_partial: {registry_status['partial']}")
+        print(f"registry_errors: {registry_status['errors']}")
+        print(f"registry_ranges: {registry_status['ranges']}")
+        print(
+            "registry_latest_ranges: "
+            + json.dumps(
+                registry_status["latest_ranges"],
+                ensure_ascii=False,
+            )
+        )
     return 0
 
 
@@ -657,6 +731,14 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="stop a regional frontier after N consecutive confirmed misses")
     p.add_argument("--frontier-backtrack", type=int, default=50,
                    help="recheck this many sequence positions before the latest known regional UNP")
+    p.add_argument("--range-gap", type=int, default=50,
+                   help="split inferred issuance ranges when known sequence gaps exceed N")
+    p.add_argument("--registry-refresh-interval", type=float, default=86400,
+                   help="minimum seconds between full DB marking and range rebuilds")
+    p.add_argument("--prepare-only", action="store_true",
+                   help="populate candidate marks and issuance ranges without external API requests")
+    p.add_argument("--registry-status", action="store_true",
+                   help="show candidate and issuance range statistics from the database")
     p.add_argument("--resume", action="store_true",
                    help="продолжить с последнего чекпойнта (data/unp_enumerate_checkpoint.json)")
     p.add_argument("--status", action="store_true", help="show current checkpoint and exit")
@@ -667,14 +749,22 @@ def main():
     global CHECKPOINT_PATH
     args = build_argparser().parse_args()
     CHECKPOINT_PATH = os.path.abspath(args.checkpoint_path)
+    if args.registry_status:
+        print(json.dumps(get_registry_status(), ensure_ascii=False, indent=2))
+        raise SystemExit(0)
     if args.status:
         raise SystemExit(print_status())
     print("=" * 80)
-    print("  НАПРАВЛЕННЫЙ ПЕРЕБОР УНП ЧЕРЕЗ ГРП")
+    print(
+        "  ПОДГОТОВКА РЕЕСТРА КАНДИДАТОВ УНП"
+        if args.prepare_only
+        else "  НАПРАВЛЕННЫЙ ПЕРЕБОР УНП ЧЕРЕЗ ЕГР И ГРП"
+    )
     print("=" * 80)
     print(f"  регионы={args.regions}  seq=[{args.seq_start}..{args.seq_end}]")
     print(f"  concurrency={args.concurrency}  delay={args.delay}s  empty-stop={args.empty_stop}")
-    print(f"  ⚠️  ГРП rate limit жёсткий — идём медленно. Ctrl+C для остановки.")
+    if not args.prepare_only:
+        print("  ⚠️  Учитываем rate limit источников. Ctrl+C для остановки.")
     print("=" * 80)
     try:
         asyncio.run(run(args))

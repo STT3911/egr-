@@ -96,12 +96,27 @@ If only migrations changed, running `alembic upgrade head` is enough after the b
 
 The `egr-unp-pipeline` service continuously:
 
-1. finds the highest known UNP sequence separately for every region;
-2. checks a small checksum-valid frontier after that sequence;
-3. requests every missing source independently from EGR and GRP;
-4. persists EGR responses into `egr_raw_company_data`;
-5. persists GRP responses into `grp_raw_data` and `grp_taxpayer_data`;
-6. synchronizes both sources into `egr_companies`.
+1. marks all known checksum-valid UNPs in `unp_scan_candidates`;
+2. infers dense issuance islands in `unp_issuance_ranges`;
+3. records each planned candidate before making an HTTP request;
+4. requests every missing source independently from EGR and GRP;
+5. records source statuses and attempts in the candidate registry;
+6. persists and parses successful EGR and GRP responses.
+
+Prepare and inspect the registry without starting external enumeration:
+
+```bash
+docker compose run --rm egr-api alembic upgrade head
+docker compose run --rm egr-api \
+  python /app/scripts/unp_enumerate.py --prepare-only
+docker compose run --rm egr-api \
+  python /app/scripts/unp_enumerate.py --registry-status
+```
+
+This preparation does not generate roughly 64 million empty rows. It stores
+known UNPs, detects the actual dense issuance ranges, and creates pending
+checksum-valid candidates for every latest regional frontier window. The
+scanner also records any additional candidate before it is checked.
 
 Build and start it once:
 
@@ -136,6 +151,8 @@ every six hours:
 UNP_PIPELINE_SCAN_MODE=frontier
 UNP_PIPELINE_FRONTIER_LOOKAHEAD=50
 UNP_PIPELINE_FRONTIER_BACKTRACK=50
+UNP_PIPELINE_RANGE_GAP=50
+UNP_PIPELINE_REGISTRY_REFRESH_INTERVAL_SECONDS=86400
 UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS=21600
 ```
 The expensive full `gov_organizations` rebuild is disabled in the continuous

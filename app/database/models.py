@@ -1,5 +1,5 @@
 """Database models"""
-from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, Float, UniqueConstraint, false
+from sqlalchemy import Column, Integer, SmallInteger, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, Float, UniqueConstraint, CheckConstraint, Index, false, true
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -126,6 +126,108 @@ class GrpTaxpayerData(Base):
     # Metadata
     fetched_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class UnpScanCandidate(Base):
+    """Checksum-valid UNP candidate and its per-source scan state."""
+
+    __tablename__ = "unp_scan_candidates"
+
+    unp = Column(BigInteger, primary_key=True)
+    region = Column(SmallInteger, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    checksum_valid = Column(Boolean, nullable=False, server_default=true())
+    known_in_db = Column(Boolean, nullable=False, server_default=false())
+    egr_status = Column(String(16), nullable=False, server_default="pending")
+    grp_status = Column(String(16), nullable=False, server_default="pending")
+    overall_status = Column(String(16), nullable=False, server_default="pending")
+    attempts = Column(Integer, nullable=False, server_default="0")
+    first_checked_at = Column(DateTime, nullable=True)
+    last_checked_at = Column(DateTime, nullable=True)
+    next_check_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "region BETWEEN 1 AND 9",
+            name="ck_unp_scan_region",
+        ),
+        CheckConstraint(
+            "sequence BETWEEN 0 AND 9999999",
+            name="ck_unp_scan_sequence",
+        ),
+        CheckConstraint(
+            "egr_status IN ('pending', 'found', 'not_found', 'error')",
+            name="ck_unp_scan_egr_status",
+        ),
+        CheckConstraint(
+            "grp_status IN ('pending', 'found', 'not_found', 'error')",
+            name="ck_unp_scan_grp_status",
+        ),
+        CheckConstraint(
+            "overall_status IN ('pending', 'found', 'not_found', 'partial', 'error')",
+            name="ck_unp_scan_overall_status",
+        ),
+        UniqueConstraint(
+            "region",
+            "sequence",
+            name="uq_unp_scan_region_sequence",
+        ),
+        Index(
+            "ix_unp_scan_candidates_status",
+            "overall_status",
+            "region",
+            "sequence",
+        ),
+        Index(
+            "ix_unp_scan_candidates_last_checked",
+            "last_checked_at",
+        ),
+    )
+
+
+class UnpIssuanceRange(Base):
+    """Dense sequence interval inferred from UNPs already known to the database."""
+
+    __tablename__ = "unp_issuance_ranges"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    region = Column(SmallInteger, nullable=False)
+    seq_start = Column(Integer, nullable=False)
+    seq_end = Column(Integer, nullable=False)
+    first_unp = Column(BigInteger, nullable=False)
+    last_unp = Column(BigInteger, nullable=False)
+    known_count = Column(Integer, nullable=False)
+    gap_limit = Column(Integer, nullable=False)
+    scan_start = Column(Integer, nullable=False)
+    scan_end = Column(Integer, nullable=False)
+    is_latest = Column(Boolean, nullable=False, server_default=false())
+    refreshed_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "region BETWEEN 1 AND 9",
+            name="ck_unp_range_region",
+        ),
+        CheckConstraint(
+            "seq_start BETWEEN 0 AND 9999999 AND seq_end BETWEEN seq_start AND 9999999",
+            name="ck_unp_range_sequence",
+        ),
+        UniqueConstraint(
+            "region",
+            "seq_start",
+            "seq_end",
+            name="uq_unp_issuance_range",
+        ),
+        Index(
+            "ix_unp_issuance_ranges_region_latest",
+            "region",
+            "is_latest",
+            "seq_end",
+        ),
+    )
 
 
 class Company(Base):
