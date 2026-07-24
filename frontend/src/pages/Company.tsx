@@ -67,10 +67,10 @@ const RiskCategoryRadar = ({
   color: string;
 }) => {
   const categoryDefaults = [
-    { code: "legal", title: "Право", cap: 70 },
-    { code: "fiscal", title: "Налоги", cap: 25 },
-    { code: "compliance", title: "Реестры", cap: 35 },
-    { code: "behavioral", title: "Поведение", cap: 25 },
+    { code: "legal", title: "Право", cap: 50 },
+    { code: "fiscal", title: "Налоги", cap: 20 },
+    { code: "compliance", title: "Реестры", cap: 20 },
+    { code: "behavioral", title: "Поведение", cap: 10 },
   ];
   const radarCategories = categoryDefaults.map((fallback) => {
     const category = categories.find((item) => item.code === fallback.code);
@@ -951,6 +951,11 @@ const Company = () => {
                             <div className="mt-2 text-xs text-muted-foreground">
                               {coverage ? `${coverage.checked_sources} из ${coverage.total_sources} ключевых источников` : "Нет данных о покрытии"}
                             </div>
+                            {risk.scope?.note && (
+                              <div className="mt-3 border-t border-border/50 pt-3 text-xs leading-relaxed text-muted-foreground">
+                                {risk.scope.note}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

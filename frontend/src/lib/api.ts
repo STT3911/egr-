@@ -495,6 +495,12 @@ export type CompanyRisk = {
   factors: CompanyRiskFactor[];
   trust_signals: CompanyRiskFactor[];
   coverage?: CompanyRiskCoverage;
+  scope?: {
+    title: string;
+    assessed: string[];
+    not_assessed: string[];
+    note: string;
+  };
   computed_at: string;
 };
 

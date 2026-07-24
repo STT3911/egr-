@@ -33,14 +33,17 @@ YOUNG_COMPANY_DAYS = 180
 RECENT_WINDOW_DAYS = 730
 
 LEVEL_HIGH = 50
-LEVEL_MEDIUM = 20
-TAX_DEBT_CURRENT_WEIGHT = 25
+LEVEL_MEDIUM = 25
+TAX_DEBT_CURRENT_WEIGHT = 20
+TAX_DEBT_STALE_WEIGHT = 12
+TAX_DEBT_FRESH_DAYS = 45
+MANUAL_REVIEW_CODES = {"in_liquidation", "locked_supplier"}
 
 CATEGORY_META = {
-    "legal": {"title": "Правовой статус", "cap": 70},
-    "fiscal": {"title": "Налоговая дисциплина", "cap": 25},
-    "compliance": {"title": "Реестры ограничений", "cap": 35},
-    "behavioral": {"title": "Поведенческие сигналы", "cap": 25},
+    "legal": {"title": "Правовой статус", "cap": 50},
+    "fiscal": {"title": "Налоговая дисциплина", "cap": 20},
+    "compliance": {"title": "Реестры ограничений", "cap": 20},
+    "behavioral": {"title": "Поведенческие сигналы", "cap": 10},
 }
 
 
@@ -104,9 +107,20 @@ def _days_ago(days: int) -> date:
 def _historical_tax_weight(slice_date: date) -> int:
     age_days = max(0, (date.today() - slice_date).days)
     if age_days <= 365:
-        return 10
+        return 8
     if age_days <= 730:
-        return 7
+        return 5
+    return 2
+
+
+def _historical_bankruptcy_weight(end_date: date | None) -> int:
+    if end_date is None:
+        return 6
+    age_days = max(0, (date.today() - end_date).days)
+    if age_days <= 1095:
+        return 12
+    if age_days <= 1825:
+        return 8
     return 4
 
 
@@ -134,7 +148,17 @@ def _tax_debt_factors(
     if not debt_rows:
         return []
 
-    if latest_slice is not None and company_debt_slice == latest_slice:
+    latest_slice_age = (
+        max(0, (date.today() - latest_slice).days)
+        if latest_slice is not None
+        else None
+    )
+    if (
+        latest_slice is not None
+        and company_debt_slice == latest_slice
+        and latest_slice_age is not None
+        and latest_slice_age <= TAX_DEBT_FRESH_DAYS
+    ):
         return [
             _factor(
                 "tax_debt",
@@ -148,6 +172,23 @@ def _tax_debt_factors(
             )
         ]
 
+    if latest_slice is not None and company_debt_slice == latest_slice:
+        return [
+            _factor(
+                "tax_debt_stale",
+                "Задолженность в последнем доступном срезе МНС",
+                TAX_DEBT_STALE_WEIGHT,
+                (
+                    f"Срез от {company_debt_slice.isoformat()} устарел, "
+                    f"записей: {debt_rows}"
+                ),
+                category="fiscal",
+                severity="medium",
+                source="МНС",
+                observed_at=company_debt_slice,
+            )
+        ]
+
     historical_weight = _historical_tax_weight(company_debt_slice)
     return [
         _factor(
@@ -156,7 +197,7 @@ def _tax_debt_factors(
             historical_weight,
             f"Последний срез с задолженностью: {company_debt_slice.isoformat()}, записей: {debt_rows}",
             category="fiscal",
-            severity="medium" if historical_weight >= 7 else "low",
+            severity="medium" if historical_weight >= 5 else "low",
             source="МНС",
             observed_at=company_debt_slice,
         )
@@ -219,11 +260,24 @@ def _build_coverage(
         registry_name="locked_suppliers",
     )
     egr_state = db.query(SystemState).filter(SystemState.key == "egr_last_sync_date").first()
-    egr_checked_at = egr_state.updated_at if egr_state else company.updated_at or company.created_at
+    egr_checked_at: date | datetime | None = None
+    if egr_state is not None:
+        try:
+            egr_checked_at = date.fromisoformat(egr_state.value[:10])
+        except (TypeError, ValueError):
+            egr_checked_at = egr_state.updated_at
+    if egr_checked_at is None:
+        egr_checked_at = company.updated_at or company.created_at
     sources = [
         _coverage_source("egr", "Статус и история ЕГР", 25, egr_checked_at, 30),
         _coverage_source("bankruptcy", "Реестр банкротств", 25, bankrot_checked_at, 3),
-        _coverage_source("tax_debt", "Задолженность МНС", 25, latest_tax_slice, 45),
+        _coverage_source(
+            "tax_debt",
+            "Задолженность МНС",
+            25,
+            latest_tax_slice,
+            TAX_DEBT_FRESH_DAYS,
+        ),
         _coverage_source("locked_suppliers", "Ограничения МАРТ", 15, mart_checked_at, 14),
         _coverage_source("address_cluster", "Кластер юридического адреса", 10, address_checked_at, 45),
     ]
@@ -270,6 +324,7 @@ def _decision(
     score: int,
     level: str,
     critical_flags: List[str],
+    factors: List[Dict[str, Any]],
     coverage_score: int,
 ) -> tuple[str, str, str]:
     if critical_flags:
@@ -278,11 +333,24 @@ def _decision(
             "Обнаружен стоп-фактор",
             "Перед сделкой обязательно проверьте отмеченные факторы.",
         )
+    factor_codes = {factor["code"] for factor in factors}
+    if factor_codes & MANUAL_REVIEW_CODES:
+        return (
+            "manual_review",
+            "Требуется ручная проверка",
+            "Обнаружен значимый реестровый фактор, который требует проверки до сделки.",
+        )
     if level == "high":
         return (
             "manual_review",
             "Высокий риск",
             "Есть несколько серьёзных факторов риска.",
+        )
+    if any(factor["severity"] == "high" for factor in factors):
+        return (
+            "review",
+            "Есть значимый сигнал",
+            "Проверьте отмеченный фактор и его актуальность перед сделкой.",
         )
     if coverage_score < 60:
         return (
@@ -290,7 +358,9 @@ def _decision(
             "Недостаточно данных",
             "Не все источники обновлены.",
         )
-    if level == "medium":
+    if level == "medium" or any(
+        factor["severity"] == "medium" for factor in factors
+    ):
         return (
             "review",
             "Есть сигналы к проверке",
@@ -323,14 +393,19 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         .filter(BankrotCase.debtor_unp == unp_int, BankrotCase.status == 1)
         .scalar()
     ) or 0
-    total_bankrot = (
+    latest_active_bankrot_date = (
+        db.query(func.max(BankrotCase.start_date))
+        .filter(BankrotCase.debtor_unp == unp_int, BankrotCase.status == 1)
+        .scalar()
+    )
+    closed_bankrot = (
         db.query(func.count(BankrotCase.case_id))
-        .filter(BankrotCase.debtor_unp == unp_int)
+        .filter(BankrotCase.debtor_unp == unp_int, BankrotCase.status == 0)
         .scalar()
     ) or 0
-    latest_bankrot_date = (
-        db.query(func.max(BankrotCase.updated_at))
-        .filter(BankrotCase.debtor_unp == unp_int)
+    latest_closed_bankrot_date = (
+        db.query(func.max(BankrotCase.end_date))
+        .filter(BankrotCase.debtor_unp == unp_int, BankrotCase.status == 0)
         .scalar()
     )
     if active_bankrot:
@@ -338,25 +413,33 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
             _factor(
                 "bankruptcy_active",
                 "Активное дело о банкротстве",
-                60,
+                50,
                 f"Открытых дел: {active_bankrot}",
                 category="legal",
                 severity="critical",
                 source="bankrot.gov.by",
-                observed_at=latest_bankrot_date,
+                observed_at=latest_active_bankrot_date,
             )
         )
-    elif total_bankrot:
+    elif closed_bankrot:
+        bankruptcy_weight = _historical_bankruptcy_weight(
+            latest_closed_bankrot_date
+        )
+        latest_closed_detail = (
+            f", последнее завершено {latest_closed_bankrot_date.isoformat()}"
+            if latest_closed_bankrot_date is not None
+            else ""
+        )
         factors.append(
             _factor(
                 "bankruptcy_past",
                 "Банкротство в истории",
-                18,
-                f"Завершённых дел: {total_bankrot}",
+                bankruptcy_weight,
+                f"Завершённых дел: {closed_bankrot}{latest_closed_detail}",
                 category="legal",
-                severity="medium",
+                severity="medium" if bankruptcy_weight >= 8 else "low",
                 source="bankrot.gov.by",
-                observed_at=latest_bankrot_date,
+                observed_at=latest_closed_bankrot_date,
             )
         )
 
@@ -378,7 +461,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
             _factor(
                 "locked_supplier",
                 "Действующая запись в реестре МАРТ",
-                35,
+                20,
                 f"Активных записей: {locked_active}",
                 category="compliance",
                 severity="high",
@@ -399,9 +482,10 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         marker in normalized_status
         for marker in ("ликвидирован", "исключен", "исключён", "прекращен", "прекращён")
     )
-    process_status = any(
-        marker in normalized_status for marker in ("ликвидац", "реорганизац", "прекращения")
+    liquidation_process_status = any(
+        marker in normalized_status for marker in ("ликвидац", "прекращения")
     )
+    reorganization_status = "реорганизац" in normalized_status
     if company.liquidation_date is not None or terminal_status:
         liquidation_detail = (
             f"Дата ликвидации: {company.liquidation_date.isoformat()}"
@@ -412,7 +496,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
             _factor(
                 "liquidated",
                 "Деятельность прекращена",
-                60,
+                50,
                 liquidation_detail,
                 category="legal",
                 severity="critical",
@@ -420,15 +504,28 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
                 observed_at=company.liquidation_date or company.updated_at,
             )
         )
-    elif process_status:
+    elif liquidation_process_status:
         factors.append(
             _factor(
                 "in_liquidation",
-                "Процесс ликвидации или реорганизации",
-                40,
+                "Компания находится в процессе ликвидации",
+                35,
                 status_name or "Статус ЕГР",
                 category="legal",
                 severity="high",
+                source="ЕГР",
+                observed_at=company.updated_at,
+            )
+        )
+    elif reorganization_status:
+        factors.append(
+            _factor(
+                "reorganization",
+                "Компания находится в процессе реорганизации",
+                12,
+                status_name or "Статус ЕГР",
+                category="legal",
+                severity="medium",
                 source="ЕГР",
                 observed_at=company.updated_at,
             )
@@ -442,7 +539,9 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
     if address_row and address_row[0]:
         same_addr = (
             db.query(func.count(CompanyAddressKey.company_id))
+            .join(Company, Company.id == CompanyAddressKey.company_id)
             .filter(CompanyAddressKey.address_key == address_row[0])
+            .filter(Company.liquidation_date.is_(None))
             .scalar()
         ) or 0
         if same_addr >= MASS_ADDRESS_HIGH:
@@ -450,7 +549,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
                 _factor(
                     "mass_address_high",
                     "Критически массовый адрес",
-                    15,
+                    8,
                     f"По адресу зарегистрировано компаний: {same_addr}",
                     category="behavioral",
                     severity="high",
@@ -463,7 +562,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
                 _factor(
                     "mass_address",
                     "Массовый адрес регистрации",
-                    8,
+                    4,
                     f"По адресу зарегистрировано компаний: {same_addr}",
                     category="behavioral",
                     severity="medium",
@@ -487,7 +586,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
             _factor(
                 "frequent_address_change",
                 "Частая смена юридического адреса",
-                8,
+                5,
                 f"Смен адреса за 2 года: {addr_changes}",
                 category="behavioral",
                 severity="medium",
@@ -510,7 +609,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
             _factor(
                 "frequent_name_change",
                 "Частая смена наименования",
-                6,
+                3,
                 f"Смен наименования за 2 года: {name_changes}",
                 category="behavioral",
                 severity="medium",
@@ -526,7 +625,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
                 _factor(
                     "young_company",
                     "Недавно зарегистрирована",
-                    6,
+                    2,
                     f"Возраст компании: {age_days} дн.",
                     category="behavioral",
                     severity="low",
@@ -610,8 +709,19 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
     factors.sort(key=lambda factor: factor["weight"], reverse=True)
     categories = _build_categories(factors)
     score = min(100, sum(category["score"] for category in categories))
-    level = "high" if score >= LEVEL_HIGH else "medium" if score >= LEVEL_MEDIUM else "low"
     critical_flags = [factor["code"] for factor in factors if factor["severity"] == "critical"]
+    high_factor_count = sum(
+        1 for factor in factors if factor["severity"] == "high"
+    )
+    has_attention_factor = any(
+        factor["severity"] in {"high", "medium"} for factor in factors
+    )
+    if critical_flags or score >= LEVEL_HIGH or high_factor_count >= 2:
+        level = "high"
+    elif score >= LEVEL_MEDIUM or has_attention_factor:
+        level = "medium"
+    else:
+        level = "low"
     coverage = _build_coverage(
         db,
         company,
@@ -622,6 +732,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         score,
         level,
         critical_flags,
+        factors,
         coverage["score"],
     )
 
@@ -637,5 +748,24 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         "factors": factors,
         "trust_signals": trust,
         "coverage": coverage,
+        "scope": {
+            "title": "Реестровый риск",
+            "assessed": [
+                "правовой статус и история ЕГР",
+                "банкротство",
+                "задолженность МНС",
+                "ограничения МАРТ",
+                "регистрационные изменения",
+            ],
+            "not_assessed": [
+                "финансовая отчётность",
+                "фактическая платёжная дисциплина",
+                "судебная нагрузка",
+            ],
+            "note": (
+                "Баллы отражают доступные реестровые сигналы. "
+                "Они не являются кредитным рейтингом."
+            ),
+        },
         "computed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
