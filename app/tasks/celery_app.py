@@ -84,6 +84,24 @@ _beat_schedule = {
         "args": (),
         "options": {"expires": 24 * 3600},
     },
+    "gias-sync-contract-index": {
+        "task": "app.tasks.sync_tasks.sync_gias_contract_index",
+        "schedule": timedelta(minutes=2),
+        "args": (False, settings.GIAS_CONTRACT_INDEX_BATCH_PAGES),
+        "options": {"expires": 110},
+    },
+    "gias-fetch-contract-details": {
+        "task": "app.tasks.sync_tasks.fetch_gias_contract_details",
+        "schedule": timedelta(seconds=60),
+        "args": (),
+        "options": {"expires": 55},
+    },
+    "gias-resolve-contract-companies": {
+        "task": "app.tasks.sync_tasks.resolve_gias_contract_companies",
+        "schedule": timedelta(minutes=5),
+        "args": (),
+        "options": {"expires": 4 * 60},
+    },
     "egr-sync-place-locations": {
         "task": "app.tasks.sync_tasks.egr_sync_place_locations",
         "schedule": crontab(hour="2,14", minute=30),
@@ -199,6 +217,11 @@ _beat_schedule["grp-monthly-export"] = {
 if not settings.GIAS_SYNC_ENABLED:
     _beat_schedule.pop("gias-sync-directory-registries", None)
 
+if not settings.GIAS_CONTRACT_SYNC_ENABLED:
+    _beat_schedule.pop("gias-sync-contract-index", None)
+    _beat_schedule.pop("gias-fetch-contract-details", None)
+    _beat_schedule.pop("gias-resolve-contract-companies", None)
+
 # Keep-alive Битрикс-токена: принудительный refresh по расписанию, чтобы
 # refresh_token не протух при простое (без вебхуков). По умолчанию раз в сутки.
 if settings.BITRIX_KEEPALIVE_ENABLED:
@@ -272,6 +295,9 @@ celery_app.conf.update(
     # Цель: быстрые задачи никогда не ждут пока закончится GIAS/historical
     # ------------------------------------------------------------------
     task_routes={
+        "app.tasks.sync_tasks.sync_gias_contract_index":       {"queue": "heavy"},
+        "app.tasks.sync_tasks.fetch_gias_contract_details":    {"queue": "heavy"},
+        "app.tasks.sync_tasks.resolve_gias_contract_companies": {"queue": "heavy"},
         # ── Heavy queue ────────────────────────────────────────────────
         "app.tasks.sync_tasks.auto_fetch_historical_data":    {"queue": "heavy"},
         "app.tasks.sync_tasks.sync_gias_directory_registries": {"queue": "heavy"},

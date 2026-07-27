@@ -46,8 +46,10 @@ def sync_company_from_grp(db: Session, unp: int) -> bool:
         )
         db.add(company)
         db.flush()
-    elif company.source == "grp" and not company.registration_date and grp.registration_date:
-        company.registration_date = grp.registration_date
+    elif company.source in {"grp", "gias"}:
+        company.source = "grp"
+        if not company.registration_date and grp.registration_date:
+            company.registration_date = grp.registration_date
 
     current_name = (
         db.query(CompanyNameHistory)
@@ -91,6 +93,66 @@ def sync_company_from_grp(db: Session, unp: int) -> bool:
     enqueue_company_for_indexing(db, unp)
     db.flush()
     return True
+
+
+def sync_company_from_gias(
+    db: Session,
+    unp: int,
+    *,
+    name: str | None,
+    address: str | None = None,
+) -> Company:
+    """Create a minimal central company after EGR and GRP both returned no data."""
+    company = db.query(Company).filter(Company.unp == unp).first()
+    if company is None:
+        company = Company(unp=unp, source="gias")
+        db.add(company)
+        db.flush()
+
+    current_name = (
+        db.query(CompanyNameHistory)
+        .filter(
+            CompanyNameHistory.company_id == company.id,
+            CompanyNameHistory.valid_to.is_(None),
+        )
+        .first()
+    )
+    clean_name = (name or "").strip()
+    if current_name is None and clean_name:
+        db.add(
+            CompanyNameHistory(
+                company_id=company.id,
+                full_name_ru=clean_name,
+                short_name_ru=None,
+                search_name=normalize_company_name(clean_name),
+                valid_from=None,
+                valid_to=None,
+            )
+        )
+
+    clean_address = (address or "").strip()
+    if clean_address:
+        place = (
+            db.query(CompanyPlaceLocation)
+            .filter(CompanyPlaceLocation.unp == unp)
+            .first()
+        )
+        if place is None:
+            db.add(
+                CompanyPlaceLocation(
+                    unp=unp,
+                    raw_json={"source": "gias"},
+                    address=clean_address,
+                    fetched_at=datetime.now(),
+                )
+            )
+        elif not place.address:
+            place.address = clean_address
+            place.fetched_at = datetime.now()
+
+    enqueue_company_for_indexing(db, unp)
+    db.flush()
+    return company
 
 
 def sync_companies_from_grp() -> dict:

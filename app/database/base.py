@@ -29,6 +29,9 @@ from app.database.models import (
     LockedSupplierReason,
     LockedSupplier,
     LockedSupplierHistory,
+    GiasContract,
+    GiasContractPosition,
+    GiasContractSyncState,
 )
 
 __all__ = [
@@ -59,6 +62,7 @@ __all__ = [
     "LockedSupplierReason",
     "LockedSupplier",
     "LockedSupplierHistory",
+    "GiasContract",
+    "GiasContractPosition",
+    "GiasContractSyncState",
 ]
-
-

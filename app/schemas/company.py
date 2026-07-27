@@ -219,6 +219,22 @@ class AggregatedContactSchema(BaseModel):
     sources: List[str] = []            # источники: egr / mart / gias / pvt / manual
 
 
+class CompanyGiasContractSchema(BaseModel):
+    contract_id: str
+    role: str
+    counterparty_unp: Optional[int] = None
+    counterparty_name: Optional[str] = None
+    registration_number: Optional[str] = None
+    contract_number: Optional[str] = None
+    title: Optional[str] = None
+    state: Optional[str] = None
+    price: Optional[float] = None
+    currency_code: Optional[str] = None
+    contract_date: Optional[str] = None
+    source_updated_at: Optional[str] = None
+    detail_status: str = "pending"
+
+
 class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
@@ -239,6 +255,7 @@ class CompanyProfileResponse(BaseModel):
     contacts: List[CompanyContactSchema] = []
     gias_accreditation: Optional[CompanyGiasAccreditationSchema] = None
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
+    gias_contracts: List[CompanyGiasContractSchema] = []
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
     contacts_aggregated: List[AggregatedContactSchema] = []

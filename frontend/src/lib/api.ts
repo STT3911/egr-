@@ -17,6 +17,22 @@ export type CompanyLookupResult = {
   matched_value?: string;
 };
 
+export type CompanyGiasContract = {
+  contract_id: string;
+  role: "customer" | "provider";
+  counterparty_unp?: number | null;
+  counterparty_name?: string | null;
+  registration_number?: string | null;
+  contract_number?: string | null;
+  title?: string | null;
+  state?: string | null;
+  price?: number | string | null;
+  currency_code?: string | null;
+  contract_date?: string | null;
+  source_updated_at?: string | null;
+  detail_status?: "pending" | "fetched" | "error" | string;
+};
+
 export type CompanyProfile = {
   unp: number;
   current_status_code?: number;
@@ -165,6 +181,65 @@ export type CompanyProfile = {
     }[];
     last_seen_at?: string;
   }[];
+  gias_contracts?: CompanyGiasContract[];
+};
+
+export type GiasContractPosition = {
+  id: string;
+  public_number?: string | null;
+  title?: string | null;
+  lot_number?: number | null;
+  lot_title?: string | null;
+  okpb_code?: string | null;
+  okpb_name?: string | null;
+  volume?: number | string | null;
+  unit_code?: string | null;
+  unit_name?: string | null;
+  unit_symbol?: string | null;
+  position_type?: string | null;
+  unit_price?: number | string | null;
+  position_price?: number | string | null;
+  countries?: string[] | null;
+  country_names?: string[] | null;
+  is_smp?: boolean | null;
+};
+
+export type GiasContractDetail = {
+  contract_id: string;
+  base_contract_id?: string | null;
+  chain_uuid?: string | null;
+  customer_company_id?: string | null;
+  provider_company_id?: string | null;
+  customer_unp?: number | null;
+  provider_unp?: number | null;
+  customer_name?: string | null;
+  customer_location?: string | null;
+  provider_name?: string | null;
+  provider_address?: string | null;
+  provider_country_name?: string | null;
+  state?: string | null;
+  state_asfr?: string | null;
+  title?: string | null;
+  price?: number | string | null;
+  currency_code?: string | null;
+  plan_number?: string | null;
+  contract_number?: string | null;
+  registration_number?: string | null;
+  contract_type?: string | null;
+  ets_id?: string | null;
+  contract_date?: string | null;
+  execution_term?: string | null;
+  real_execution_term?: string | null;
+  termination_execution_term?: string | null;
+  termination_reason?: string | null;
+  has_smp?: boolean | null;
+  source_created_at?: string | null;
+  source_updated_at?: string | null;
+  detail_status: "pending" | "fetched" | "error" | string;
+  detail_fetched_at?: string | null;
+  detail_last_error?: string | null;
+  positions: GiasContractPosition[];
+  raw_detail?: Record<string, unknown> | null;
 };
 
 export type BankrotCaseDataset = {
@@ -363,6 +438,12 @@ export const lookupCompanies = async (query: string) => {
 
 export const getCompanyProfile = async (unp: string) => {
   return request<CompanyProfile>(`/api/v1/companies/${encodeURIComponent(unp)}`);
+};
+
+export const getGiasContract = async (contractId: string) => {
+  return request<GiasContractDetail>(
+    `/api/v1/gias/contracts/${encodeURIComponent(contractId)}`
+  );
 };
 
 export const getCompanyBankruptcy = async (unp: string) => {

@@ -1,8 +1,10 @@
 """Schemas for GIAS registry endpoints."""
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class GiasSyncRunSchema(BaseModel):
@@ -104,3 +106,72 @@ class GiasSyncTriggerResponse(BaseModel):
     status: str
     task_id: Optional[str] = None
     result: Optional[dict[str, Any]] = None
+
+
+class GiasContractPositionSchema(BaseModel):
+    id: UUID
+    public_number: Optional[str] = None
+    title: Optional[str] = None
+    lot_number: Optional[int] = None
+    lot_title: Optional[str] = None
+    okpb_code: Optional[str] = None
+    okpb_name: Optional[str] = None
+    volume: Optional[Decimal] = None
+    unit_code: Optional[str] = None
+    unit_name: Optional[str] = None
+    unit_symbol: Optional[str] = None
+    position_type: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    position_price: Optional[Decimal] = None
+    countries: Optional[list[str]] = None
+    country_names: Optional[list[str]] = None
+    is_smp: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
+
+
+class GiasContractSchema(BaseModel):
+    contract_id: UUID
+    base_contract_id: Optional[UUID] = None
+    chain_uuid: Optional[UUID] = None
+    customer_company_id: Optional[UUID] = None
+    provider_company_id: Optional[UUID] = None
+    customer_unp: Optional[int] = None
+    provider_unp: Optional[int] = None
+    customer_name: Optional[str] = None
+    customer_location: Optional[str] = None
+    provider_name: Optional[str] = None
+    provider_address: Optional[str] = None
+    provider_country_name: Optional[str] = None
+    state: Optional[str] = None
+    state_asfr: Optional[str] = None
+    title: Optional[str] = None
+    price: Optional[Decimal] = None
+    currency_code: Optional[str] = None
+    plan_number: Optional[str] = None
+    contract_number: Optional[str] = None
+    registration_number: Optional[str] = None
+    contract_type: Optional[str] = None
+    ets_id: Optional[str] = None
+    contract_date: Optional[datetime] = None
+    execution_term: Optional[datetime] = None
+    real_execution_term: Optional[datetime] = None
+    termination_execution_term: Optional[datetime] = None
+    termination_reason: Optional[str] = None
+    has_smp: Optional[bool] = None
+    source_created_at: Optional[datetime] = None
+    source_updated_at: Optional[datetime] = None
+    detail_status: str
+    detail_fetched_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class GiasContractDetailSchema(GiasContractSchema):
+    """Contract card including the lossless response from the GIAS detail API."""
+
+    positions: list[GiasContractPositionSchema] = Field(default_factory=list)
+    raw_detail: Optional[dict[str, Any]] = None
+    detail_last_error: Optional[str] = None

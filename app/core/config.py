@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     GIAS_DIRECTORY_API_URL: str = "https://gias.by/directory/api/v1"
     GIAS_DIRECTORY_TIMEOUT_SECONDS: float = 30.0
     GIAS_DIRECTORY_PAGE_SIZE: int = 200
+    GIAS_CONTRACT_SEARCH_URL: str = "https://gias.by/search/api/v1/search/contracts"
+    GIAS_CONTRACT_DETAIL_URL: str = "https://gias.by/contract/api/v1/contract"
+    GIAS_CONTRACT_TIMEOUT_SECONDS: float = 30.0
+    GIAS_CONTRACT_PAGE_SIZE: int = 100
+    GIAS_CONTRACT_INDEX_BATCH_PAGES: int = 50
+    GIAS_CONTRACT_DETAIL_BATCH_SIZE: int = 100
+    GIAS_CONTRACT_REQUEST_INTERVAL_SECONDS: float = 0.33
+    GIAS_CONTRACT_DETAIL_CONCURRENCY: int = 4
+    GIAS_CONTRACT_REQUEST_DELAY_SECONDS: float = 0.2
+    GIAS_CONTRACT_INCREMENTAL_LOOKBACK_HOURS: int = 2
+    GIAS_CONTRACT_COMPANY_BATCH_SIZE: int = 20
 
     # Application
     APP_ENV: str = "production"
@@ -131,6 +142,7 @@ class Settings(BaseSettings):
 
     # GIAS Directory: ежедневная синхронизация реестров
     GIAS_SYNC_ENABLED: bool = True
+    GIAS_CONTRACT_SYNC_ENABLED: bool = True
 
     # Подписки: периодический ПРЯМОЙ перезабор отслеживаемых компаний.
     # Обходит лимит дневного фида (getEventByPeriod ~2500/день без пагинации) —

@@ -1,9 +1,10 @@
 """GIAS registry endpoints."""
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from sqlalchemy import desc
-from sqlalchemy.orm import Session
+from sqlalchemy import desc, or_
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.security import verify_api_key
@@ -11,20 +12,114 @@ from app.database.models import (
     GiasAccreditedCustomer,
     GiasAccreditedCustomerHistory,
     GiasSyncRun,
+    GiasContract,
     LockedSupplier,
     LockedSupplierHistory,
 )
 from app.schemas.gias import (
     GiasAccreditedCustomerHistorySchema,
     GiasAccreditedCustomerSchema,
+    GiasContractDetailSchema,
     GiasSyncRunSchema,
     GiasSyncTriggerResponse,
+    GiasContractSchema,
     LockedSupplierHistorySchema,
     LockedSupplierSchema,
 )
-from app.tasks.sync_tasks import sync_gias_directory_registries
+from app.tasks.sync_tasks import (
+    fetch_gias_contract_details,
+    resolve_gias_contract_companies,
+    sync_gias_contract_index,
+    sync_gias_directory_registries,
+)
 
 router = APIRouter()
+
+
+@router.post("/contracts/sync", response_model=GiasSyncTriggerResponse)
+def trigger_contract_sync(
+    full: bool = Query(False),
+    max_pages: Optional[int] = Query(None, ge=1),
+    api_key: str = Depends(verify_api_key),
+):
+    task = sync_gias_contract_index.delay(full, max_pages)
+    return GiasSyncTriggerResponse(status="queued", task_id=task.id)
+
+
+@router.post("/contracts/fetch-details", response_model=GiasSyncTriggerResponse)
+def trigger_contract_details(
+    batch_size: Optional[int] = Query(None, ge=1, le=1000),
+    api_key: str = Depends(verify_api_key),
+):
+    task = fetch_gias_contract_details.delay(batch_size)
+    return GiasSyncTriggerResponse(status="queued", task_id=task.id)
+
+
+@router.post("/contracts/resolve-companies", response_model=GiasSyncTriggerResponse)
+def trigger_contract_company_resolution(
+    batch_size: Optional[int] = Query(None, ge=1, le=500),
+    api_key: str = Depends(verify_api_key),
+):
+    task = resolve_gias_contract_companies.delay(batch_size)
+    return GiasSyncTriggerResponse(status="queued", task_id=task.id)
+
+
+@router.get("/contracts", response_model=list[GiasContractSchema])
+def list_contracts(
+    unp: Optional[int] = Query(None, ge=1),
+    role: Optional[str] = Query(None, pattern="^(customer|provider)$"),
+    q: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    query = db.query(GiasContract)
+    if unp is not None:
+        if role == "customer":
+            query = query.filter(GiasContract.customer_unp == unp)
+        elif role == "provider":
+            query = query.filter(GiasContract.provider_unp == unp)
+        else:
+            query = query.filter(
+                or_(
+                    GiasContract.customer_unp == unp,
+                    GiasContract.provider_unp == unp,
+                )
+            )
+    if q:
+        value = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                GiasContract.title.ilike(value),
+                GiasContract.registration_number.ilike(value),
+                GiasContract.contract_number.ilike(value),
+            )
+        )
+    if state:
+        query = query.filter(GiasContract.state == state)
+    return (
+        query.order_by(GiasContract.source_updated_at.desc().nullslast())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/contracts/{contract_id}", response_model=GiasContractDetailSchema)
+def get_contract(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+):
+    contract = (
+        db.query(GiasContract)
+        .options(selectinload(GiasContract.positions))
+        .filter(GiasContract.contract_id == contract_id)
+        .one_or_none()
+    )
+    if contract is None:
+        raise HTTPException(status_code=404, detail="Договор GIAS не найден")
+    return contract
 
 
 @router.get("/sync-runs", response_model=list[GiasSyncRunSchema])

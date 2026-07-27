@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import and_, text, func
+from sqlalchemy import and_, text, func, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.models import (
     BankrotCase,
@@ -24,6 +24,7 @@ from app.database.models import (
     LicenseRecord,
     InspectionPlanRecord,
     BeltppOwnCertificate,
+    GiasContract,
 )
 from datetime import datetime
 import logging
@@ -98,6 +99,8 @@ class CompanyCRUD:
         """Save or update complete company data"""
         company_data = data["company"]
         unp = company_data["unp"]
+        # A successfully parsed EGR card supersedes a minimal GRP/GIAS stub.
+        company_data["source"] = "egr"
 
         # Ensure ref tables have rows for all FK ids (avoids ForeignKeyViolation when update_reference_tables missed some)
         self._ensure_ref_ids_for_company(company_data)
@@ -408,6 +411,56 @@ class CompanyCRUD:
             )
         ]
 
+        gias_contracts = [
+            {
+                "contract_id": str(item.contract_id),
+                "role": (
+                    "customer"
+                    if item.customer_company_id == company.id
+                    else "provider"
+                ),
+                "counterparty_unp": (
+                    item.provider_unp
+                    if item.customer_company_id == company.id
+                    else item.customer_unp
+                ),
+                "counterparty_name": (
+                    item.provider_name
+                    if item.customer_company_id == company.id
+                    else item.customer_name
+                ),
+                "registration_number": item.registration_number,
+                "contract_number": item.contract_number,
+                "title": item.title,
+                "state": item.state,
+                "price": float(item.price) if item.price is not None else None,
+                "currency_code": item.currency_code,
+                "contract_date": (
+                    item.contract_date.isoformat()
+                    if item.contract_date
+                    else None
+                ),
+                "source_updated_at": (
+                    item.source_updated_at.isoformat()
+                    if item.source_updated_at
+                    else None
+                ),
+                "detail_status": item.detail_status,
+            }
+            for item in (
+                self.db.query(GiasContract)
+                .filter(
+                    or_(
+                        GiasContract.customer_company_id == company.id,
+                        GiasContract.provider_company_id == company.id,
+                    )
+                )
+                .order_by(GiasContract.source_updated_at.desc().nullslast())
+                .limit(100)
+                .all()
+            )
+        ]
+
         pvt_resident = None
         pvt = (
             self.db.query(PVTResidentRecord)
@@ -646,6 +699,7 @@ class CompanyCRUD:
             "longitude": place_location_lon,
             "gias_accreditation": gias_accreditation,
             "gias_locked_suppliers": gias_locked_suppliers,
+            "gias_contracts": gias_contracts,
             "pvt_resident": pvt_resident,
             "trade_registry_records": trade_registry_records,
             "contacts_aggregated": contacts_aggregated,

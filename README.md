@@ -29,7 +29,7 @@ The profile endpoint can include linked records from:
 - EGR company data;
 - GRP taxpayer data;
 - tax debt records;
-- GIAS accredited customers and locked suppliers;
+- GIAS accredited customers, locked suppliers, and public contracts;
 - MАРТ trade registry;
 - license.gov.by licenses;
 - park.by residents;

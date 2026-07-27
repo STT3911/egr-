@@ -23,6 +23,7 @@ from app.services.egr_client import EGRClient
 from app.services.egr_client import MobileEGRClient
 from app.services.grp_client import GRPClient
 from app.services.gias_directory import GiasDirectoryService
+from app.services.gias_contracts import GiasContractService
 from app.database.models import SystemState, RawCompanyData, GrpRawData, GrpTaxpayerData, Company, CompanyPlaceLocation
 from app.crud.grp import GrpCRUD
 from app.core.database import SessionLocal
@@ -2609,6 +2610,58 @@ def sync_gias_directory_registries():
         logger.info("📘 Starting GIAS directory synchronization")
         result = service.sync_all()
         logger.info("✅ GIAS directory synchronization completed: %s", result)
+        return result
+    finally:
+        service.close()
+        db.close()
+
+
+@celery_app.task(time_limit=14400, soft_time_limit=14100)
+def sync_gias_contract_index(
+    full: bool = False,
+    max_pages: int | None = None,
+):
+    """Synchronize the resumable GIAS contract index."""
+    db = SessionLocal()
+    service = GiasContractService(db)
+    try:
+        logger.info(
+            "📘 Starting GIAS contract index sync (full=%s, max_pages=%s)",
+            full,
+            max_pages,
+        )
+        result = service.sync_index(full=full, max_pages=max_pages)
+        logger.info("✅ GIAS contract index sync completed: %s", result)
+        return result
+    finally:
+        service.close()
+        db.close()
+
+
+@celery_app.task(time_limit=1800, soft_time_limit=1740)
+def fetch_gias_contract_details(batch_size: int | None = None):
+    """Fetch one bounded DB-backed batch of full GIAS contract cards."""
+    db = SessionLocal()
+    service = GiasContractService(db)
+    try:
+        limit = batch_size or settings.GIAS_CONTRACT_DETAIL_BATCH_SIZE
+        result = service.fetch_pending_details(limit)
+        logger.info("✅ GIAS contract detail batch completed: %s", result)
+        return result
+    finally:
+        service.close()
+        db.close()
+
+
+@celery_app.task(time_limit=1800, soft_time_limit=1740)
+def resolve_gias_contract_companies(batch_size: int | None = None):
+    """Resolve and link contract customers/providers through EGR, GRP or GIAS."""
+    db = SessionLocal()
+    service = GiasContractService(db)
+    try:
+        limit = batch_size or settings.GIAS_CONTRACT_COMPANY_BATCH_SIZE
+        result = service.resolve_contract_companies(limit)
+        logger.info("✅ GIAS contract company linking completed: %s", result)
         return result
     finally:
         service.close()

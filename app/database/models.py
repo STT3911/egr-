@@ -1,5 +1,5 @@
 """Database models"""
-from sqlalchemy import Column, Integer, SmallInteger, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, Float, UniqueConstraint, CheckConstraint, Index, false, true
+from sqlalchemy import Column, Integer, SmallInteger, String, Date, Boolean, ForeignKey, Text, BigInteger, DateTime, Float, Numeric, UniqueConstraint, CheckConstraint, Index, false, true
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -236,8 +236,7 @@ class Company(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_pkg.uuid4)
     unp = Column(BigInteger, unique=True, nullable=False, index=True)
-    # Происхождение записи: 'egr' (госрегистрация) | 'grp' (найдено через ГРП —
-    # госорганы/бюджетные, которых в ЕГР нет). Центральный реестр = все УНП.
+    # Происхождение записи: egr | grp | gias. Центральный реестр = все УНП.
     source = Column(String(8), nullable=False, server_default="egr", index=True)
     current_status_code = Column(Integer)
     registration_date = Column(Date)
@@ -1090,6 +1089,140 @@ class ReferenceOPF(Base):
     system_id = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class GiasContract(Base):
+    """GIAS public procurement contract and the customer/provider relation."""
+
+    __tablename__ = "gias_contracts"
+
+    contract_id = Column(UUID(as_uuid=True), primary_key=True)
+    base_contract_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    chain_uuid = Column(UUID(as_uuid=True), nullable=True, index=True)
+
+    customer_company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("egr_companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    provider_company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("egr_companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    customer_unp = Column(BigInteger, nullable=True, index=True)
+    provider_unp = Column(BigInteger, nullable=True, index=True)
+    customer_gias_uuid = Column(UUID(as_uuid=True), nullable=True)
+    customer_name = Column(Text, nullable=True)
+    customer_location = Column(Text, nullable=True)
+    customer_region = Column(Integer, nullable=True)
+    customer_city_name = Column(Text, nullable=True)
+    customer_okogu_code = Column(Integer, nullable=True)
+    provider_name = Column(Text, nullable=True)
+    provider_address = Column(Text, nullable=True)
+    provider_country = Column(String(8), nullable=True)
+    provider_country_name = Column(String(255), nullable=True)
+
+    state = Column(String(40), nullable=True, index=True)
+    state_asfr = Column(String(40), nullable=True)
+    title = Column(Text, nullable=True)
+    price = Column(Numeric(20, 2), nullable=True)
+    currency_code = Column(String(8), nullable=True)
+    plan_number = Column(String(100), nullable=True, index=True)
+    contract_number = Column(String(255), nullable=True)
+    registration_number = Column(String(255), nullable=True, index=True)
+    contract_type = Column(String(100), nullable=True)
+    ets_id = Column(String(100), nullable=True)
+    contract_date = Column(DateTime, nullable=True, index=True)
+    execution_term = Column(DateTime, nullable=True)
+    real_execution_term = Column(DateTime, nullable=True)
+    termination_execution_term = Column(DateTime, nullable=True)
+    termination_reason = Column(Text, nullable=True)
+    has_smp = Column(Boolean, nullable=True)
+
+    source_created_at = Column(DateTime, nullable=True)
+    source_updated_at = Column(DateTime, nullable=True, index=True)
+    raw_summary = Column(JSONB, nullable=False, server_default="{}")
+    raw_detail = Column(JSONB, nullable=True)
+    sync_hash = Column(String(64), nullable=True)
+
+    detail_status = Column(
+        String(20), nullable=False, server_default="pending", index=True
+    )
+    detail_attempts = Column(Integer, nullable=False, server_default="0")
+    detail_last_error = Column(Text, nullable=True)
+    detail_next_retry_at = Column(DateTime, nullable=True, index=True)
+    detail_fetched_at = Column(DateTime, nullable=True)
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    positions = relationship(
+        "GiasContractPosition",
+        back_populates="contract",
+        cascade="all, delete-orphan",
+    )
+
+
+class GiasContractPosition(Base):
+    """Normalized line item from a GIAS contract detail."""
+
+    __tablename__ = "gias_contract_positions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    contract_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("gias_contracts.contract_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    public_number = Column(String(100), nullable=True, index=True)
+    title = Column(Text, nullable=True)
+    lot_uuid = Column(UUID(as_uuid=True), nullable=True)
+    lot_number = Column(Integer, nullable=True)
+    lot_title = Column(Text, nullable=True)
+    okpb_uuid = Column(UUID(as_uuid=True), nullable=True)
+    okpb_code = Column(String(64), nullable=True, index=True)
+    okpb_name = Column(Text, nullable=True)
+    volume = Column(Numeric(24, 6), nullable=True)
+    unit_uuid = Column(UUID(as_uuid=True), nullable=True)
+    unit_code = Column(String(32), nullable=True)
+    unit_name = Column(String(255), nullable=True)
+    unit_symbol = Column(String(64), nullable=True)
+    position_type = Column(String(100), nullable=True)
+    unit_price = Column(Numeric(20, 2), nullable=True)
+    position_price = Column(Numeric(20, 2), nullable=True)
+    countries = Column(JSONB, nullable=True)
+    country_names = Column(JSONB, nullable=True)
+    is_smp = Column(Boolean, nullable=True)
+    source_created_at = Column(DateTime, nullable=True)
+    source_updated_at = Column(DateTime, nullable=True)
+    raw_json = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    contract = relationship("GiasContract", back_populates="positions")
+
+
+class GiasContractSyncState(Base):
+    """Durable cursor for the initial traversal of the GIAS contract index."""
+
+    __tablename__ = "gias_contract_sync_state"
+
+    id = Column(Integer, primary_key=True)
+    next_page = Column(Integer, nullable=False, server_default="0")
+    total_pages = Column(Integer, nullable=True)
+    initial_complete = Column(Boolean, nullable=False, server_default=false())
+    updated_at = Column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class NalogDebtRecord(Base):

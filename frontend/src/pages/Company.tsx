@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SubscribeButton } from "@/components/SubscribeButton";
 import { CompanyMap } from "@/components/CompanyMap";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
+import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
 import { motion, type Variants, useScroll, useSpring } from "framer-motion";
 import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
@@ -1073,6 +1074,12 @@ const Company = () => {
                 </CardContent>
               </Card>
             </SectionCard>
+
+          {profile.gias_contracts && (
+            <SectionCard>
+              <GiasContractsSection contracts={profile.gias_contracts} />
+            </SectionCard>
+          )}
 
           {/* История названий */}
           {profile.names && profile.names.length > 0 && (
