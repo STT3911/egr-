@@ -148,87 +148,170 @@ class ReferenceService:
         if self._should_close_db:
             self.db.close()
     
-    def extract_references_from_raw_data(self) -> Dict[str, List[Dict]]:
+    def extract_references_from_raw_data(
+        self, batch_size: int = 500
+    ) -> Dict[str, List[Dict]]:
         """
         Извлекает справочники из egr_raw_company_data (из data или из колонок base_info/addresses/ved/names).
         Сканирует base_info, а также элементы массивов addresses и ved.
+
+        Данные читаются keyset-порциями, чтобы драйвер PostgreSQL не держал
+        содержимое всей raw-таблицы в памяти процесса Celery.
         """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero")
+
         logger.info("Extracting reference data from egr_raw_company_data")
         references = {}
 
-        # Выбираем строки, где есть что парсить (data или все 4 колонки)
+        # Не выбираем полный data и не используем поле names. В старых строках
+        # нужные части могут находиться только внутри data, а в новых — в
+        # отдельных колонках.
         query = text("""
-            SELECT data, base_info, addresses, ved, names
+            SELECT
+                unp,
+                CASE
+                    WHEN jsonb_typeof(data->'base_info') = 'object'
+                        THEN data->'base_info'
+                    WHEN jsonb_typeof(base_info) = 'object'
+                        THEN base_info
+                    ELSE '{}'::jsonb
+                END AS resolved_base_info,
+                CASE
+                    WHEN jsonb_typeof(data->'addresses') = 'array'
+                        THEN data->'addresses'
+                    WHEN jsonb_typeof(addresses) = 'array'
+                        THEN addresses
+                    ELSE '[]'::jsonb
+                END AS resolved_addresses,
+                CASE
+                    WHEN jsonb_typeof(data->'ved') = 'array'
+                        THEN data->'ved'
+                    WHEN jsonb_typeof(ved) = 'array'
+                        THEN ved
+                    ELSE '[]'::jsonb
+                END AS resolved_ved
             FROM egr_raw_company_data
-            WHERE data IS NOT NULL OR base_info IS NOT NULL
+            WHERE unp > :last_unp
+              AND (data IS NOT NULL OR base_info IS NOT NULL)
+            ORDER BY unp
+            LIMIT :batch_size
         """)
-        result = self.db.execute(query)
+        last_unp = -1
+        processed_rows = 0
 
-        for row in result:
-            data, base_info_col, addresses_col, ved_col, names_col = row[0], row[1], row[2], row[3], row[4]
-            if data is None and base_info_col is None:
-                continue
-            base_info = (data or {}).get("base_info") if isinstance(data, dict) else base_info_col
-            if not isinstance(base_info, dict):
-                base_info = base_info_col if isinstance(base_info_col, dict) else {}
-            addresses = (data or {}).get("addresses") if isinstance(data, dict) else addresses_col
-            if not isinstance(addresses, list):
-                addresses = addresses_col if isinstance(addresses_col, list) else []
-            ved_list = (data or {}).get("ved") if isinstance(data, dict) else ved_col
-            if not isinstance(ved_list, list):
-                ved_list = ved_col if isinstance(ved_col, list) else []
+        while True:
+            rows = self.db.execute(
+                query,
+                {"last_unp": last_unp, "batch_size": batch_size},
+            ).fetchall()
+            if not rows:
+                break
 
-            for table_name, mapping in self.REFERENCE_MAPPINGS.items():
-                if table_name not in references:
-                    references[table_name] = {}
+            for row in rows:
+                _, base_info, addresses, ved_list = row
+                base_info = base_info if isinstance(base_info, dict) else {}
+                addresses = addresses if isinstance(addresses, list) else []
+                ved_list = ved_list if isinstance(ved_list, list) else []
 
-                json_path = mapping["json_path"]
+                for table_name, mapping in self.REFERENCE_MAPPINGS.items():
+                    if table_name not in references:
+                        references[table_name] = {}
 
-                if table_name == "ref_authorities":
-                    for suffix in ["", "CRT", "LKV"]:
-                        path = json_path + suffix
-                        ref_data = base_info.get(path)
+                    json_path = mapping["json_path"]
+
+                    if table_name == "ref_authorities":
+                        for suffix in ["", "CRT", "LKV"]:
+                            path = json_path + suffix
+                            ref_data = base_info.get(path)
+                            if ref_data and isinstance(ref_data, dict):
+                                self._extract_reference_item(
+                                    ref_data,
+                                    mapping,
+                                    references[table_name],
+                                )
+                    else:
+                        ref_data = base_info.get(json_path)
                         if ref_data and isinstance(ref_data, dict):
-                            self._extract_reference_item(ref_data, mapping, references[table_name])
-                else:
-                    ref_data = base_info.get(json_path)
-                    if ref_data and isinstance(ref_data, dict):
-                        self._extract_reference_item(ref_data, mapping, references[table_name])
+                            self._extract_reference_item(
+                                ref_data,
+                                mapping,
+                                references[table_name],
+                            )
 
-            # Справочники из адресов (страны, СОАТО, типы улиц, помещений, населённых пунктов)
-            for addr in addresses:
-                if not isinstance(addr, dict):
-                    continue
-                for path in ("nsi00201", "nsi00202", "nsi00226", "nsi00239", "nsi00234"):
-                    ref_data = addr.get(path)
-                    if ref_data and isinstance(ref_data, dict):
-                        table = {"nsi00201": "ref_countries", "nsi00202": "ref_soato", "nsi00226": "ref_street_types",
-                                 "nsi00239": "ref_settlement_types", "nsi00234": "ref_room_categories"}.get(path)
-                        if table and table in self.REFERENCE_MAPPINGS:
-                            if table not in references:
-                                references[table] = {}
-                            self._extract_reference_item(ref_data, self.REFERENCE_MAPPINGS[table], references[table])
+                # Справочники из адресов (страны, СОАТО, типы улиц,
+                # помещений, населённых пунктов).
+                for addr in addresses:
+                    if not isinstance(addr, dict):
+                        continue
+                    for path in (
+                        "nsi00201",
+                        "nsi00202",
+                        "nsi00226",
+                        "nsi00239",
+                        "nsi00234",
+                    ):
+                        ref_data = addr.get(path)
+                        if ref_data and isinstance(ref_data, dict):
+                            table = {
+                                "nsi00201": "ref_countries",
+                                "nsi00202": "ref_soato",
+                                "nsi00226": "ref_street_types",
+                                "nsi00239": "ref_settlement_types",
+                                "nsi00234": "ref_room_categories",
+                            }.get(path)
+                            if table and table in self.REFERENCE_MAPPINGS:
+                                if table not in references:
+                                    references[table] = {}
+                                self._extract_reference_item(
+                                    ref_data,
+                                    self.REFERENCE_MAPPINGS[table],
+                                    references[table],
+                                )
 
-            # Справочник ВЭД из массива ved (nsi00114 или nsi00118)
-            for ved_item in ved_list:
-                if not isinstance(ved_item, dict):
-                    continue
-                for key in ("nsi00114", "nsi00118"):
-                    ref_data = ved_item.get(key)
-                    if ref_data and isinstance(ref_data, dict):
-                        if "ref_ved" not in references:
-                            references["ref_ved"] = {}
-                        m = self.REFERENCE_MAPPINGS["ref_ved"]
-                        rid = ref_data.get(m["id_field"]) or ref_data.get("nkved")
-                        if rid is not None:
-                            ref_name = ref_data.get(m["name_field"]) or ref_data.get("vnved")
-                            code = ref_data.get(m.get("code_field") or "vkvdn") or ref_data.get("nkved")
-                            references["ref_ved"][rid] = {"id": rid, "name": ref_name or "", "code": code, "system_id": m["system_id"]}
-                        break
+                # Справочник ВЭД из массива ved (nsi00114 или nsi00118).
+                for ved_item in ved_list:
+                    if not isinstance(ved_item, dict):
+                        continue
+                    for key in ("nsi00114", "nsi00118"):
+                        ref_data = ved_item.get(key)
+                        if ref_data and isinstance(ref_data, dict):
+                            if "ref_ved" not in references:
+                                references["ref_ved"] = {}
+                            mapping = self.REFERENCE_MAPPINGS["ref_ved"]
+                            rid = ref_data.get(mapping["id_field"]) or ref_data.get(
+                                "nkved"
+                            )
+                            if rid is not None:
+                                ref_name = ref_data.get(
+                                    mapping["name_field"]
+                                ) or ref_data.get("vnved")
+                                code = ref_data.get(
+                                    mapping.get("code_field") or "vkvdn"
+                                ) or ref_data.get("nkved")
+                                references["ref_ved"][rid] = {
+                                    "id": rid,
+                                    "name": ref_name or "",
+                                    "code": code,
+                                    "system_id": mapping["system_id"],
+                                }
+                            break
+
+            processed_rows += len(rows)
+            last_unp = rows[-1][0]
+            if processed_rows % (batch_size * 100) == 0:
+                logger.info(
+                    "Reference extraction progress: %s raw rows",
+                    processed_rows,
+                )
 
         for table_name in references:
             references[table_name] = list(references[table_name].values())
-        logger.info(f"Extracted references: {[(k, len(v)) for k, v in references.items()]}")
+        logger.info(
+            "Extracted references from %s raw rows: %s",
+            processed_rows,
+            [(k, len(v)) for k, v in references.items()],
+        )
         return references
     
     def _is_authority_name_placeholder(self, name: Optional[str]) -> bool:
@@ -356,5 +439,3 @@ class ReferenceService:
         query = text(f"SELECT COUNT(*) FROM {table_name}")
         result = self.db.execute(query)
         return result.scalar()
-
-
