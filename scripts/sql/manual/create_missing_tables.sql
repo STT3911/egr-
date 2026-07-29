@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_ref_countries_name ON ref_countries(name);
 
 -- 8. ref_soato
 CREATE TABLE IF NOT EXISTS ref_soato (
-    id INTEGER PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     code BIGINT,
     name VARCHAR NOT NULL,
     object_number INTEGER,
@@ -203,5 +203,4 @@ CREATE TABLE IF NOT EXISTS egr_company_events (
 CREATE INDEX IF NOT EXISTS idx_egr_company_events_company_id ON egr_company_events(company_id);
 CREATE INDEX IF NOT EXISTS idx_egr_company_events_event_type_id ON egr_company_events(event_type_id);
 CREATE INDEX IF NOT EXISTS idx_egr_company_events_event_date ON egr_company_events(event_date);
-
 

@@ -1,6 +1,7 @@
 """Service for managing reference tables (справочники)"""
 import gc
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -66,7 +67,8 @@ class ReferenceService:
             "code_field": "nksoato",
             "name_field": "vnsfull",
             "object_number_field": "objectnumber",
-            "system_id": 202
+            "system_id": 202,
+            "_integer_fields": ("id", "code", "object_number"),
         },
         "ref_foundations": {
             "json_path": "nsi00213",
@@ -349,6 +351,20 @@ class ReferenceService:
             return "Неизвестный орган"
         return name
 
+    @staticmethod
+    def _normalize_integer(value: Any) -> Any:
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value
+        try:
+            number = Decimal(str(value).strip())
+        except (InvalidOperation, ValueError):
+            return value
+        if not number.is_finite() or number != number.to_integral_value():
+            return value
+        return int(number)
+
     def _extract_reference_item(
         self, 
         ref_data: Dict, 
@@ -357,6 +373,9 @@ class ReferenceService:
     ):
         """Extract single reference item from JSON data"""
         ref_id = ref_data.get(mapping["id_field"])
+        integer_fields = mapping.get("_integer_fields", ())
+        if "id" in integer_fields:
+            ref_id = self._normalize_integer(ref_id)
         
         if not ref_id:
             return
@@ -382,10 +401,16 @@ class ReferenceService:
         
         # Add optional fields
         if "code_field" in mapping:
-            item["code"] = ref_data.get(mapping["code_field"])
+            code = ref_data.get(mapping["code_field"])
+            if "code" in integer_fields:
+                code = self._normalize_integer(code)
+            item["code"] = code
         
         if "object_number_field" in mapping:
-            item["object_number"] = ref_data.get(mapping["object_number_field"])
+            object_number = ref_data.get(mapping["object_number_field"])
+            if "object_number" in integer_fields:
+                object_number = self._normalize_integer(object_number)
+            item["object_number"] = object_number
         
         target_dict[ref_id] = item
     

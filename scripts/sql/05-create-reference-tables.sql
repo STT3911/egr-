@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_ref_countries_name ON ref_countries(name);
 
 -- 8. ref_soato
 CREATE TABLE IF NOT EXISTS ref_soato (
-    id INTEGER PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     code BIGINT,
     name VARCHAR NOT NULL,
     object_number INTEGER,

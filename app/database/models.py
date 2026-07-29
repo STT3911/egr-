@@ -962,7 +962,7 @@ class ReferenceSOATO(Base):
     """Справочник СОАТО (территории РБ) - TSI00202"""
     __tablename__ = "ref_soato"
     
-    id = Column(Integer, primary_key=True)
+    id = Column(BigInteger, primary_key=True)
     code = Column(BigInteger)
     name = Column(String, nullable=False)
     object_number = Column(Integer)
