@@ -65,14 +65,35 @@ def find_latest_known_seq(region: int, known_tables: list[str]) -> int | None:
     lower_unp = region * 100_000_000
     upper_unp = (region + 1) * 100_000_000
     latest_unp: int | None = None
+    source_filters = {
+        "egr_companies": "TRUE",
+        "egr_raw_company_data": (
+            "(data IS NOT NULL OR base_info IS NOT NULL) "
+            "AND last_error IS NULL"
+        ),
+        "grp_raw_data": (
+            "http_status = 200 "
+            "AND raw_json IS NOT NULL "
+            "AND raw_json <> '{}'::jsonb"
+        ),
+        "grp_taxpayer_data": "TRUE",
+    }
     db = SessionLocal()
     try:
         for table_name in known_tables:
+            source_filter = source_filters.get(table_name)
+            if source_filter is None:
+                logger.warning(
+                    "frontier lookup skipped unsupported table %s",
+                    table_name,
+                )
+                continue
             try:
                 value = db.execute(
                     text(
                         f"SELECT MAX(unp) FROM {table_name} "
-                        "WHERE unp >= :lower_unp AND unp < :upper_unp"
+                        "WHERE unp >= :lower_unp AND unp < :upper_unp "
+                        f"AND ({source_filter})"
                     ),
                     {"lower_unp": lower_unp, "upper_unp": upper_unp},
                 ).scalar()

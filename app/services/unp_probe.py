@@ -8,6 +8,7 @@ from typing import Literal
 
 import httpx
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.crud.grp import GrpCRUD
 from app.services.aggregator import AggregatorService
@@ -89,6 +90,7 @@ async def _egr_request(
     response = await http_client.get(
         f"{client_object.base_url}/{endpoint}",
         params=params,
+        timeout=settings.UNP_EGR_PROBE_TIMEOUT_SECONDS,
     )
     if response.status_code in {204, 400, 404}:
         return None
@@ -103,10 +105,16 @@ async def _fetch_egr_once(
     aggregator: AggregatorService,
     unp: str,
 ) -> tuple[dict | None, str]:
-    legacy_payload = await _egr_request(
-        aggregator.egr_client,
-        f"getBaseInfoByRegNum/{int(unp)}",
-    )
+    legacy_error: Exception | None = None
+    try:
+        legacy_payload = await _egr_request(
+            aggregator.egr_client,
+            f"getBaseInfoByRegNum/{int(unp)}",
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        legacy_payload = None
+        legacy_error = exc
+
     base_info = _first_dict(legacy_payload)
     if base_info:
         is_juridical = base_info.get("nsi00211", {}).get("nkvob") == 1
@@ -128,7 +136,11 @@ async def _fetch_egr_once(
                 aggregator.egr_client,
                 f"{name_endpoint}/{int(unp)}",
             ),
+            return_exceptions=True,
         )
+        addresses_raw = None if isinstance(addresses_raw, Exception) else addresses_raw
+        ved_raw = None if isinstance(ved_raw, Exception) else ved_raw
+        names_raw = None if isinstance(names_raw, Exception) else names_raw
         return {
             "base_info": base_info,
             "addresses": _dict_list(addresses_raw),
@@ -136,6 +148,7 @@ async def _fetch_egr_once(
             "names": _dict_list(names_raw),
         }, "legacy"
 
+    mobile_checked = False
     if aggregator.mobile_client is not None:
         try:
             mobile_payload = await _egr_request(
@@ -143,9 +156,14 @@ async def _fetch_egr_once(
                 "extracts/commonInfo",
                 params={"pan": unp},
             )
-        except httpx.HTTPStatusError as exc:
-            if exc.response is not None and exc.response.status_code >= 500:
-                return None, ""
+            mobile_checked = True
+        except (httpx.HTTPError, ValueError) as exc:
+            if legacy_error is not None:
+                raise ValueError(
+                    "EGR endpoints failed: "
+                    f"legacy={type(legacy_error).__name__}: {legacy_error!r}; "
+                    f"mobile={type(exc).__name__}: {exc!r}"
+                ) from exc
             raise
         common_info = _first_dict(mobile_payload)
         if common_info:
@@ -153,6 +171,12 @@ async def _fetch_egr_once(
                 "common_info": common_info,
                 "place_location": None,
             }, "mobile"
+
+    if legacy_error is not None and not mobile_checked:
+        raise ValueError(
+            f"EGR legacy endpoint failed: "
+            f"{type(legacy_error).__name__}: {legacy_error!r}"
+        ) from legacy_error
 
     return None, ""
 
@@ -166,6 +190,7 @@ async def fetch_egr(
     cooldown: float,
 ) -> SourceResult:
     attempt = 0
+    retry_limit = min(max_retries, settings.UNP_EGR_PROBE_MAX_RETRIES)
     while True:
         try:
             payload, source_variant = await _fetch_egr_once(aggregator, unp)
@@ -186,23 +211,23 @@ async def fetch_egr(
             status = exc.response.status_code if exc.response is not None else None
             attempt += 1
             retryable = status == 429 or status is None or status >= 500
-            if not retryable or attempt > max_retries:
+            if not retryable or attempt > retry_limit:
                 return SourceResult(
                     source="egr",
                     status="error",
                     http_status=status,
-                    error=str(exc),
+                    error=f"{type(exc).__name__}: {exc!r}",
                 )
             await asyncio.sleep(
                 cooldown if status == 429 else retry_delay * attempt
             )
         except (httpx.HTTPError, ValueError) as exc:
             attempt += 1
-            if attempt > max_retries:
+            if attempt > retry_limit:
                 return SourceResult(
                     source="egr",
                     status="error",
-                    error=str(exc),
+                    error=f"{type(exc).__name__}: {exc!r}",
                 )
             await asyncio.sleep(retry_delay * attempt)
 
