@@ -1610,34 +1610,51 @@ def update_reference_tables():
     from sqlalchemy import text
 
     logger.info("🔄 Начинаю обновление справочников...")
+    db = SessionLocal()
+    lock_name = "egr:update_reference_tables"
+    lock_acquired = False
     try:
-        ref_svc = ReferenceService()
-        try:
-            ref_svc.update_all_references()
-        finally:
-            ref_svc.close()
+        lock_acquired = bool(
+            db.execute(
+                text("SELECT pg_try_advisory_lock(hashtext(:lock_name))"),
+                {"lock_name": lock_name},
+            ).scalar()
+        )
+        if not lock_acquired:
+            logger.info("⏭️ Обновление справочников уже выполняется — пропускаю дубль")
+            return {"status": "skipped", "reason": "already_running"}
 
-        db = SessionLocal()
-        try:
-            stats_query = text("""
-                SELECT
-                    (SELECT COUNT(*) FROM ref_statuses) as statuses,
-                    (SELECT COUNT(*) FROM ref_creation_methods) as creation_methods,
-                    (SELECT COUNT(*) FROM ref_entity_types) as entity_types,
-                    (SELECT COUNT(*) FROM ref_authorities) as authorities,
-                    (SELECT COUNT(*) FROM ref_liquidation_methods) as liquidation_methods
-            """)
-            row = db.execute(stats_query).fetchone()
-            stats = dict(row._mapping) if hasattr(row, "_mapping") else {}
-            logger.info("📊 Статистика справочников: %s", stats)
-        finally:
-            db.close()
+        ref_svc = ReferenceService(db=db)
+        extracted = ref_svc.update_all_references()
+
+        stats_query = text("""
+            SELECT
+                (SELECT COUNT(*) FROM ref_statuses) as statuses,
+                (SELECT COUNT(*) FROM ref_creation_methods) as creation_methods,
+                (SELECT COUNT(*) FROM ref_entity_types) as entity_types,
+                (SELECT COUNT(*) FROM ref_authorities) as authorities,
+                (SELECT COUNT(*) FROM ref_liquidation_methods) as liquidation_methods
+        """)
+        row = db.execute(stats_query).fetchone()
+        stats = dict(row._mapping) if hasattr(row, "_mapping") else {}
+        logger.info("📊 Статистика справочников: %s", stats)
 
         logger.info("✅ Справочники успешно обновлены")
-        return True
+        return {"status": "ok", "extracted": extracted, "stored": stats}
     except Exception as e:
+        db.rollback()
         logger.exception("❌ Ошибка при обновлении справочников: %s", e)
-        return False
+        raise
+    finally:
+        if lock_acquired:
+            try:
+                db.execute(
+                    text("SELECT pg_advisory_unlock(hashtext(:lock_name))"),
+                    {"lock_name": lock_name},
+                )
+            except Exception:
+                logger.warning("Не удалось явно снять advisory lock справочников", exc_info=True)
+        db.close()
 
 
 @celery_app.task(bind=True, max_retries=3, time_limit=600, soft_time_limit=540)

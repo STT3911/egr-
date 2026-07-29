@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple, List
 from dateutil.parser import parse as dt_parse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database.models import GrpTaxpayerData, GrpRawData
 from app.utils.address_formatter import format_grp_address
@@ -46,8 +47,23 @@ class GrpCRUD:
         record = self.db.query(GrpRawData).filter(GrpRawData.unp == unp).first()
         
         if not record:
-            record = GrpRawData(unp=unp)
-            self.db.add(record)
+            self.db.execute(
+                pg_insert(GrpRawData)
+                .values(
+                    unp=unp,
+                    raw_json=raw_json or {},
+                    http_status=http_status,
+                    last_error=error,
+                    updated_at=datetime.now(),
+                    parsed=False,
+                )
+                .on_conflict_do_nothing(index_elements=[GrpRawData.unp])
+            )
+            record = (
+                self.db.query(GrpRawData)
+                .filter(GrpRawData.unp == unp)
+                .one()
+            )
 
         has_payload = isinstance(raw_json, dict) and bool(raw_json)
         updated_at = datetime.now()
@@ -118,12 +134,6 @@ class GrpCRUD:
         
         payload = raw_record.raw_json
         
-        # Получить или создать запись в grp_taxpayer_data
-        parsed_record = self.db.query(GrpTaxpayerData).filter(GrpTaxpayerData.unp == unp).first()
-        if not parsed_record:
-            parsed_record = GrpTaxpayerData(unp=unp)
-            self.db.add(parsed_record)
-        
         # Парсинг полей
         def g(*keys: str) -> Optional[Any]:
             """Get value from payload with case-insensitive key matching."""
@@ -135,22 +145,35 @@ class GrpCRUD:
                     return payload.get(lk)
             return None
         
-        parsed_record.full_name = g("VNAIMP", "vnaimp")
-        parsed_record.short_name = g("VNAIMK", "vnaimk")
-        parsed_record.registration_date = _parse_date(g("DREG", "dreg"))
-        parsed_record.inspectorate_code = g("NMNS", "nmns")
-        parsed_record.inspectorate_name = g("VMNS", "vmns")
-        parsed_record.status_code = g("CKODSOST", "ckodsost")
-        parsed_record.status_date = _parse_date(g("DLIKV", "dlikv"))
-        parsed_record.address = format_grp_address(g("VPADRES", "vpadres"))
-        parsed_record.updated_at = datetime.now()
+        values = {
+            "unp": unp,
+            "full_name": g("VNAIMP", "vnaimp"),
+            "short_name": g("VNAIMK", "vnaimk"),
+            "registration_date": _parse_date(g("DREG", "dreg")),
+            "inspectorate_code": g("NMNS", "nmns"),
+            "inspectorate_name": g("VMNS", "vmns"),
+            "status_code": g("CKODSOST", "ckodsost"),
+            "status_date": _parse_date(g("DLIKV", "dlikv")),
+            "address": format_grp_address(g("VPADRES", "vpadres")),
+            "updated_at": datetime.now(),
+        }
+        stmt = pg_insert(GrpTaxpayerData).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[GrpTaxpayerData.unp],
+            set_={
+                field: getattr(stmt.excluded, field)
+                for field in values
+                if field != "unp"
+            },
+        )
+        self.db.execute(stmt)
         
         # Обновить флаг парсинга в raw таблице
         raw_record.parsed = True
         raw_record.parsed_at = datetime.now()
         
         self.db.flush()
-        return parsed_record
+        return self.get_by_unp(unp)
     
     def parse_batch(self, limit: int = 100) -> Tuple[int, int]:
         """Распарсить пакет неспарсенных записей. Возвращает (успешно, ошибок)."""
@@ -161,15 +184,19 @@ class GrpCRUD:
         
         for raw_record in unparsed:
             try:
-                parsed_record = self.parse_from_raw(raw_record.unp)
+                with self.db.begin_nested():
+                    parsed_record = self.parse_from_raw(raw_record.unp)
                 if parsed_record is not None:
                     success += 1
             except Exception as e:
                 errors += 1
-                # Можно логировать ошибку
                 raw_record.last_error = f"Parse error: {str(e)}"
         
-        self.db.commit()
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return success, errors
 
     def reconcile_preserved_rows(self, limit: int = 1000) -> int:

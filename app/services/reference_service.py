@@ -1,4 +1,5 @@
 """Service for managing reference tables (справочники)"""
+import gc
 import re
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
@@ -149,7 +150,7 @@ class ReferenceService:
             self.db.close()
     
     def extract_references_from_raw_data(
-        self, batch_size: int = 500
+        self, batch_size: int = 100
     ) -> Dict[str, List[Dict]]:
         """
         Извлекает справочники из egr_raw_company_data (из data или из колонок base_info/addresses/ved/names).
@@ -199,12 +200,15 @@ class ReferenceService:
         """)
         last_unp = -1
         processed_rows = 0
+        processed_batches = 0
 
         while True:
-            rows = self.db.execute(
+            result = self.db.execute(
                 query,
                 {"last_unp": last_unp, "batch_size": batch_size},
-            ).fetchall()
+            )
+            rows = result.fetchall()
+            result.close()
             if not rows:
                 break
 
@@ -298,7 +302,12 @@ class ReferenceService:
                             break
 
             processed_rows += len(rows)
+            processed_batches += 1
             last_unp = rows[-1][0]
+            del rows
+            if processed_batches % 100 == 0:
+                self.db.commit()
+                gc.collect()
             if processed_rows % (batch_size * 100) == 0:
                 logger.info(
                     "Reference extraction progress: %s raw rows",
@@ -422,17 +431,19 @@ class ReferenceService:
             self.db.rollback()
             raise
     
-    def update_all_references(self):
+    def update_all_references(self) -> Dict[str, int]:
         """Extract and update all reference tables from raw data"""
         logger.info("Starting full reference tables update")
         
         references = self.extract_references_from_raw_data()
+        counts = {table_name: len(items) for table_name, items in references.items()}
         
         for table_name, items in references.items():
             if items:
                 self.upsert_references(table_name, items)
         
         logger.info("Reference tables update completed")
+        return counts
     
     def get_reference_count(self, table_name: str) -> int:
         """Get count of records in reference table"""
