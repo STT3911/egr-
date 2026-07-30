@@ -648,14 +648,14 @@ const Company = () => {
         </div>
 
         {unp && (
-          <div className="rounded-2xl border border-border/70 bg-card/95 p-2.5 shadow-soft">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+          <div className="space-y-2 rounded-2xl border border-border/70 bg-card/95 p-3 shadow-soft">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <Button
                 type="button"
                 variant="default"
                 onClick={handleDownloadReport}
                 disabled={reportDownloading || !profile}
-                className="w-full"
+                className="w-full min-w-0"
               >
                 {reportDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                 Скачать досье
@@ -666,24 +666,26 @@ const Company = () => {
                 variant="outline"
                 onClick={handleShareCompany}
                 disabled={!profile}
-                className="w-full glass hover:bg-primary/10 dark:hover:bg-primary/20"
+                className="w-full min-w-0 glass hover:bg-primary/10 dark:hover:bg-primary/20"
               >
                 <Share2 className="h-4 w-4" />
                 Поделиться
               </Button>
-              <Button asChild variant="outline" className="w-full glass hover:bg-primary/10 dark:hover:bg-primary/20">
+            </div>
+            <div className="grid grid-cols-1 gap-2 border-t border-border/60 pt-2 sm:grid-cols-3">
+              <Button asChild size="sm" variant="outline" className="w-full min-w-0 glass hover:bg-primary/10 dark:hover:bg-primary/20">
                 <Link to={`/company/${unp}/raw`}>
                   <Database className="h-4 w-4" />
                   Raw данные
                 </Link>
               </Button>
-              <Button asChild variant="outline" className="w-full glass hover:bg-accent/10 dark:hover:bg-accent/20">
+              <Button asChild size="sm" variant="outline" className="w-full min-w-0 glass hover:bg-accent/10 dark:hover:bg-accent/20">
                 <Link to={`/company/${unp}/compare`}>
                   <Activity className="h-4 w-4" />
                   Сравнение API
                 </Link>
               </Button>
-              <Button asChild variant="outline" className="w-full glass hover:bg-primary/10 dark:hover:bg-primary/20">
+              <Button asChild size="sm" variant="outline" className="w-full min-w-0 glass hover:bg-primary/10 dark:hover:bg-primary/20">
                 <Link to={`/company/${unp}/relations`}>
                   <Users className="h-4 w-4" />
                   Карта связей

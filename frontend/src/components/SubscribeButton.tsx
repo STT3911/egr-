@@ -23,7 +23,7 @@ import {
 } from "@/lib/api";
 
 const btnClass =
-  "w-full glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300 text-sm sm:text-base";
+  "w-full min-w-0 glass transition-all duration-300 text-sm sm:text-base";
 
 export function SubscribeButton({ unp }: { unp: string | number }) {
   const unpNum = Number(unp);
@@ -92,9 +92,17 @@ export function SubscribeButton({ unp }: { unp: string | number }) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button variant={existing ? "default" : "outline"} onClick={openDialog} className={btnClass}>
+      <Button
+        variant="outline"
+        onClick={openDialog}
+        className={`${btnClass} ${
+          existing
+            ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+            : "hover:bg-primary/10 dark:hover:bg-primary/20"
+        }`}
+      >
         {existing ? <BellRing className="mr-2 h-4 w-4" /> : <Bell className="mr-2 h-4 w-4" />}
-        {existing ? "Подписка активна" : "Подписаться"}
+        {existing ? "Отслеживается" : "Подписаться"}
       </Button>
 
       <DialogContent className="max-w-md">
