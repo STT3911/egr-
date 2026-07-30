@@ -11,6 +11,13 @@ import httpx
 
 from app.core.database import SessionLocal
 from app.database.models import User, CompanySubscription
+from app.services.telegram_link import (
+    TelegramAlreadyLinked,
+    TelegramLinkError,
+    TelegramLinkUnavailable,
+    consume_telegram_link,
+    link_telegram_user,
+)
 from app.telegram_bot.formatting import (
     HELP_TEXT,
     company_keyboard,
@@ -176,12 +183,24 @@ class TelegramBot:
         if chat_id is None:
             return
 
-        if text in {"/start", "/help"}:
+        lower = text.lower()
+        command = lower.split(maxsplit=1)[0].split("@", 1)[0] if lower else ""
+        if command == "/start":
+            parts = text.split(maxsplit=1)
+            argument = parts[1].strip() if len(parts) > 1 else ""
+            if argument.startswith("link_"):
+                await self._handle_link_account(
+                    chat_id,
+                    telegram_id,
+                    argument.removeprefix("link_"),
+                )
+            else:
+                await self.telegram.send_message(chat_id, HELP_TEXT)
+            return
+        if command == "/help":
             await self.telegram.send_message(chat_id, HELP_TEXT)
             return
 
-        lower = text.lower()
-        command = lower.split(maxsplit=1)[0].split("@", 1)[0] if lower else ""
         if command == "/more":
             parts = text.split(maxsplit=1)
             unp_str = parts[1].strip() if len(parts) > 1 else ""
@@ -218,6 +237,76 @@ class TelegramBot:
 
         await self._send_lookup(chat_id, text)
 
+    async def _handle_link_account(
+        self,
+        chat_id: int,
+        telegram_id: int | None,
+        token: str,
+    ) -> None:
+        if not telegram_id:
+            await self.telegram.send_message(
+                chat_id,
+                "Не удалось определить ваш Telegram ID.",
+            )
+            return
+
+        try:
+            target_user_id = consume_telegram_link(token)
+        except TelegramLinkUnavailable:
+            await self.telegram.send_message(
+                chat_id,
+                "Сервис привязки временно недоступен. Создайте новую ссылку на сайте позже.",
+            )
+            return
+        if not target_user_id:
+            await self.telegram.send_message(
+                chat_id,
+                "Ссылка недействительна или уже истекла. Создайте новую в центре событий.",
+            )
+            return
+
+        db = SessionLocal()
+        try:
+            result = link_telegram_user(
+                db,
+                target_user_id=target_user_id,
+                telegram_id=telegram_id,
+            )
+            db.commit()
+            details = ""
+            if result.subscriptions_moved:
+                details = (
+                    f"\nПеренесено подписок из бота: {result.subscriptions_moved}."
+                )
+            await self.telegram.send_message(
+                chat_id,
+                "✅ <b>Telegram подключён к аккаунту TENDEX.</b>\n"
+                "Теперь изменения по веб-подпискам будут приходить сюда."
+                f"{details}",
+            )
+        except TelegramAlreadyLinked as exc:
+            db.rollback()
+            await self.telegram.send_message(chat_id, escape(str(exc)))
+        except TelegramLinkError:
+            db.rollback()
+            await self.telegram.send_message(
+                chat_id,
+                "Не удалось привязать аккаунт. Создайте новую ссылку на сайте.",
+            )
+        except Exception as exc:
+            db.rollback()
+            logger.exception(
+                "Telegram account link failed telegram_id=%s: %s",
+                telegram_id,
+                exc,
+            )
+            await self.telegram.send_message(
+                chat_id,
+                "Ошибка при привязке аккаунта. Попробуйте ещё раз позже.",
+            )
+        finally:
+            db.close()
+
     async def _handle_subscribe(self, chat_id: int, telegram_id: int | None, unp_str: str) -> None:
         if not telegram_id:
             await self.telegram.send_message(chat_id, "Не удалось определить ваш Telegram ID.")
@@ -253,7 +342,7 @@ class TelegramBot:
             await self.telegram.send_message(
                 chat_id,
                 f"✅ Подписка на УНП <code>{escape(unp_str)}</code> оформлена.\n"
-                "Вы получите уведомление при изменениях в ЕГР.",
+                "Вы получите уведомление при изменениях по всем доступным источникам.",
             )
         except Exception as exc:
             db.rollback()

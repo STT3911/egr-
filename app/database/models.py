@@ -904,7 +904,7 @@ class SubscriptionEvent(Base):
     """
     Очередь сработавших событий по подпискам.
     Пишется при обработке данных, когда у компании произошло изменение,
-    на которое кто-то подписан. processed_at — задел под доставку/пулинг (позже).
+    на которое кто-то подписан.
     """
     __tablename__ = "subscription_events"
 
@@ -916,6 +916,8 @@ class SubscriptionEvent(Base):
     new_value = Column(Text, nullable=True)   # стало
     occurred_at = Column(DateTime, nullable=False, server_default=func.now())  # когда событие возникло
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    # Когда пользователь прочитал событие в веб-интерфейсе.
+    read_at = Column(DateTime, nullable=True, index=True)
     # Когда полностью обработано = доставлено во все каналы, настроенные у юзера.
     # NULL = ещё не завершено; можно сбросить в NULL для повторной обработки.
     processed_at = Column(DateTime, nullable=True, index=True)

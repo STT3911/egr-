@@ -15,10 +15,12 @@ from html import escape
 
 import requests
 
-from app.tasks.celery_app import celery_app
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.database.models import User, SubscriptionEvent
 from app.services.auth import sign_payload
+from app.services.company_names import get_company_names
+from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +51,19 @@ _EVENT_SOURCE_TITLE = {
 }
 
 
-def _format_event_telegram(e: SubscriptionEvent) -> str:
+def _format_event_telegram(
+    e: SubscriptionEvent,
+    company_name: str | None = None,
+) -> str:
     is_egr = e.event_type in _EGR_EVENTS
     if is_egr:
         title = "📋 Изменение в ЕГР"
     else:
         title = _EVENT_SOURCE_TITLE.get(e.event_type, "🔔 Изменение")
-    lines = [f"<b>{title}</b>", f"УНП: <code>{e.unp}</code>"]
+    lines = [f"<b>{title}</b>"]
+    if company_name:
+        lines.append(f"<b>{escape(company_name[:300])}</b>")
+    lines.append(f"УНП: <code>{e.unp}</code>")
     # Для ЕГР заголовок общий — уточняем что именно изменилось.
     if is_egr:
         lines.append(f"Событие: {_EVENT_LABELS[e.event_type]}")
@@ -63,6 +71,12 @@ def _format_event_telegram(e: SubscriptionEvent) -> str:
         lines.append(f"Было: {escape(str(e.old_value)[:300])}")
     if e.new_value:
         lines.append(f"Стало: {escape(str(e.new_value)[:300])}")
+    app_url = (settings.APP_URL or "").rstrip("/")
+    if app_url:
+        company_url = f"{app_url}/company/{e.unp}"
+        lines.append(
+            f'<a href="{escape(company_url, quote=True)}">Открыть карточку компании</a>'
+        )
     return "\n".join(lines)
 
 
@@ -175,8 +189,6 @@ def deliver_subscription_events():
 @celery_app.task
 def deliver_telegram_events():
     """Доставка событий подписок в Telegram (пользователи с заданным telegram_id)."""
-    from app.core.config import settings
-
     if not settings.TELEGRAM_BOT_TOKEN:
         return 0
 
@@ -216,9 +228,13 @@ def deliver_telegram_events():
             if not events:
                 continue
 
+            company_names = get_company_names(db, {event.unp for event in events})
             now = datetime.now()
             for event in events:
-                text = _format_event_telegram(event)
+                text = _format_event_telegram(
+                    event,
+                    company_names.get(event.unp),
+                )
                 try:
                     resp = requests.post(
                         tg_url,
@@ -238,6 +254,8 @@ def deliver_telegram_events():
                         event.telegram_attempts += 1
                         event.telegram_error = f"http {resp.status_code}: {resp.text[:200]}"
                         logger.warning("telegram: user %s event %s → http %s", uid, event.id, resp.status_code)
+                        if resp.status_code == 429:
+                            break
                 except Exception as ex:
                     event.telegram_attempts += 1
                     event.telegram_error = str(ex)[:300]

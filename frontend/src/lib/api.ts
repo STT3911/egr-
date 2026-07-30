@@ -279,7 +279,7 @@ type ApiError = {
   message?: string;
 };
 
-const toQuery = (params: Record<string, string | number | undefined>) => {
+const toQuery = (params: Record<string, string | number | boolean | undefined>) => {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== "") {
@@ -779,12 +779,40 @@ export type AuthUser = {
   telegram_id: number | null;
 };
 
+export type TelegramLinkResponse = {
+  linked: boolean;
+  telegram_id: number | null;
+  expires_in: number | null;
+  command: string | null;
+  bot_url: string | null;
+};
+
 export type SubscriptionItem = {
   id: string;
   unp: number;
   event_types: string[];
   source: string;
   created_at?: string | null;
+};
+
+export type SubscriptionEventItem = {
+  id: number;
+  unp: number;
+  company_name?: string | null;
+  event_type: string;
+  old_value?: string | null;
+  new_value?: string | null;
+  occurred_at?: string | null;
+  read_at?: string | null;
+  processed_at?: string | null;
+};
+
+export type SubscriptionEventsResponse = {
+  count: number;
+  total_count: number;
+  unread_count: number;
+  next_before_id?: number | null;
+  items: SubscriptionEventItem[];
 };
 
 // Человекочитаемые названия типов событий (совпадают с бэкендом)
@@ -821,6 +849,16 @@ export const logoutUser = async () =>
 export const getCurrentUser = async () =>
   adminRequest<AuthUser>("/api/v1/auth/me");
 
+export const createTelegramLink = async () =>
+  adminRequest<TelegramLinkResponse>("/api/v1/auth/telegram-link", {
+    method: "POST",
+  });
+
+export const disconnectTelegram = async () =>
+  adminRequest<{ ok: boolean; linked: boolean }>("/api/v1/auth/telegram-link", {
+    method: "DELETE",
+  });
+
 export const listSubscriptions = async () =>
   adminRequest<{ items: SubscriptionItem[] }>("/api/v1/subscriptions/");
 
@@ -837,3 +875,43 @@ export const deleteSubscription = async (id: string) =>
 
 export const getSubscriptionEventTypes = async () =>
   request<{ event_types: string[] }>("/api/v1/subscriptions/event-types");
+
+export const listSubscriptionEvents = async ({
+  limit = 100,
+  includeRead = true,
+  newestFirst = true,
+  beforeId,
+  eventType,
+  unp,
+}: {
+  limit?: number;
+  includeRead?: boolean;
+  newestFirst?: boolean;
+  beforeId?: number;
+  eventType?: string;
+  unp?: number;
+} = {}) => {
+  const qs = toQuery({
+    limit,
+    include_read: includeRead,
+    newest_first: newestFirst,
+    before_id: beforeId,
+    event_type: eventType,
+    unp,
+  });
+  return adminRequest<SubscriptionEventsResponse>(`/api/v1/subscriptions/events?${qs}`);
+};
+
+export const acknowledgeSubscriptionEvents = async ({
+  ids = [],
+  upToId,
+  all = false,
+}: {
+  ids?: number[];
+  upToId?: number;
+  all?: boolean;
+}) =>
+  adminRequest<{ acknowledged: number }>("/api/v1/subscriptions/events/ack", {
+    method: "POST",
+    body: JSON.stringify({ ids, up_to_id: upToId, all }),
+  });

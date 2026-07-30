@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.database.models import User, ApiKey
 from app.services.auth import (
@@ -20,6 +21,12 @@ from app.services.auth import (
     hash_api_key,
     generate_webhook_secret,
     get_current_user,
+)
+from app.services.telegram_link import (
+    LINK_TTL_SECONDS,
+    TelegramLinkUnavailable,
+    create_telegram_link,
+    revoke_telegram_links,
 )
 
 router = APIRouter()
@@ -91,6 +98,52 @@ def logout(response: Response):
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
     return _user_out(user)
+
+
+# --- Telegram ------------------------------------------------------------
+@router.post("/telegram-link")
+def create_telegram_connection(user: User = Depends(get_current_user)):
+    if user.telegram_id is not None:
+        return {
+            "linked": True,
+            "telegram_id": user.telegram_id,
+            "expires_in": None,
+            "command": None,
+            "bot_url": None,
+        }
+    try:
+        token = create_telegram_link(str(user.id))
+    except TelegramLinkUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    command = f"/start link_{token}"
+    username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
+    bot_url = (
+        f"https://t.me/{username}?start=link_{token}"
+        if username
+        else None
+    )
+    return {
+        "linked": False,
+        "telegram_id": None,
+        "expires_in": LINK_TTL_SECONDS,
+        "command": command,
+        "bot_url": bot_url,
+    }
+
+
+@router.delete("/telegram-link")
+def delete_telegram_connection(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        revoke_telegram_links(str(user.id))
+    except TelegramLinkUnavailable:
+        pass
+    user.telegram_id = None
+    db.commit()
+    return {"ok": True, "linked": False}
 
 
 # --- API-ключи -----------------------------------------------------------

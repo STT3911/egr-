@@ -149,7 +149,7 @@ class Settings(BaseSettings):
     # Подписки: периодический ПРЯМОЙ перезабор отслеживаемых компаний.
     # Обходит лимит дневного фида (getEventByPeriod ~2500/день без пагинации) —
     # гарантирует, что изменения по подписанным компаниям не теряются.
-    REFRESH_SUBSCRIBED_SCHEDULE_SECONDS: int = 21600   # каждые 6 часов
+    REFRESH_SUBSCRIBED_SCHEDULE_SECONDS: int = 3600    # каждый час
     REFRESH_SUBSCRIBED_BATCH_SIZE: int = 30
 
     # Полнота базы: сверка по состояниям (getRegNumByState) — находит новые компании
@@ -253,6 +253,7 @@ class Settings(BaseSettings):
 
     # Telegram bot
     TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_BOT_USERNAME: Optional[str] = None
     TELEGRAM_API_BASE_URL: str = "http://egr-api:8000"
     TELEGRAM_API_KEY: Optional[str] = None
     TELEGRAM_LOOKUP_LIMIT: int = 5

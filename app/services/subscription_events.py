@@ -12,7 +12,7 @@
 """
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.database.models import CompanySubscription, SubscriptionEvent
 
@@ -85,17 +85,36 @@ def emit_company_event(db, unp, event_type: str, old_value=None, new_value=None)
         .filter(CompanySubscription.unp == unp_int)
         .all()
     )
+    old_text = _as_text(old_value)
+    new_text = _as_text(new_value)
+    duplicate_since = datetime.now() - timedelta(minutes=2)
+    duplicate_user_ids = {
+        row[0]
+        for row in (
+            db.query(SubscriptionEvent.user_id)
+            .filter(
+                SubscriptionEvent.unp == unp_int,
+                SubscriptionEvent.event_type == event_type,
+                SubscriptionEvent.old_value == old_text,
+                SubscriptionEvent.new_value == new_text,
+                SubscriptionEvent.occurred_at >= duplicate_since,
+            )
+            .all()
+        )
+    }
     created = 0
     for s in subs:
         types = s.event_types or []
         if types and event_type not in types:
             continue
+        if s.user_id in duplicate_user_ids:
+            continue
         db.add(SubscriptionEvent(
             user_id=s.user_id,
             unp=unp_int,
             event_type=event_type,
-            old_value=_as_text(old_value),
-            new_value=_as_text(new_value),
+            old_value=old_text,
+            new_value=new_text,
             occurred_at=datetime.now(),
         ))
         created += 1
