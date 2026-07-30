@@ -230,6 +230,63 @@ class UnpIssuanceRange(Base):
     )
 
 
+class UnpRangeScanRun(Base):
+    """One persistent pass over a snapshot of an inferred UNP range."""
+
+    __tablename__ = "unp_range_scan_runs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    cycle_number = Column(BigInteger, nullable=False)
+    source_range_id = Column(BigInteger, nullable=True)
+    region = Column(SmallInteger, nullable=False)
+    source_seq_start = Column(Integer, nullable=False)
+    source_seq_end = Column(Integer, nullable=False)
+    scan_start = Column(Integer, nullable=False)
+    scan_end = Column(Integer, nullable=False)
+    next_sequence = Column(Integer, nullable=False)
+    first_checked_unp = Column(BigInteger, nullable=True)
+    last_checked_unp = Column(BigInteger, nullable=True)
+    status = Column(String(16), nullable=False, server_default="pending")
+    checked_count = Column(BigInteger, nullable=False, server_default="0")
+    found_count = Column(BigInteger, nullable=False, server_default="0")
+    not_found_count = Column(BigInteger, nullable=False, server_default="0")
+    error_count = Column(BigInteger, nullable=False, server_default="0")
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "region BETWEEN 1 AND 9",
+            name="ck_unp_range_scan_region",
+        ),
+        CheckConstraint(
+            "scan_start BETWEEN 0 AND 9999999 "
+            "AND scan_end BETWEEN scan_start AND 9999999",
+            name="ck_unp_range_scan_sequence",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'error')",
+            name="ck_unp_range_scan_status",
+        ),
+        UniqueConstraint(
+            "cycle_number",
+            "region",
+            "source_seq_start",
+            "source_seq_end",
+            name="uq_unp_range_scan_cycle_range",
+        ),
+        Index(
+            "ix_unp_range_scan_cycle_status",
+            "cycle_number",
+            "status",
+            "region",
+            "scan_start",
+        ),
+    )
+
+
 class Company(Base):
     """Main company table"""
     __tablename__ = "egr_companies"

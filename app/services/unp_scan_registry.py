@@ -26,6 +26,19 @@ class IssuanceRange:
     scan_end: int
 
 
+@dataclass(frozen=True)
+class RangeScanRun:
+    id: int
+    cycle_number: int
+    region: int
+    source_seq_start: int
+    source_seq_end: int
+    scan_start: int
+    scan_end: int
+    next_sequence: int
+    status: str
+
+
 def sync_known_candidates() -> int:
     """Mark every UNP already represented by a successful EGR or GRP record."""
     sources = (
@@ -367,6 +380,369 @@ def get_latest_issuance_range(region: int) -> IssuanceRange | None:
             .first()
         )
         return IssuanceRange(**dict(row)) if row else None
+    finally:
+        db.close()
+
+
+def ensure_range_scan_cycle(
+    *,
+    regions: Iterable[int],
+    seq_start: int,
+    seq_end: int,
+    gap_limit: int,
+    frontier_backtrack: int,
+    frontier_lookahead: int,
+) -> dict:
+    """Resume an unfinished range cycle or create the next full cycle."""
+    selected_regions = sorted({int(region) for region in regions})
+    if not selected_regions:
+        raise ValueError("At least one region is required")
+
+    db = SessionLocal()
+    try:
+        active_cycle = db.execute(
+            text(
+                """
+                SELECT min(cycle_number)
+                FROM unp_range_scan_runs
+                WHERE status IN ('pending', 'running', 'error')
+                  AND region = ANY(:regions)
+                """
+            ),
+            {"regions": selected_regions},
+        ).scalar()
+        if active_cycle is not None:
+            return get_range_scan_cycle_status(int(active_cycle))
+
+        previous_cycle = db.execute(
+            text("SELECT max(cycle_number) FROM unp_range_scan_runs")
+        ).scalar()
+    finally:
+        db.close()
+
+    if previous_cycle is not None:
+        sync_known_candidates()
+        refresh_issuance_ranges(
+            gap_limit=gap_limit,
+            frontier_backtrack=frontier_backtrack,
+            frontier_lookahead=frontier_lookahead,
+        )
+
+    db = SessionLocal()
+    try:
+        ranges = (
+            db.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        region,
+                        seq_start,
+                        seq_end,
+                        scan_end
+                    FROM unp_issuance_ranges
+                    WHERE region = ANY(:regions)
+                      AND scan_end >= :seq_start
+                      AND seq_start <= :seq_end
+                    ORDER BY region, seq_start
+                    """
+                ),
+                {
+                    "regions": selected_regions,
+                    "seq_start": int(seq_start),
+                    "seq_end": int(seq_end),
+                },
+            )
+            .mappings()
+            .all()
+        )
+        if not ranges:
+            raise RuntimeError("No UNP issuance ranges available for scanning")
+
+        cycle_number = int(previous_cycle or 0) + 1
+        rows = []
+        for item in ranges:
+            range_scan_start = max(int(seq_start), int(item["seq_start"]))
+            range_scan_end = min(int(seq_end), int(item["scan_end"]))
+            if range_scan_start > range_scan_end:
+                continue
+            rows.append(
+                {
+                    "cycle_number": cycle_number,
+                    "source_range_id": int(item["id"]),
+                    "region": int(item["region"]),
+                    "source_seq_start": int(item["seq_start"]),
+                    "source_seq_end": int(item["seq_end"]),
+                    "scan_start": range_scan_start,
+                    "scan_end": range_scan_end,
+                    "next_sequence": range_scan_start,
+                }
+            )
+        if not rows:
+            raise RuntimeError(
+                "No UNP issuance ranges overlap the configured scan bounds"
+            )
+
+        db.execute(
+            text(
+                """
+                INSERT INTO unp_range_scan_runs (
+                    cycle_number,
+                    source_range_id,
+                    region,
+                    source_seq_start,
+                    source_seq_end,
+                    scan_start,
+                    scan_end,
+                    next_sequence,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :cycle_number,
+                    :source_range_id,
+                    :region,
+                    :source_seq_start,
+                    :source_seq_end,
+                    :scan_start,
+                    :scan_end,
+                    :next_sequence,
+                    'pending',
+                    now(),
+                    now()
+                )
+                """
+            ),
+            rows,
+        )
+        db.commit()
+        return get_range_scan_cycle_status(cycle_number)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def claim_next_range_scan(cycle_number: int) -> RangeScanRun | None:
+    """Atomically claim or resume the next unfinished range in a cycle."""
+    db = SessionLocal()
+    try:
+        row = (
+            db.execute(
+                text(
+                    """
+                    WITH next_range AS (
+                        SELECT id
+                        FROM unp_range_scan_runs
+                        WHERE cycle_number = :cycle_number
+                          AND status IN ('pending', 'running', 'error')
+                        ORDER BY
+                            CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+                            region,
+                            scan_start
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE unp_range_scan_runs AS target
+                    SET
+                        status = 'running',
+                        started_at = COALESCE(started_at, now()),
+                        updated_at = now()
+                    FROM next_range
+                    WHERE target.id = next_range.id
+                    RETURNING
+                        target.id,
+                        target.cycle_number,
+                        target.region,
+                        target.source_seq_start,
+                        target.source_seq_end,
+                        target.scan_start,
+                        target.scan_end,
+                        target.next_sequence,
+                        target.status
+                    """
+                ),
+                {"cycle_number": int(cycle_number)},
+            )
+            .mappings()
+            .first()
+        )
+        db.commit()
+        return RangeScanRun(**dict(row)) if row else None
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def update_range_scan_progress(
+    range_scan_id: int,
+    *,
+    next_sequence: int,
+    first_checked_unp: int | None,
+    last_checked_unp: int | None,
+    checked_count: int,
+    found_count: int,
+    not_found_count: int,
+    error_count: int,
+) -> None:
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                """
+                UPDATE unp_range_scan_runs
+                SET
+                    next_sequence = :next_sequence,
+                    first_checked_unp = COALESCE(
+                        first_checked_unp,
+                        :first_checked_unp
+                    ),
+                    last_checked_unp = COALESCE(
+                        :last_checked_unp,
+                        last_checked_unp
+                    ),
+                    checked_count = checked_count + :checked_count,
+                    found_count = found_count + :found_count,
+                    not_found_count = not_found_count + :not_found_count,
+                    error_count = error_count + :error_count,
+                    status = 'running',
+                    updated_at = now()
+                WHERE id = :range_scan_id
+                """
+            ),
+            {
+                "range_scan_id": int(range_scan_id),
+                "next_sequence": int(next_sequence),
+                "first_checked_unp": first_checked_unp,
+                "last_checked_unp": last_checked_unp,
+                "checked_count": int(checked_count),
+                "found_count": int(found_count),
+                "not_found_count": int(not_found_count),
+                "error_count": int(error_count),
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def complete_range_scan(range_scan_id: int) -> None:
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                """
+                UPDATE unp_range_scan_runs
+                SET
+                    status = 'completed',
+                    next_sequence = scan_end + 1,
+                    completed_at = now(),
+                    updated_at = now()
+                WHERE id = :range_scan_id
+                """
+            ),
+            {"range_scan_id": int(range_scan_id)},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def get_range_scan_cycle_status(cycle_number: int | None = None) -> dict:
+    db = SessionLocal()
+    try:
+        selected_cycle = cycle_number
+        if selected_cycle is None:
+            selected_cycle = db.execute(
+                text("SELECT max(cycle_number) FROM unp_range_scan_runs")
+            ).scalar()
+        if selected_cycle is None:
+            return {
+                "cycle_number": 0,
+                "ranges": 0,
+                "completed_ranges": 0,
+                "pending_ranges": 0,
+                "checked": 0,
+                "found": 0,
+                "not_found": 0,
+                "errors": 0,
+                "current_range": None,
+            }
+
+        totals = (
+            db.execute(
+                text(
+                    """
+                    SELECT
+                        count(*)::bigint AS ranges,
+                        count(*) FILTER (
+                            WHERE status = 'completed'
+                        )::bigint AS completed_ranges,
+                        count(*) FILTER (
+                            WHERE status <> 'completed'
+                        )::bigint AS pending_ranges,
+                        coalesce(sum(checked_count), 0)::bigint AS checked,
+                        coalesce(sum(found_count), 0)::bigint AS found,
+                        coalesce(sum(not_found_count), 0)::bigint AS not_found,
+                        coalesce(sum(error_count), 0)::bigint AS errors
+                    FROM unp_range_scan_runs
+                    WHERE cycle_number = :cycle_number
+                    """
+                ),
+                {"cycle_number": int(selected_cycle)},
+            )
+            .mappings()
+            .one()
+        )
+        current = (
+            db.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        region,
+                        source_seq_start,
+                        source_seq_end,
+                        scan_start,
+                        scan_end,
+                        next_sequence,
+                        first_checked_unp,
+                        last_checked_unp,
+                        status,
+                        checked_count,
+                        found_count,
+                        not_found_count,
+                        error_count
+                    FROM unp_range_scan_runs
+                    WHERE cycle_number = :cycle_number
+                      AND status <> 'completed'
+                    ORDER BY
+                        CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+                        region,
+                        scan_start
+                    LIMIT 1
+                    """
+                ),
+                {"cycle_number": int(selected_cycle)},
+            )
+            .mappings()
+            .first()
+        )
+        return {
+            "cycle_number": int(selected_cycle),
+            **{key: int(value or 0) for key, value in totals.items()},
+            "current_range": dict(current) if current else None,
+        }
     finally:
         db.close()
 

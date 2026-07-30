@@ -149,7 +149,10 @@ class UnpPipeline:
         try:
             cycle_started_at = time.time()
             parsed_total = 0
-            self.status.update(state="processing_raw", pipeline_cycle_started_at=cycle_started_at)
+            self.status.update(
+                maintenance_state="processing_raw",
+                pipeline_cycle_started_at=cycle_started_at,
+            )
 
             for batch_number in range(1, self.args.max_process_batches + 1):
                 if self.stop_event.is_set():
@@ -157,7 +160,7 @@ class UnpPipeline:
                 parsed = int(grp_process_raw(limit=self.args.process_batch) or 0)
                 parsed_total += parsed
                 self.status.update(
-                    state="processing_raw",
+                    maintenance_state="processing_raw",
                     process_batch_number=batch_number,
                     parsed_in_cycle=parsed_total,
                 )
@@ -169,7 +172,7 @@ class UnpPipeline:
 
             sync_stats = {"companies_added": 0, "names_added": 0}
             if parsed_total or force_sync:
-                self.status.update(state="syncing_companies")
+                self.status.update(maintenance_state="syncing_companies")
                 sync_stats = sync_companies_from_grp()
             now = time.time()
             has_new_data = bool(
@@ -188,7 +191,9 @@ class UnpPipeline:
             if rebuild_due and not self.stop_event.is_set():
                 from app.services.gov_organizations import rebuild
 
-                self.status.update(state="rebuilding_gov_organizations")
+                self.status.update(
+                    maintenance_state="rebuilding_gov_organizations"
+                )
                 rebuild_stats = rebuild(
                     include_joint_stock=self.args.include_joint_stock,
                 )
@@ -196,6 +201,7 @@ class UnpPipeline:
 
             self.status.update(
                 state="running",
+                maintenance_state="idle",
                 last_pipeline_at=time.time(),
                 last_pipeline_duration_seconds=round(time.time() - cycle_started_at, 3),
                 last_parsed=parsed_total,
@@ -206,7 +212,8 @@ class UnpPipeline:
         except Exception as exc:
             logger.exception("Pipeline maintenance cycle failed")
             self.status.update(
-                state="maintenance_error",
+                state="running",
+                maintenance_state="error",
                 last_error=f"{type(exc).__name__}: {exc}",
             )
             self._alert_throttled(
@@ -240,6 +247,8 @@ class UnpPipeline:
             str(self.args.empty_stop),
             "--concurrency",
             str(self.args.concurrency),
+            "--candidate-batch",
+            str(self.args.candidate_batch),
             "--delay",
             str(self.args.delay),
             "--flush-every",
@@ -273,7 +282,8 @@ class UnpPipeline:
         unp_enumerate.CHECKPOINT_PATH = str(Path(self.args.checkpoint_path).resolve())
         enumerator_args = self._build_enumerator_args()
         self.status.update(
-            state="starting",
+            state="running",
+            enumeration_state="starting",
             checkpoint_path=unp_enumerate.CHECKPOINT_PATH,
             regions=self.args.regions,
             scan_mode=self.args.scan_mode,
@@ -297,7 +307,11 @@ class UnpPipeline:
 
         try:
             while not self.stop_event.is_set():
-                self.status.update(state="enumerating", enumeration_started_at=time.time())
+                self.status.update(
+                    state="running",
+                    enumeration_state="enumerating",
+                    enumeration_started_at=time.time(),
+                )
                 outcome = asyncio.run(
                     unp_enumerate.run(
                         enumerator_args,
@@ -305,7 +319,8 @@ class UnpPipeline:
                     )
                 )
                 self.status.update(
-                    state=f"enumeration_{outcome}",
+                    state="running",
+                    enumeration_state=outcome,
                     enumeration_finished_at=time.time(),
                 )
 
@@ -323,7 +338,8 @@ class UnpPipeline:
                     self._run_pipeline_cycle(force_sync=True)
                     if self.args.scan_mode == "frontier":
                         self.status.update(
-                            state="frontier_waiting",
+                            state="running",
+                            enumeration_state="range_cycle_waiting",
                             next_frontier_scan_at=(
                                 time.time() + self.args.frontier_interval
                             ),
@@ -391,6 +407,14 @@ def print_status(status_path: str, checkpoint_path: str) -> int:
             result[key] = json.loads(path.read_text(encoding="utf-8-sig"))
         except Exception as exc:
             result[key] = {"error": f"{type(exc).__name__}: {exc}", "path": str(path)}
+    try:
+        from app.services.unp_scan_registry import get_range_scan_cycle_status
+
+        result["range_cycle"] = get_range_scan_cycle_status()
+    except Exception as exc:
+        result["range_cycle"] = {
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
@@ -457,7 +481,7 @@ def build_argparser() -> argparse.ArgumentParser:
         type=float,
         default=_env_float(
             "UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS",
-            21600.0,
+            5.0,
         ),
     )
     parser.add_argument(
@@ -479,6 +503,11 @@ def build_argparser() -> argparse.ArgumentParser:
         "--concurrency",
         type=int,
         default=_env_int("UNP_PIPELINE_CONCURRENCY", 2),
+    )
+    parser.add_argument(
+        "--candidate-batch",
+        type=int,
+        default=_env_int("UNP_PIPELINE_CANDIDATE_BATCH", 500),
     )
     parser.add_argument(
         "--delay",

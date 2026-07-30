@@ -48,11 +48,16 @@ from app.services.grp_client import GRPClient
 from app.services.unp_enum import build_unp, SEQ_MAX
 from app.services.unp_probe import DualSourceProbe
 from app.services.unp_scan_registry import (
+    claim_next_range_scan,
+    complete_range_scan,
+    ensure_range_scan_cycle,
     get_latest_issuance_range,
+    get_range_scan_cycle_status,
     get_registry_status,
     plan_candidates,
     prepare_scan_registry,
     record_probe_results,
+    update_range_scan_progress,
 )
 
 logger = get_logger("unp_enumerate")
@@ -230,6 +235,7 @@ def save_checkpoint(
     misses: int = 0,
     errors: int = 0,
     last_unp: str | None = None,
+    extra: dict | None = None,
 ) -> None:
     try:
         os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
@@ -245,6 +251,8 @@ def save_checkpoint(
             "pid": os.getpid(),
             "ts": time.time(),
         }
+        if extra:
+            payload.update(extra)
         tmp_path = f"{CHECKPOINT_PATH}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as checkpoint_file:
             json.dump(payload, checkpoint_file, ensure_ascii=False, indent=2)
@@ -382,7 +390,309 @@ def is_hit(payload: dict) -> bool:
     return bool(keys & {"vunp", "vnaimp", "vnaimk"})
 
 
+def _summarize_range_candidates(
+    candidates: list[str],
+    *,
+    egr_present: set[int],
+    grp_present: set[int],
+    results_by_unp: dict[str, object],
+) -> tuple[int, int, int]:
+    found_count = 0
+    not_found_count = 0
+    error_count = 0
+    for unp in candidates:
+        numeric_unp = int(unp)
+        if numeric_unp in egr_present and numeric_unp in grp_present:
+            found_count += 1
+            continue
+        result = results_by_unp.get(unp)
+        if result is None:
+            continue
+        if result.outcome == "hit":
+            found_count += 1
+        elif result.outcome == "miss":
+            not_found_count += 1
+        else:
+            error_count += 1
+    return found_count, not_found_count, error_count
+
+
+async def _run_range_scan_cycle(
+    args,
+    *,
+    regions: list[int],
+    stop_event=None,
+) -> Literal["completed", "retry", "stopped"]:
+    cycle_status = ensure_range_scan_cycle(
+        regions=regions,
+        seq_start=args.seq_start,
+        seq_end=args.seq_end,
+        gap_limit=args.range_gap,
+        frontier_backtrack=args.frontier_backtrack,
+        frontier_lookahead=args.frontier_lookahead,
+    )
+    cycle_number = int(cycle_status["cycle_number"])
+    logger.info(
+        "UNP range cycle %d: ranges=%d completed=%d pending=%d checked=%d",
+        cycle_number,
+        cycle_status["ranges"],
+        cycle_status["completed_ranges"],
+        cycle_status["pending_ranges"],
+        cycle_status["checked"],
+    )
+
+    probe = DualSourceProbe()
+    queried = 0
+    found = 0
+    misses = 0
+    errors = 0
+    last_unp: str | None = None
+    try:
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                return "stopped"
+
+            range_scan = claim_next_range_scan(cycle_number)
+            if range_scan is None:
+                completed_status = get_range_scan_cycle_status(cycle_number)
+                logger.info(
+                    "UNP range cycle %d completed: ranges=%d checked=%d "
+                    "found=%d not_found=%d errors=%d",
+                    cycle_number,
+                    completed_status["ranges"],
+                    completed_status["checked"],
+                    completed_status["found"],
+                    completed_status["not_found"],
+                    completed_status["errors"],
+                )
+                return "completed"
+
+            logger.info(
+                "UNP range cycle %d range=%d region=%d "
+                "source=%d-%d scan=%d-%d resume=%d",
+                cycle_number,
+                range_scan.id,
+                range_scan.region,
+                range_scan.source_seq_start,
+                range_scan.source_seq_end,
+                range_scan.scan_start,
+                range_scan.scan_end,
+                range_scan.next_sequence,
+            )
+            sequence = max(range_scan.scan_start, range_scan.next_sequence)
+
+            while sequence <= range_scan.scan_end:
+                if stop_event is not None and stop_event.is_set():
+                    save_checkpoint(
+                        range_scan.region,
+                        sequence,
+                        found,
+                        queried=queried,
+                        misses=misses,
+                        errors=errors,
+                        last_unp=last_unp,
+                        extra={
+                            "cycle_number": cycle_number,
+                            "range_scan_id": range_scan.id,
+                        },
+                    )
+                    return "stopped"
+
+                candidates: list[str] = []
+                while (
+                    sequence <= range_scan.scan_end
+                    and len(candidates) < args.candidate_batch
+                ):
+                    unp = build_unp(range_scan.region, sequence)
+                    sequence += 1
+                    if unp is not None:
+                        candidates.append(unp)
+                if not candidates:
+                    break
+
+                numeric_candidates = [int(unp) for unp in candidates]
+                egr_present, grp_present = find_source_presence(
+                    numeric_candidates
+                )
+                plan_candidates(
+                    candidates,
+                    egr_present=egr_present,
+                    grp_present=grp_present,
+                )
+                probe_candidates = [
+                    unp
+                    for unp in candidates
+                    if int(unp) not in egr_present
+                    or int(unp) not in grp_present
+                ]
+                results_by_unp: dict[str, object] = {}
+                failed_unps: list[str] = []
+
+                for offset in range(
+                    0,
+                    len(probe_candidates),
+                    args.concurrency,
+                ):
+                    chunk = probe_candidates[
+                        offset : offset + args.concurrency
+                    ]
+                    results = await asyncio.gather(
+                        *[
+                            probe.probe(
+                                unp,
+                                need_egr=int(unp) not in egr_present,
+                                need_grp=int(unp) not in grp_present,
+                                max_retries=args.max_retries,
+                                retry_delay=args.base_delay,
+                                cooldown=args.cooldown,
+                            )
+                            for unp in chunk
+                        ]
+                    )
+                    record_probe_results(results)
+                    queried += len(results)
+                    for result in results:
+                        results_by_unp[result.unp] = result
+                        last_unp = result.unp
+                        if result.outcome == "hit":
+                            found += result.new_found
+                            logger.info(
+                                "HIT %s | EGR=%s GRP=%s",
+                                result.unp,
+                                result.egr.status,
+                                result.grp.status,
+                            )
+                        elif result.outcome == "miss":
+                            misses += 1
+                        else:
+                            errors += 1
+                            failed_unps.append(result.unp)
+                            logger.error(
+                                "UNP %s was not checked in both sources: "
+                                "EGR=%s GRP=%s, %s",
+                                result.unp,
+                                result.egr.status,
+                                result.grp.status,
+                                result.error or "unknown source error",
+                            )
+
+                    if failed_unps:
+                        break
+                    if args.delay > 0:
+                        await asyncio.sleep(args.delay)
+
+                if failed_unps:
+                    retry_sequence = min(
+                        int(unp[1:8]) for unp in failed_unps
+                    )
+                    completed_candidates = [
+                        unp
+                        for unp in candidates
+                        if int(unp[1:8]) < retry_sequence
+                    ]
+                    range_found, range_misses, range_errors = (
+                        _summarize_range_candidates(
+                            completed_candidates,
+                            egr_present=egr_present,
+                            grp_present=grp_present,
+                            results_by_unp=results_by_unp,
+                        )
+                    )
+                    update_range_scan_progress(
+                        range_scan.id,
+                        next_sequence=retry_sequence,
+                        first_checked_unp=(
+                            int(completed_candidates[0])
+                            if completed_candidates
+                            else None
+                        ),
+                        last_checked_unp=(
+                            int(completed_candidates[-1])
+                            if completed_candidates
+                            else None
+                        ),
+                        checked_count=len(completed_candidates),
+                        found_count=range_found,
+                        not_found_count=range_misses,
+                        error_count=range_errors + len(failed_unps),
+                    )
+                    save_checkpoint(
+                        range_scan.region,
+                        retry_sequence,
+                        found,
+                        queried=queried,
+                        misses=misses,
+                        errors=errors,
+                        last_unp=last_unp,
+                        extra={
+                            "cycle_number": cycle_number,
+                            "range_scan_id": range_scan.id,
+                        },
+                    )
+                    logger.error(
+                        "Range scan paused without skipping data; "
+                        "cycle=%d range=%d next=%s",
+                        cycle_number,
+                        range_scan.id,
+                        _next_candidate_unp(
+                            range_scan.region,
+                            retry_sequence,
+                        ),
+                    )
+                    return "retry"
+
+                range_found, range_misses, range_errors = (
+                    _summarize_range_candidates(
+                        candidates,
+                        egr_present=egr_present,
+                        grp_present=grp_present,
+                        results_by_unp=results_by_unp,
+                    )
+                )
+                update_range_scan_progress(
+                    range_scan.id,
+                    next_sequence=sequence,
+                    first_checked_unp=int(candidates[0]),
+                    last_checked_unp=int(candidates[-1]),
+                    checked_count=len(candidates),
+                    found_count=range_found,
+                    not_found_count=range_misses,
+                    error_count=range_errors,
+                )
+                last_unp = candidates[-1]
+                save_checkpoint(
+                    range_scan.region,
+                    sequence,
+                    found,
+                    queried=queried,
+                    misses=misses,
+                    errors=errors,
+                    last_unp=last_unp,
+                    extra={
+                        "cycle_number": cycle_number,
+                        "range_scan_id": range_scan.id,
+                    },
+                )
+
+            complete_range_scan(range_scan.id)
+            logger.info(
+                "UNP range completed: cycle=%d range=%d region=%d "
+                "first_seq=%d last_seq=%d",
+                cycle_number,
+                range_scan.id,
+                range_scan.region,
+                range_scan.scan_start,
+                range_scan.scan_end,
+            )
+    finally:
+        await probe.close()
+
+
 async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]:
+    if args.concurrency <= 0:
+        raise ValueError("concurrency must be greater than zero")
+    if args.candidate_batch <= 0:
+        raise ValueError("candidate_batch must be greater than zero")
     regions = [int(x) for x in args.regions.split(",") if x.strip()]
     known_tables = [name.strip() for name in args.known_tables.split(",") if name.strip()]
     frontier_mode = args.scan_mode == "frontier"
@@ -411,6 +721,12 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
     if args.prepare_only:
         print(json.dumps(registry_status, ensure_ascii=False, indent=2))
         return "completed"
+    if frontier_mode:
+        return await _run_range_scan_cycle(
+            args,
+            regions=regions,
+            stop_event=stop_event,
+        )
 
     # резюме из чекпойнта: пропускаем уже пройденные регионы и стартуем с seq
     resume_region, resume_seq = None, None
@@ -742,6 +1058,12 @@ def build_argparser() -> argparse.ArgumentParser:
         help="стоп по региону после N пустых подряд; 0 отключает раннюю остановку",
     )
     p.add_argument("--concurrency", type=int, default=settings.GRP_FETCH_CONCURRENCY, help="одновременных запросов")
+    p.add_argument(
+        "--candidate-batch",
+        type=int,
+        default=500,
+        help="сколько кандидатов диапазона сверять с БД одним блоком",
+    )
     p.add_argument("--delay", type=float, default=settings.GRP_FETCH_SUCCESS_DELAY_SECONDS, help="пауза между батчами, сек")
     p.add_argument("--max-retries", type=int, default=settings.GRP_FETCH_MAX_RETRIES)
     p.add_argument("--base-delay", type=float, default=settings.GRP_FETCH_RETRY_BASE_DELAY_SECONDS)

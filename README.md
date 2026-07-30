@@ -142,10 +142,13 @@ The service resumes from `data/unp_enumerate_checkpoint.json`. Set
 `UNP_PIPELINE_EMPTY_STOP=0` in `.env` only when a complete region-wide scan is
 required together with `UNP_PIPELINE_SCAN_MODE=full`.
 
-The default `frontier` mode starts 50 sequence positions before the highest
-known UNP in each region, skips known records, and continues until 50
-consecutive misses confirmed by both EGR and GRP. It repeats the regional check
-every six hours:
+The default `frontier` mode continuously walks every inferred issuance range.
+Each pass is stored in `unp_range_scan_runs` with its cycle number, source and
+scan boundaries, next sequence, first and last checked UNP, counters and
+completion status. After every range in a cycle is complete, the service
+rebuilds the range map from newly found companies and starts the next cycle.
+The five-second interval only separates completed cycles; it does not pause
+between ranges.
 
 ```dotenv
 UNP_PIPELINE_SCAN_MODE=frontier
@@ -153,8 +156,13 @@ UNP_PIPELINE_FRONTIER_LOOKAHEAD=50
 UNP_PIPELINE_FRONTIER_BACKTRACK=50
 UNP_PIPELINE_RANGE_GAP=50
 UNP_PIPELINE_REGISTRY_REFRESH_INTERVAL_SECONDS=86400
-UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS=21600
+UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS=5
+UNP_PIPELINE_CANDIDATE_BATCH=500
 ```
+
+`UNP_PIPELINE_CANDIDATE_BATCH` controls only the local database-presence
+lookup. External EGR/GRP requests still obey `UNP_PIPELINE_CONCURRENCY` and
+`UNP_PIPELINE_DELAY`.
 The expensive full `gov_organizations` rebuild is disabled in the continuous
 pipeline by default. Run it manually during a maintenance window:
 
