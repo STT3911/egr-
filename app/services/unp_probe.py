@@ -38,17 +38,15 @@ class DualProbeResult:
 
     @property
     def outcome(self) -> Literal["hit", "miss", "error"]:
-        if (
-            self.persist_errors
-            or self.egr.status == "error"
-            or self.grp.status == "error"
-        ):
+        if self.persist_errors:
             return "error"
         if self.egr.status in {"found", "skipped"} or self.grp.status in {
             "found",
             "skipped",
         }:
             return "hit"
+        if self.egr.status == "error" or self.grp.status == "error":
+            return "error"
         if self.egr.status == "not_found" and self.grp.status == "not_found":
             return "miss"
         return "error"
@@ -147,6 +145,12 @@ async def _fetch_egr_once(
             "ved": _dict_list(ved_raw),
             "names": _dict_list(names_raw),
         }, "legacy"
+
+    # Успешный 204/404 основного API — окончательный ответ «не найдено».
+    # Mobile API используется только как fallback при сбое основного источника:
+    # иначе его таймаут превращал подтверждённый miss в ошибку всего диапазона.
+    if legacy_error is None:
+        return None, "legacy"
 
     mobile_checked = False
     if aggregator.mobile_client is not None:

@@ -566,8 +566,9 @@ async def _run_range_scan_cycle(
                             misses += 1
                         else:
                             errors += 1
-                            failed_unps.append(result.unp)
-                            logger.error(
+                            if result.persist_errors:
+                                failed_unps.append(result.unp)
+                            logger.warning(
                                 "UNP %s was not checked in both sources: "
                                 "EGR=%s GRP=%s, %s",
                                 result.unp,
@@ -899,8 +900,9 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                         empty_run += 1
                     else:
                         errors += 1
-                        failed_unps.append(u)
-                        logger.error(
+                        if result.persist_errors:
+                            failed_unps.append(u)
+                        logger.warning(
                             "UNP %s was not checked in both sources: EGR=%s GRP=%s, %s",
                             u,
                             result.egr.status,
