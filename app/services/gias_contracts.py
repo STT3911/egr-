@@ -561,9 +561,12 @@ class GiasContractService:
         )
         response.raise_for_status()
         payload = response.json()
-        if not isinstance(payload, dict) or not isinstance(
-            payload.get("content"), list
-        ):
+        if not isinstance(payload, dict):
+            raise ValueError("Unsupported GIAS contract search response")
+        content = payload.get("content")
+        if content is None and int(payload.get("totalElements") or 0) == 0:
+            payload["content"] = []
+        elif not isinstance(content, list):
             raise ValueError("Unsupported GIAS contract search response")
         return payload
 

@@ -77,6 +77,49 @@ def test_history_index_request_uses_millisecond_date_window() -> None:
     )
 
 
+def test_empty_gias_window_normalizes_null_content() -> None:
+    service = _service_without_network()
+    response = Mock()
+    response.json.return_value = {
+        "number": 0,
+        "size": 100,
+        "totalPages": 0,
+        "totalElements": 0,
+        "content": None,
+        "first": True,
+        "last": True,
+    }
+    service.session.post.return_value = response
+
+    payload = service._fetch_index_page(
+        0,
+        created_from_ms=1_546_300_800_000,
+        created_to_ms=1_548_979_199_999,
+        sort_field="dtCreate",
+        sort_order="ASC",
+    )
+
+    assert payload["content"] == []
+
+
+def test_null_content_with_nonzero_total_is_rejected() -> None:
+    service = _service_without_network()
+    response = Mock()
+    response.json.return_value = {
+        "totalPages": 1,
+        "totalElements": 1,
+        "content": None,
+    }
+    service.session.post.return_value = response
+
+    try:
+        service._fetch_index_page(0)
+    except ValueError as exc:
+        assert "Unsupported GIAS contract search response" in str(exc)
+    else:
+        raise AssertionError("nonempty responses must contain a content list")
+
+
 def test_summary_and_position_normalization() -> None:
     service = _service_without_network()
     summary = service._summary_values(
