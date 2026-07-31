@@ -1279,6 +1279,9 @@ class GiasContractSyncState(Base):
     next_page = Column(Integer, nullable=False, server_default="0")
     total_pages = Column(Integer, nullable=True)
     initial_complete = Column(Boolean, nullable=False, server_default=false())
+    history_window_start_ms = Column(BigInteger, nullable=True)
+    history_window_end_ms = Column(BigInteger, nullable=True)
+    history_target_ms = Column(BigInteger, nullable=True)
     updated_at = Column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )

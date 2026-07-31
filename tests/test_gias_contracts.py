@@ -17,6 +17,10 @@ def _service_without_network() -> GiasContractService:
     service.detail_url = "https://gias.by/contract/api/v1/contract"
     service.page_size = 100
     service.timeout = 30.0
+    service.history_start_ms = 1_546_300_800_000
+    service.history_window_ms = 31 * 24 * 60 * 60 * 1000
+    service.history_max_window_pages = 90
+    service.history_min_window_ms = 60 * 60 * 1000
     service.session = Mock()
     return service
 
@@ -42,6 +46,35 @@ def test_index_request_uses_discovered_payload_and_update_sort() -> None:
         timeout=30.0,
     )
     response.raise_for_status.assert_called_once()
+
+
+def test_history_index_request_uses_millisecond_date_window() -> None:
+    service = _service_without_network()
+    response = Mock()
+    response.json.return_value = {"content": [], "totalPages": 0}
+    service.session.post.return_value = response
+
+    service._fetch_index_page(
+        3,
+        created_from_ms=1_735_689_600_000,
+        created_to_ms=1_735_776_000_000,
+        sort_field="dtCreate",
+        sort_order="ASC",
+    )
+
+    service.session.post.assert_called_once_with(
+        service.search_url,
+        json={
+            "baseContractId": None,
+            "page": 3,
+            "pageSize": 100,
+            "sortField": "dtCreate",
+            "sortOrder": "ASC",
+            "dtCreateFrom": 1_735_689_600_000,
+            "dtCreateTo": 1_735_776_000_000,
+        },
+        timeout=30.0,
+    )
 
 
 def test_summary_and_position_normalization() -> None:
@@ -119,16 +152,21 @@ def test_initial_index_resumes_from_durable_page_cursor() -> None:
         next_page=0,
         total_pages=None,
         initial_complete=False,
+        history_window_start_ms=1_546_300_800_000,
+        history_window_end_ms=1_546_387_200_000,
+        history_target_ms=1_546_387_200_000,
     )
-    requested_pages: list[int] = []
+    requested_pages: list[tuple[int, int, int]] = []
     service = _service_without_network()
     service.page_size = 1
     service.db = DBStub()
     service._start_run = lambda registry: SimpleNamespace(status="running")
     service._get_sync_state = lambda reset: state
     service._upsert_summary = lambda payload, existing: "created"
-    service._fetch_index_page = lambda page: (
-        requested_pages.append(page)
+    service._fetch_index_page = lambda page, **kwargs: (
+        requested_pages.append(
+            (page, kwargs["created_from_ms"], kwargs["created_to_ms"])
+        )
         or {
             "content": [
                 {
@@ -143,16 +181,101 @@ def test_initial_index_resumes_from_durable_page_cursor() -> None:
     )
 
     first = service.sync_index(max_pages=2)
-    assert requested_pages == [0, 1]
+    assert [item[0] for item in requested_pages] == [0, 1]
     assert first["pages"] == 2
     assert state.next_page == 2
     assert state.initial_complete is False
 
     second = service.sync_index(max_pages=2)
-    assert requested_pages == [0, 1, 2]
+    assert [item[0] for item in requested_pages] == [0, 1, 2]
     assert second["pages"] == 1
     assert state.next_page == 0
     assert state.initial_complete is True
+
+
+def test_history_window_is_split_before_api_page_cap() -> None:
+    class DBStub:
+        def commit(self):
+            return None
+
+    service = _service_without_network()
+    service.db = DBStub()
+    state = SimpleNamespace(
+        next_page=0,
+        total_pages=None,
+        initial_complete=False,
+        history_window_start_ms=1_700_000_000_000,
+        history_window_end_ms=1_702_678_400_000,
+        history_target_ms=1_702_678_400_000,
+    )
+    original_end = state.history_window_end_ms
+    calls = 0
+    requested_windows: list[tuple[int, int]] = []
+
+    def fetch(page: int, **kwargs):
+        nonlocal calls
+        calls += 1
+        requested_windows.append(
+            (kwargs["created_from_ms"], kwargs["created_to_ms"])
+        )
+        if calls == 1:
+            return {"content": [{"contractId": str(CONTRACT_ID)}], "totalPages": 140}
+        return {"content": [], "totalPages": 0}
+
+    service._fetch_index_page = fetch
+    stats = SimpleNamespace(
+        fetched=0,
+        created=0,
+        updated=0,
+        unchanged=0,
+        failed=0,
+        pages=0,
+    )
+
+    service._sync_history_index(state, stats, max_pages=2)
+
+    assert calls == 2
+    assert requested_windows[1][1] < original_end - 1
+    assert state.initial_complete is False
+
+
+def test_empty_history_page_does_not_mark_full_sync_complete() -> None:
+    class DBStub:
+        def commit(self):
+            return None
+
+    service = _service_without_network()
+    service.db = DBStub()
+    state = SimpleNamespace(
+        next_page=4,
+        total_pages=20,
+        initial_complete=False,
+        history_window_start_ms=1_700_000_000_000,
+        history_window_end_ms=1_700_086_400_000,
+        history_target_ms=1_700_086_400_000,
+    )
+    service._fetch_index_page = lambda page, **kwargs: {
+        "content": [],
+        "totalPages": 20,
+    }
+    stats = SimpleNamespace(
+        fetched=0,
+        created=0,
+        updated=0,
+        unchanged=0,
+        failed=0,
+        pages=0,
+    )
+
+    try:
+        service._sync_history_index(state, stats, max_pages=1)
+    except RuntimeError as exc:
+        assert "empty history page" in str(exc)
+    else:
+        raise AssertionError("premature empty pages must pause the backfill")
+
+    assert state.initial_complete is False
+    assert state.next_page == 4
 
 
 def test_detail_scheduler_spaces_starts_and_caps_concurrency() -> None:

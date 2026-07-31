@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
@@ -68,6 +68,23 @@ class GiasContractService:
         self.detail_concurrency = max(
             1, min(8, int(settings.GIAS_CONTRACT_DETAIL_CONCURRENCY))
         )
+        self.history_start_ms = self._parse_utc_ms(
+            settings.GIAS_CONTRACT_HISTORY_START_DATE
+        )
+        self.history_window_ms = (
+            max(1, int(settings.GIAS_CONTRACT_HISTORY_WINDOW_DAYS))
+            * 24
+            * 60
+            * 60
+            * 1000
+        )
+        self.history_max_window_pages = max(
+            1, int(settings.GIAS_CONTRACT_HISTORY_MAX_WINDOW_PAGES)
+        )
+        self.history_min_window_ms = (
+            max(1, int(settings.GIAS_CONTRACT_HISTORY_MIN_WINDOW_SECONDS))
+            * 1000
+        )
         self._thread_local = threading.local()
         self._worker_sessions: list[requests.Session] = []
         self._worker_sessions_lock = threading.Lock()
@@ -118,90 +135,11 @@ class GiasContractService:
         run = self._start_run(stats.registry_name)
         state = self._get_sync_state(reset=full)
         initial_mode = not state.initial_complete
-        cutoff = None
-        if not initial_mode:
-            latest = self.db.query(func.max(GiasContract.source_updated_at)).scalar()
-            if latest:
-                cutoff = latest - timedelta(
-                    hours=max(
-                        1,
-                        int(settings.GIAS_CONTRACT_INCREMENTAL_LOOKBACK_HOURS),
-                    )
-                )
-
-        page = int(state.next_page or 0) if initial_mode else 0
         try:
-            while max_pages is None or stats.pages < max_pages:
-                payload = self._fetch_index_page(page)
-                items = payload.get("content") or []
-                if not items:
-                    if initial_mode:
-                        state.initial_complete = True
-                        state.next_page = 0
-                        self.db.commit()
-                    break
-
-                contract_ids = [
-                    contract_id
-                    for contract_id in (
-                        self._uuid_or_none(item.get("contractId"))
-                        for item in items
-                    )
-                    if contract_id is not None
-                ]
-                existing_by_id = {
-                    row.contract_id: row
-                    for row in (
-                        self.db.query(GiasContract)
-                        .filter(GiasContract.contract_id.in_(contract_ids))
-                        .all()
-                    )
-                }
-                page_oldest: datetime | None = None
-                for item in items:
-                    source_updated = self._ms_to_dt(item.get("dtUpdate"))
-                    if source_updated and (
-                        page_oldest is None or source_updated < page_oldest
-                    ):
-                        page_oldest = source_updated
-                    outcome = self._upsert_summary(
-                        item,
-                        existing=existing_by_id.get(
-                            self._uuid_or_none(item.get("contractId"))
-                        ),
-                    )
-                    setattr(stats, outcome, getattr(stats, outcome) + 1)
-
-                stats.fetched += len(items)
-                stats.pages += 1
-                next_page = page + 1
-                total_pages = payload.get("totalPages")
-                if initial_mode:
-                    state.total_pages = (
-                        int(total_pages) if total_pages is not None else None
-                    )
-                    reached_end = (
-                        (total_pages is not None and next_page >= int(total_pages))
-                        or len(items) < self.page_size
-                    )
-                    state.initial_complete = reached_end
-                    state.next_page = 0 if reached_end else next_page
-                self.db.commit()
-                logger.info(
-                    "GIAS contract index: page=%s fetched=%s total=%s initial=%s",
-                    page,
-                    len(items),
-                    stats.fetched,
-                    initial_mode,
-                )
-
-                page = next_page
-                if total_pages is not None and page >= int(total_pages):
-                    break
-                if len(items) < self.page_size:
-                    break
-                if cutoff and page_oldest and page_oldest < cutoff:
-                    break
+            if initial_mode:
+                self._sync_history_index(state, stats, max_pages=max_pages)
+            else:
+                self._sync_incremental_index(stats, max_pages=max_pages)
 
             run.status = (
                 "partial"
@@ -216,6 +154,204 @@ class GiasContractService:
             self._fail_run(run, exc)
             self.db.commit()
             raise
+
+    def _sync_history_index(
+        self,
+        state: GiasContractSyncState,
+        stats: ContractSyncStats,
+        *,
+        max_pages: int | None,
+    ) -> None:
+        self._ensure_history_cursor(state)
+        while max_pages is None or stats.pages < max_pages:
+            page = int(state.next_page or 0)
+            window_start = int(state.history_window_start_ms)
+            window_end = int(state.history_window_end_ms)
+            payload = self._fetch_index_page(
+                page,
+                created_from_ms=window_start,
+                created_to_ms=window_end - 1,
+                sort_field="dtCreate",
+                sort_order="ASC",
+            )
+            stats.pages += 1
+            total_pages = int(payload.get("totalPages") or 0)
+            state.total_pages = total_pages
+
+            if page == 0 and total_pages > self.history_max_window_pages:
+                previous_end = window_end
+                self._shrink_history_window(state)
+                self.db.commit()
+                logger.info(
+                    "GIAS history window split: %s..%s pages=%s new_end=%s",
+                    window_start,
+                    previous_end,
+                    total_pages,
+                    state.history_window_end_ms,
+                )
+                continue
+
+            items = payload.get("content") or []
+            if not items:
+                if total_pages > page:
+                    raise RuntimeError(
+                        "GIAS returned an empty history page before the declared "
+                        f"end: window={window_start}..{window_end} "
+                        f"page={page} total_pages={total_pages}"
+                    )
+                self._advance_history_window(state)
+                self.db.commit()
+                if state.initial_complete:
+                    break
+                continue
+
+            self._upsert_index_page(items, stats)
+            next_page = page + 1
+            reached_end = next_page >= total_pages or len(items) < self.page_size
+            if reached_end:
+                self._advance_history_window(state)
+            else:
+                state.next_page = next_page
+            self.db.commit()
+            logger.info(
+                "GIAS contract history: window=%s..%s page=%s/%s "
+                "fetched=%s complete=%s",
+                window_start,
+                window_end,
+                page + 1,
+                total_pages,
+                stats.fetched,
+                state.initial_complete,
+            )
+            if state.initial_complete:
+                break
+
+    def _sync_incremental_index(
+        self,
+        stats: ContractSyncStats,
+        *,
+        max_pages: int | None,
+    ) -> None:
+        latest = self.db.query(func.max(GiasContract.source_updated_at)).scalar()
+        cutoff = None
+        if latest:
+            cutoff = latest - timedelta(
+                hours=max(
+                    1,
+                    int(settings.GIAS_CONTRACT_INCREMENTAL_LOOKBACK_HOURS),
+                )
+            )
+
+        page = 0
+        while max_pages is None or stats.pages < max_pages:
+            payload = self._fetch_index_page(page)
+            items = payload.get("content") or []
+            if not items:
+                break
+
+            page_oldest = self._upsert_index_page(items, stats)
+            stats.pages += 1
+            self.db.commit()
+            logger.info(
+                "GIAS contract index: page=%s fetched=%s total=%s initial=False",
+                page,
+                len(items),
+                stats.fetched,
+            )
+
+            page += 1
+            total_pages = payload.get("totalPages")
+            if total_pages is not None and page >= int(total_pages):
+                break
+            if len(items) < self.page_size:
+                break
+            if cutoff and page_oldest and page_oldest < cutoff:
+                break
+
+    def _upsert_index_page(
+        self,
+        items: list[dict[str, Any]],
+        stats: ContractSyncStats,
+    ) -> datetime | None:
+        contract_ids = [
+            contract_id
+            for contract_id in (
+                self._uuid_or_none(item.get("contractId")) for item in items
+            )
+            if contract_id is not None
+        ]
+        existing_by_id = {
+            row.contract_id: row
+            for row in (
+                self.db.query(GiasContract)
+                .filter(GiasContract.contract_id.in_(contract_ids))
+                .all()
+            )
+        }
+        page_oldest: datetime | None = None
+        for item in items:
+            source_updated = self._ms_to_dt(item.get("dtUpdate"))
+            if source_updated and (
+                page_oldest is None or source_updated < page_oldest
+            ):
+                page_oldest = source_updated
+            outcome = self._upsert_summary(
+                item,
+                existing=existing_by_id.get(
+                    self._uuid_or_none(item.get("contractId"))
+                ),
+            )
+            setattr(stats, outcome, getattr(stats, outcome) + 1)
+        stats.fetched += len(items)
+        return page_oldest
+
+    def _ensure_history_cursor(self, state: GiasContractSyncState) -> None:
+        if state.history_target_ms is None:
+            state.history_target_ms = self._utc_now_ms()
+        if state.history_window_start_ms is None:
+            state.history_window_start_ms = self.history_start_ms
+        if state.history_window_end_ms is None:
+            state.history_window_end_ms = min(
+                int(state.history_window_start_ms) + self.history_window_ms,
+                int(state.history_target_ms),
+            )
+        if int(state.history_window_start_ms) >= int(state.history_target_ms):
+            state.initial_complete = True
+            state.next_page = 0
+            state.total_pages = None
+        self.db.commit()
+
+    def _shrink_history_window(self, state: GiasContractSyncState) -> None:
+        start = int(state.history_window_start_ms)
+        end = int(state.history_window_end_ms)
+        span = end - start
+        if span <= self.history_min_window_ms:
+            raise RuntimeError(
+                "GIAS history window still exceeds the safe page limit at "
+                f"minimum size: start={start} end={end} pages={state.total_pages}"
+            )
+        state.history_window_end_ms = start + max(
+            self.history_min_window_ms,
+            span // 2,
+        )
+        state.next_page = 0
+        state.total_pages = None
+
+    def _advance_history_window(self, state: GiasContractSyncState) -> None:
+        next_start = int(state.history_window_end_ms)
+        target = int(state.history_target_ms)
+        state.next_page = 0
+        state.total_pages = None
+        if next_start >= target:
+            state.history_window_start_ms = target
+            state.history_window_end_ms = target
+            state.initial_complete = True
+            return
+        state.history_window_start_ms = next_start
+        state.history_window_end_ms = min(
+            next_start + self.history_window_ms,
+            target,
+        )
 
     def fetch_pending_details(self, limit: int) -> dict[str, Any]:
         """Fetch a bounded batch of detail cards and normalize their positions."""
@@ -398,14 +534,26 @@ class GiasContractService:
                 break
         return [(unp, *values) for unp, values in result.items()]
 
-    def _fetch_index_page(self, page: int) -> dict[str, Any]:
+    def _fetch_index_page(
+        self,
+        page: int,
+        *,
+        created_from_ms: int | None = None,
+        created_to_ms: int | None = None,
+        sort_field: str = "dtUpdate",
+        sort_order: str = "DESC",
+    ) -> dict[str, Any]:
         body = {
             "baseContractId": None,
             "page": page,
             "pageSize": self.page_size,
-            "sortField": "dtUpdate",
-            "sortOrder": "DESC",
+            "sortField": sort_field,
+            "sortOrder": sort_order,
         }
+        if created_from_ms is not None:
+            body["dtCreateFrom"] = int(created_from_ms)
+        if created_to_ms is not None:
+            body["dtCreateTo"] = int(created_to_ms)
         response = self.session.post(
             self.search_url,
             json=body,
@@ -659,6 +807,9 @@ class GiasContractService:
             state.next_page = 0
             state.total_pages = None
             state.initial_complete = False
+            state.history_window_start_ms = None
+            state.history_window_end_ms = None
+            state.history_target_ms = None
         self.db.commit()
         self.db.refresh(state)
         return state
@@ -721,6 +872,17 @@ class GiasContractService:
             return datetime.utcfromtimestamp(int(value) / 1000.0)
         except (TypeError, ValueError, OSError):
             return None
+
+    @staticmethod
+    def _parse_utc_ms(value: str) -> int:
+        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp() * 1000)
+
+    @staticmethod
+    def _utc_now_ms() -> int:
+        return int(datetime.now(timezone.utc).timestamp() * 1000)
 
     @staticmethod
     def _decimal_or_none(value: Any) -> Decimal | None:
