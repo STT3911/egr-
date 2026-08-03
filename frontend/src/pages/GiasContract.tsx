@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   Building2,
@@ -95,6 +95,15 @@ const formatAmount = (
   }).format(amount)}${currencyCode ? ` ${currencyCode}` : ""}`;
 };
 
+const formatQuantity = (value?: number | string | null) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity)) return String(value);
+  return new Intl.NumberFormat("ru-BY", {
+    maximumFractionDigits: 6,
+  }).format(quantity);
+};
+
 const SummaryItem = ({
   label,
   value,
@@ -159,6 +168,7 @@ const PartyCard = ({
 
 const GiasContract = () => {
   const { contractId } = useParams();
+  const [searchParams] = useSearchParams();
   const [contract, setContract] = useState<GiasContractDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -183,8 +193,15 @@ const GiasContract = () => {
   const raw = contract?.raw_detail || {};
   const documents = asRecords(raw.contractDocuments);
   const payments = asRecords(raw.payments);
-  const accounts = asRecords(raw.contractAccounts);
+  const accounts = contract?.accounts || [];
   const purchases = asRecords(raw.purchases);
+  const sourceUnp = searchParams.get("fromUnp");
+  const returnUnp = sourceUnp && /^\d{9}$/.test(sourceUnp) ? sourceUnp : null;
+  const returnPath = returnUnp
+    ? `/company/${returnUnp}`
+    : contract?.customer_unp
+      ? `/company/${contract.customer_unp}`
+      : "/";
 
   if (loading) {
     return (
@@ -211,9 +228,9 @@ const GiasContract = () => {
                 Повторить
               </Button>
               <Button asChild variant="outline">
-                <Link to="/">
+                <Link to={returnPath}>
                   <ArrowLeft className="h-4 w-4" />
-                  На главную
+                  {returnUnp ? "К досье компании" : "На главную"}
                 </Link>
               </Button>
             </div>
@@ -240,9 +257,13 @@ const GiasContract = () => {
       <main className="relative z-10 mx-auto max-w-6xl space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Button asChild variant="outline" className="glass">
-            <Link to={contract.customer_unp ? `/company/${contract.customer_unp}` : "/"}>
+            <Link to={returnPath}>
               <ArrowLeft className="h-4 w-4" />
-              {contract.customer_unp ? "К карточке заказчика" : "На главную"}
+              {returnUnp
+                ? "К досье компании"
+                : contract.customer_unp
+                  ? "К досье заказчика"
+                  : "На главную"}
             </Link>
           </Button>
           <span className="rounded-full border border-border/70 bg-card/80 px-3 py-1.5 font-mono text-xs text-muted-foreground">
@@ -379,7 +400,7 @@ const GiasContract = () => {
                           )}
                           {position.okpb_code && (
                             <span className="rounded-full border border-border/70 bg-card px-2.5 py-1 font-mono text-muted-foreground">
-                              ОКПД {position.okpb_code}
+                              ОКРБ {position.okpb_code}
                             </span>
                           )}
                           {position.is_smp && (
@@ -398,7 +419,8 @@ const GiasContract = () => {
                           <span>
                             Количество:{" "}
                             <strong className="font-semibold text-foreground">
-                              {position.volume ?? "—"} {position.unit_symbol || position.unit_name || ""}
+                              {formatQuantity(position.volume)}{" "}
+                              {position.unit_symbol || position.unit_name || ""}
                             </strong>
                           </span>
                           {position.country_names && position.country_names.length > 0 && (
@@ -475,18 +497,23 @@ const GiasContract = () => {
                 <CardContent className="space-y-3">
                   {accounts.map((account, index) => (
                     <div
-                      key={`${asText(account.accountProvider)}-${index}`}
+                      key={`${account.id}-${index}`}
                       className="rounded-xl border border-border/60 bg-background/55 p-3"
                     >
                       <div className="break-all font-mono text-sm font-semibold text-foreground">
-                        {asText(account.accountProvider) || "Счёт не указан"}
+                        {account.account_number || "Счёт не указан"}
                       </div>
                       <div className="mt-2 text-sm text-muted-foreground">
-                        {asText(account.bankProviderName) || "Банк не указан"}
+                        {account.bank_name || "Банк не указан"}
                       </div>
-                      {account.bankProviderCode !== undefined && (
+                      {account.bank_code && (
                         <div className="mt-1 font-mono text-xs text-muted-foreground">
-                          {asText(account.bankProviderCode)}
+                          БИК {account.bank_code}
+                        </div>
+                      )}
+                      {(account.currency_name || account.currency_code) && (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Валюта: {account.currency_name || account.currency_code}
                         </div>
                       )}
                     </div>
@@ -595,15 +622,18 @@ const GiasContract = () => {
 
         <Card className="glass border-border/70">
           <CardContent className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-4">
-            <SummaryItem label="Фактический срок" value={formatDate(contract.real_execution_term)} />
+            <SummaryItem
+              label="Срок исполнения договора"
+              value={formatDate(contract.real_execution_term)}
+            />
             <SummaryItem
               label="Дата расторжения"
               value={formatDate(contract.termination_execution_term)}
             />
             <SummaryItem label="Тип договора" value={contract.contract_type} />
             <SummaryItem
-              label="Обновлено в GIAS"
-              value={formatDate(contract.source_updated_at, true)}
+              label="Дата подписания договора"
+              value={formatDate(contract.contract_date)}
             />
             {contract.termination_reason && (
               <div className="sm:col-span-2 lg:col-span-4">

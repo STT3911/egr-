@@ -1226,6 +1226,11 @@ class GiasContract(Base):
         back_populates="contract",
         cascade="all, delete-orphan",
     )
+    accounts = relationship(
+        "GiasContractAccount",
+        back_populates="contract",
+        cascade="all, delete-orphan",
+    )
 
 
 class GiasContractPosition(Base):
@@ -1268,6 +1273,42 @@ class GiasContractPosition(Base):
     )
 
     contract = relationship("GiasContract", back_populates="positions")
+
+
+class GiasContractAccount(Base):
+    """Bank account published for the provider in a GIAS contract."""
+
+    __tablename__ = "gias_contract_accounts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    contract_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("gias_contracts.contract_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("egr_companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    company_unp = Column(BigInteger, nullable=True, index=True)
+    account_number = Column(Text, nullable=True)
+    bank_code = Column(String(64), nullable=True)
+    bank_name = Column(Text, nullable=True)
+    currency_code = Column(String(16), nullable=True)
+    currency_name = Column(String(64), nullable=True)
+    source_created_at = Column(DateTime, nullable=True)
+    source_updated_at = Column(DateTime, nullable=True, index=True)
+    raw_json = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    contract = relationship("GiasContract", back_populates="accounts")
+    company = relationship("Company")
 
 
 class GiasContractSyncState(Base):

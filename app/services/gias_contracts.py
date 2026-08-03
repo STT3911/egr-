@@ -25,6 +25,7 @@ from app.core.logger import get_logger
 from app.database.models import (
     Company,
     GiasContract,
+    GiasContractAccount,
     GiasContractPosition,
     GiasContractSyncState,
     GiasSyncRun,
@@ -488,10 +489,21 @@ class GiasContractService:
                         synchronize_session=False,
                     )
                 )
+                account_count = (
+                    self.db.query(GiasContractAccount)
+                    .filter(
+                        GiasContractAccount.company_unp == unp,
+                        GiasContractAccount.company_id.is_(None),
+                    )
+                    .update(
+                        {"company_id": company.id},
+                        synchronize_session=False,
+                    )
+                )
                 self.db.commit()
                 stats["linked"] += int(customer_count or 0) + int(
                     provider_count or 0
-                )
+                ) + int(account_count or 0)
         finally:
             await probe.close()
         return stats
@@ -734,6 +746,36 @@ class GiasContractService:
             if position is not None:
                 self.db.add(position)
 
+        self.db.query(GiasContractAccount).filter(
+            GiasContractAccount.contract_id == contract.contract_id
+        ).delete(synchronize_session=False)
+        for item in self._account_payloads(payload):
+            self.db.add(
+                GiasContractAccount(
+                    contract_id=contract.contract_id,
+                    company_id=contract.provider_company_id,
+                    company_unp=contract.provider_unp,
+                    account_number=self._clean_text(item.get("accountProvider")),
+                    bank_code=self._clean_text(item.get("bankProviderCode")),
+                    bank_name=self._clean_text(item.get("bankProviderName")),
+                    currency_code=self._clean_text(
+                        item.get("accountProviderCurrencyCode")
+                    ),
+                    currency_name=self._clean_text(
+                        item.get("accountProviderCurrencyName")
+                    ),
+                    source_created_at=(
+                        self._ms_to_dt(item.get("dtCreate"))
+                        or contract.source_created_at
+                    ),
+                    source_updated_at=(
+                        self._ms_to_dt(item.get("dtUpdate"))
+                        or contract.source_updated_at
+                    ),
+                    raw_json=item,
+                )
+            )
+
     def _summary_values(self, payload: dict[str, Any]) -> dict[str, Any]:
         customer = payload.get("customer") or {}
         return {
@@ -788,6 +830,33 @@ class GiasContractService:
             source_updated_at=self._ms_to_dt(payload.get("dtUpdate")),
             raw_json=payload,
         )
+
+    def _account_payloads(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return meaningful provider accounts once, including legacy top-level fields."""
+        raw_accounts = payload.get("contractAccounts")
+        candidates = (
+            [item for item in raw_accounts if isinstance(item, dict)]
+            if isinstance(raw_accounts, list)
+            else []
+        )
+        if not candidates:
+            candidates = [payload]
+
+        result: list[dict[str, Any]] = []
+        seen: set[tuple[str | None, ...]] = set()
+        for item in candidates:
+            values = (
+                self._clean_text(item.get("accountProvider")),
+                self._clean_text(item.get("bankProviderCode")),
+                self._clean_text(item.get("bankProviderName")),
+                self._clean_text(item.get("accountProviderCurrencyCode")),
+                self._clean_text(item.get("accountProviderCurrencyName")),
+            )
+            if not any(values) or values in seen:
+                continue
+            seen.add(values)
+            result.append(item)
+        return result
 
     def _find_company(self, unp: int | None) -> Company | None:
         if unp is None:

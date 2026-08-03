@@ -6,6 +6,7 @@ import { SubscribeButton } from "@/components/SubscribeButton";
 import { CompanyMap } from "@/components/CompanyMap";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
+import { GiasBankAccountsSection } from "@/components/gias/GiasBankAccountsSection";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
 import { motion, type Variants, useScroll, useSpring } from "framer-motion";
 import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
@@ -1079,7 +1080,19 @@ const Company = () => {
 
           {profile.gias_contracts && (
             <SectionCard>
-              <GiasContractsSection contracts={profile.gias_contracts} />
+              <GiasContractsSection
+                contracts={profile.gias_contracts}
+                companyUnp={profile.unp}
+              />
+            </SectionCard>
+          )}
+
+          {profile.gias_bank_accounts && profile.gias_bank_accounts.length > 0 && (
+            <SectionCard>
+              <GiasBankAccountsSection
+                accounts={profile.gias_bank_accounts}
+                companyUnp={profile.unp}
+              />
             </SectionCard>
           )}
 

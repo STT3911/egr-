@@ -157,6 +157,42 @@ def test_summary_and_position_normalization() -> None:
     assert position.countries == ["BY"]
 
 
+def test_contract_accounts_are_normalized_and_deduplicated() -> None:
+    service = _service_without_network()
+    first = {
+        "accountProvider": " BY32AKBB30120000424630000000 ",
+        "bankProviderCode": "AKBBBY2X",
+        "bankProviderName": 'ОАО "АСБ Беларусбанк"',
+        "accountProviderCurrencyCode": "933",
+        "accountProviderCurrencyName": "BYN",
+    }
+    payload = {
+        "contractAccounts": [
+            first,
+            dict(first),
+            {},
+            "unsupported",
+        ]
+    }
+
+    accounts = service._account_payloads(payload)
+
+    assert accounts == [first]
+
+
+def test_contract_account_top_level_fallback_ignores_empty_values() -> None:
+    service = _service_without_network()
+    payload = {
+        "accountProvider": "BY86BPSB30121003354579330000",
+        "bankProviderCode": "BPSBBY2X",
+    }
+
+    assert service._account_payloads(payload) == [payload]
+    assert service._account_payloads(
+        {"contractAccounts": [], "bankProviderName": " "}
+    ) == []
+
+
 def test_detail_response_must_match_requested_contract() -> None:
     service = _service_without_network()
     response = Mock()

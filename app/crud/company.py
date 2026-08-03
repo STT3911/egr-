@@ -25,6 +25,7 @@ from app.database.models import (
     InspectionPlanRecord,
     BeltppOwnCertificate,
     GiasContract,
+    GiasContractAccount,
 )
 from datetime import datetime
 import logging
@@ -461,6 +462,45 @@ class CompanyCRUD:
             )
         ]
 
+        account_rows = (
+            self.db.query(GiasContractAccount)
+            .filter(
+                or_(
+                    GiasContractAccount.company_id == company.id,
+                    GiasContractAccount.company_unp == unp,
+                )
+            )
+            .order_by(GiasContractAccount.source_updated_at.desc().nullslast())
+            .limit(500)
+            .all()
+        )
+        gias_bank_accounts = []
+        seen_accounts = set()
+        for account in account_rows:
+            identity = (
+                account.account_number,
+                account.bank_code,
+                account.currency_code,
+            )
+            if identity in seen_accounts:
+                continue
+            seen_accounts.add(identity)
+            gias_bank_accounts.append(
+                {
+                    "contract_id": str(account.contract_id),
+                    "account_number": account.account_number,
+                    "bank_code": account.bank_code,
+                    "bank_name": account.bank_name,
+                    "currency_code": account.currency_code,
+                    "currency_name": account.currency_name,
+                    "source_updated_at": (
+                        account.source_updated_at.isoformat()
+                        if account.source_updated_at
+                        else None
+                    ),
+                }
+            )
+
         pvt_resident = None
         pvt = (
             self.db.query(PVTResidentRecord)
@@ -700,6 +740,7 @@ class CompanyCRUD:
             "gias_accreditation": gias_accreditation,
             "gias_locked_suppliers": gias_locked_suppliers,
             "gias_contracts": gias_contracts,
+            "gias_bank_accounts": gias_bank_accounts,
             "pvt_resident": pvt_resident,
             "trade_registry_records": trade_registry_records,
             "contacts_aggregated": contacts_aggregated,

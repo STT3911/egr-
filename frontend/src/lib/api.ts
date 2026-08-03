@@ -33,6 +33,16 @@ export type CompanyGiasContract = {
   detail_status?: "pending" | "fetched" | "error" | string;
 };
 
+export type CompanyGiasBankAccount = {
+  contract_id: string;
+  account_number?: string | null;
+  bank_code?: string | null;
+  bank_name?: string | null;
+  currency_code?: string | null;
+  currency_name?: string | null;
+  source_updated_at?: string | null;
+};
+
 export type CompanyProfile = {
   unp: number;
   current_status_code?: number;
@@ -182,6 +192,7 @@ export type CompanyProfile = {
     last_seen_at?: string;
   }[];
   gias_contracts?: CompanyGiasContract[];
+  gias_bank_accounts?: CompanyGiasBankAccount[];
 };
 
 export type GiasContractPosition = {
@@ -202,6 +213,19 @@ export type GiasContractPosition = {
   countries?: string[] | null;
   country_names?: string[] | null;
   is_smp?: boolean | null;
+};
+
+export type GiasContractAccount = {
+  id: number;
+  company_id?: string | null;
+  company_unp?: number | null;
+  account_number?: string | null;
+  bank_code?: string | null;
+  bank_name?: string | null;
+  currency_code?: string | null;
+  currency_name?: string | null;
+  source_created_at?: string | null;
+  source_updated_at?: string | null;
 };
 
 export type GiasContractDetail = {
@@ -239,6 +263,7 @@ export type GiasContractDetail = {
   detail_fetched_at?: string | null;
   detail_last_error?: string | null;
   positions: GiasContractPosition[];
+  accounts: GiasContractAccount[];
   raw_detail?: Record<string, unknown> | null;
 };
 

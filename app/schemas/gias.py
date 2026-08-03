@@ -131,6 +131,22 @@ class GiasContractPositionSchema(BaseModel):
         from_attributes = True
 
 
+class GiasContractAccountSchema(BaseModel):
+    id: int
+    company_id: Optional[UUID] = None
+    company_unp: Optional[int] = None
+    account_number: Optional[str] = None
+    bank_code: Optional[str] = None
+    bank_name: Optional[str] = None
+    currency_code: Optional[str] = None
+    currency_name: Optional[str] = None
+    source_created_at: Optional[datetime] = None
+    source_updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class GiasContractSchema(BaseModel):
     contract_id: UUID
     base_contract_id: Optional[UUID] = None
@@ -173,5 +189,6 @@ class GiasContractDetailSchema(GiasContractSchema):
     """Contract card including the lossless response from the GIAS detail API."""
 
     positions: list[GiasContractPositionSchema] = Field(default_factory=list)
+    accounts: list[GiasContractAccountSchema] = Field(default_factory=list)
     raw_detail: Optional[dict[str, Any]] = None
     detail_last_error: Optional[str] = None

@@ -113,7 +113,10 @@ def get_contract(
 ):
     contract = (
         db.query(GiasContract)
-        .options(selectinload(GiasContract.positions))
+        .options(
+            selectinload(GiasContract.positions),
+            selectinload(GiasContract.accounts),
+        )
         .filter(GiasContract.contract_id == contract_id)
         .one_or_none()
     )

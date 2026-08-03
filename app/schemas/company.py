@@ -235,6 +235,16 @@ class CompanyGiasContractSchema(BaseModel):
     detail_status: str = "pending"
 
 
+class CompanyGiasBankAccountSchema(BaseModel):
+    contract_id: str
+    account_number: Optional[str] = None
+    bank_code: Optional[str] = None
+    bank_name: Optional[str] = None
+    currency_code: Optional[str] = None
+    currency_name: Optional[str] = None
+    source_updated_at: Optional[str] = None
+
+
 class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
@@ -256,6 +266,7 @@ class CompanyProfileResponse(BaseModel):
     gias_accreditation: Optional[CompanyGiasAccreditationSchema] = None
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
     gias_contracts: List[CompanyGiasContractSchema] = []
+    gias_bank_accounts: List[CompanyGiasBankAccountSchema] = []
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
     contacts_aggregated: List[AggregatedContactSchema] = []

@@ -83,8 +83,10 @@ const formatAmount = (
 
 export const GiasContractsSection = ({
   contracts,
+  companyUnp,
 }: {
   contracts: CompanyGiasContract[];
+  companyUnp: number;
 }) => {
   const [role, setRole] = useState<RoleFilter>("all");
   const [query, setQuery] = useState("");
@@ -267,7 +269,9 @@ export const GiasContractsSection = ({
                               "Номер не указан"}
                           </div>
                           <Button asChild size="sm" variant="outline" className="justify-between">
-                            <Link to={`/contracts/${contract.contract_id}`}>
+                            <Link
+                              to={`/contracts/${contract.contract_id}?fromUnp=${companyUnp}`}
+                            >
                               Открыть договор
                               <ArrowUpRight className="h-4 w-4" />
                             </Link>
