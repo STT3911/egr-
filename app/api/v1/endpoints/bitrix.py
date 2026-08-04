@@ -12,7 +12,11 @@ from app.core.database import get_db
 from app.core.logger import get_logger
 from app.crud.company import CompanyCRUD
 from app.crud.grp import GrpCRUD
-from app.schemas.bitrix import BitrixRequisiteAddress, BitrixRequisiteData
+from app.schemas.bitrix import (
+    BitrixBankAccount,
+    BitrixRequisiteAddress,
+    BitrixRequisiteData,
+)
 
 router = APIRouter()
 logger = get_logger("api.bitrix")
@@ -162,6 +166,19 @@ def get_requisite_data(
         email = email or (c.get("email") or None)
         website = website or (c.get("website") or None)
 
+    bank_accounts = [
+        BitrixBankAccount(
+            account_number=item["account_number"],
+            bank_code=item.get("bank_code"),
+            bank_name=item.get("bank_name"),
+            currency_code=item.get("currency_code"),
+            currency_name=item.get("currency_name"),
+            source_contract_id=item.get("contract_id"),
+        )
+        for item in dossier.get("gias_bank_accounts", [])
+        if item.get("account_number")
+    ]
+
     return BitrixRequisiteData(
         unp=unp_int,
         is_ip=is_ip,
@@ -175,4 +192,5 @@ def get_requisite_data(
         phone=phone,
         email=email,
         website=website,
+        bank_accounts=bank_accounts,
     )

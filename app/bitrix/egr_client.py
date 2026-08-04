@@ -3,7 +3,7 @@ Client for EGR (Egrul) API - uses the same service API.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
@@ -52,6 +52,7 @@ class EGRCompanyInfo:
     website: str = ""
     ved_code: str = ""
     ved_name: str = ""
+    bank_accounts: list[dict] = field(default_factory=list)
 
 
 class EGRClient:
@@ -128,6 +129,12 @@ class EGRClient:
         info.phone = data.get("phone") or ""
         info.email = data.get("email") or ""
         info.website = data.get("website") or ""
+        raw_bank_accounts = data.get("bank_accounts")
+        info.bank_accounts = (
+            [item for item in raw_bank_accounts if isinstance(item, dict)]
+            if isinstance(raw_bank_accounts, list)
+            else []
+        )
 
         address = data.get("address")
         if isinstance(address, dict):
@@ -138,6 +145,7 @@ class EGRClient:
         info.is_empty = not any([
             info.full_name, info.short_name, info.authority,
             info.full_address, info.registration_date,
+            info.bank_accounts,
         ])
 
         logger.info(

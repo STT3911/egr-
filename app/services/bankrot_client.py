@@ -31,9 +31,10 @@ from __future__ import annotations
 import time
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 import httpx
+from billiard.exceptions import SoftTimeLimitExceeded
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -309,6 +310,8 @@ class BankrotClient:
 
                 try:
                     return resp.json()
+                except SoftTimeLimitExceeded:
+                    raise
                 except Exception as exc:
                     raise BankrotAPIError(
                         f"Invalid JSON from {method} {path} (status={resp.status_code}): {exc}",
@@ -393,6 +396,8 @@ class BankrotClient:
         page_size: int = 20,
         filters: Optional[Dict[str, Any]] = None,
         delay: float = 0.5,
+        start_offset: int = 0,
+        page_complete: Optional[Callable[[int, int, int], bool]] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Итератор по всем делам с автоматической пагинацией.
 
@@ -400,12 +405,15 @@ class BankrotClient:
           - ответ содержит "items" (list) и "count"/"totalCount" (int)
           - пагинация работает через offset; стоп — когда items пуст
             или offset >= total
+          - start_offset указывает на начало следующей ещё не обработанной страницы
+          - page_complete вызывается после полной обработки страницы и может
+            вернуть False для штатной паузы
 
         Yields:
             dict — отдельный объект дела из API
         """
-        offset = 0
-        page_num = 0
+        offset = max(0, int(start_offset))
+        page_num = offset // page_size
 
         while True:
             page_num += 1
@@ -439,6 +447,19 @@ class BankrotClient:
                 yield item
 
             offset += len(items)
+
+            # Вызывается только после того, как потребитель полностью обработал
+            # страницу. Это безопасная точка для коммита cursor/offset: при
+            # аварии посреди следующей страницы она будет прочитана повторно.
+            if page_complete is not None and not page_complete(
+                page_num, offset, total
+            ):
+                logger.info(
+                    "Bankrot: pagination paused after page %d (next offset=%d)",
+                    page_num,
+                    offset,
+                )
+                break
 
             # Останавливаемся, когда получили все записи
             if total and offset >= total:
@@ -619,6 +640,8 @@ class BankrotClient:
                     "payload": payload,
                     "fetch_error": None,
                 }
+            except SoftTimeLimitExceeded:
+                raise
             except Exception as exc:
                 logger.warning("Bankrot: dataset %s error: %s", spec.name, exc)
                 result[spec.name] = {
@@ -682,6 +705,8 @@ class BankrotClient:
                 "payload": payload,
                 "fetch_error": None,
             }
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             logger.warning(
                 "Bankrot: dataset publications error debtor_id=%d: %s",
@@ -725,6 +750,8 @@ class BankrotClient:
                     "payload": payload,
                     "fetch_error": None,
                 }
+            except SoftTimeLimitExceeded:
+                raise
             except Exception as exc:  # один раздел не должен останавливать дело
                 logger.warning(
                     "Bankrot: dataset %s error case_id=%d: %s",

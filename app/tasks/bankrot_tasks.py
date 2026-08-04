@@ -29,7 +29,9 @@ def sync_bankrot_cases_task(
     filters: Optional[Dict[str, Any]] = None,
     fetch_related_data: Optional[bool] = None,
     related_datasets: Optional[list[str]] = None,
-) -> Dict[str, int]:
+    max_runtime: Optional[int] = None,
+    resume: bool = True,
+) -> Dict[str, Any]:
     """Запустить полную синхронизацию bankrot.gov.by.
 
     Все параметры необязательны — без них используются значения из .env
@@ -51,6 +53,8 @@ def sync_bankrot_cases_task(
             filters=filters,
             fetch_related_data=fetch_related_data,
             related_datasets=related_datasets,
+            max_runtime=max_runtime,
+            resume=resume,
         )
         logger.info("Bankrot sync task finished: %s", stats)
         return stats

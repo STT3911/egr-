@@ -202,6 +202,7 @@ class Settings(BaseSettings):
     BANKROT_RELATED_PAGE_SIZE: int = 20               # проверенный размер страницы дочерних разделов
     BANKROT_RELATED_MAX_PAGES: int = 1000             # защита от зацикливания нестабильной пагинации
     BANKROT_RELATED_DATASETS: str = ""                # CSV-фильтр наборов; пусто = все поддерживаемые
+    BANKROT_BATCH_RUNTIME_SECONDS: int = 79200         # штатно остановиться через 22ч и продолжить со страницы
     BANKROT_SCHEDULE_ENABLED: bool = False           # включить периодическую задачу
     BANKROT_SCHEDULE_SECONDS: int = 86400            # интервал периодической задачи (сек)
     # OIDC-автообновление токена. По умолчанию клиент читает публичную frontend-

@@ -470,21 +470,25 @@ class CompanyCRUD:
                     GiasContractAccount.company_unp == unp,
                 )
             )
-            .order_by(GiasContractAccount.source_updated_at.desc().nullslast())
-            .limit(500)
+            .distinct(
+                GiasContractAccount.account_number,
+                GiasContractAccount.bank_code,
+                GiasContractAccount.currency_code,
+            )
+            .order_by(
+                GiasContractAccount.account_number,
+                GiasContractAccount.bank_code,
+                GiasContractAccount.currency_code,
+                GiasContractAccount.source_updated_at.desc().nullslast(),
+            )
             .all()
         )
+        account_rows.sort(
+            key=lambda row: row.source_updated_at or datetime.min,
+            reverse=True,
+        )
         gias_bank_accounts = []
-        seen_accounts = set()
         for account in account_rows:
-            identity = (
-                account.account_number,
-                account.bank_code,
-                account.currency_code,
-            )
-            if identity in seen_accounts:
-                continue
-            seen_accounts.add(identity)
             gias_bank_accounts.append(
                 {
                     "contract_id": str(account.contract_id),

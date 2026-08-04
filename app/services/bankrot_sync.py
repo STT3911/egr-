@@ -25,6 +25,7 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from billiard.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -268,6 +269,8 @@ def _emit_bankruptcy_events(db: Session, rows: List[Dict[str, Any]]) -> None:
                     db, unp, EVENT_BANKRUPTCY,
                     old_value=existing[case_id], new_value=new_status,
                 )
+    except SoftTimeLimitExceeded:
+        raise
     except Exception:
         # Эмиссия событий не должна валить синхронизацию банкротства.
         pass
@@ -347,6 +350,29 @@ def _upsert_case_datasets(db: Session, rows: List[Dict[str, Any]]) -> None:
 # Main sync function
 # ---------------------------------------------------------------------------
 
+
+def _resolve_resume_offset(
+    sync_run: BankrotSyncRun,
+    persisted_stats: Dict[str, Any],
+    page_size: int,
+) -> tuple[int, bool]:
+    """Return the next safe list offset and whether it came from legacy counters."""
+    persisted_offset = persisted_stats.get("next_offset")
+    try:
+        return max(0, int(persisted_offset)), False
+    except (TypeError, ValueError):
+        offset = max(0, int(sync_run.last_page or 0) * page_size)
+        if offset or not sync_run.total_cases:
+            return offset, False
+
+        # Старый код сохранял число полностью обработанных элементов, но не
+        # last_page. Возобновляемся только с границы полной страницы.
+        legacy_consumed = int(sync_run.total_cases or 0) + int(
+            persisted_stats.get("duplicate_cases_skipped") or 0
+        )
+        return (legacy_consumed // page_size) * page_size, True
+
+
 def sync_bankrot_cases(
     db: Session,
     *,
@@ -361,6 +387,8 @@ def sync_bankrot_cases(
     related_page_size: Optional[int] = None,
     related_max_pages: Optional[int] = None,
     related_datasets: Optional[List[str]] = None,
+    max_runtime: Optional[int] = None,
+    resume: bool = True,
 ) -> Dict[str, Any]:
     """Синхронизировать все дела с bankrot.gov.by в БД и файл.
 
@@ -377,6 +405,8 @@ def sync_bankrot_cases(
         related_page_size: размер страницы дочерних разделов.
         related_max_pages: защита от бесконечной пагинации.
         related_datasets: ограничить загрузку указанными именами наборов.
+        max_runtime: штатно приостановить батч через N секунд (0 — без ограничения).
+        resume: продолжить последний running/partial/failed запуск.
 
     Returns:
         dict со счётчиками: processed, failed, upserted, no_unp.
@@ -397,6 +427,11 @@ def sync_bankrot_cases(
     )
     related_page_size = related_page_size or settings.BANKROT_RELATED_PAGE_SIZE
     related_max_pages = related_max_pages or settings.BANKROT_RELATED_MAX_PAGES
+    max_runtime = (
+        settings.BANKROT_BATCH_RUNTIME_SECONDS
+        if max_runtime is None
+        else max(0, int(max_runtime))
+    )
     if related_datasets is None and settings.BANKROT_RELATED_DATASETS.strip():
         related_datasets = [
             item.strip()
@@ -408,18 +443,49 @@ def sync_bankrot_cases(
     debtor_data_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
     sync_started_monotonic = time.monotonic()
 
-    # --- Create sync run ---
-    sync_run = BankrotSyncRun(status="running")
-    db.add(sync_run)
-    db.commit()
-    db.refresh(sync_run)
+    # --- Create or resume the latest unfinished logical run ---
+    sync_run: Optional[BankrotSyncRun] = None
+    if resume:
+        sync_run = (
+            db.query(BankrotSyncRun)
+            .filter(BankrotSyncRun.status.in_(("running", "partial", "failed")))
+            .order_by(BankrotSyncRun.id.desc())
+            .first()
+        )
+    if sync_run is None:
+        sync_run = BankrotSyncRun(status="running")
+        db.add(sync_run)
+        db.commit()
+        db.refresh(sync_run)
+    else:
+        sync_run.status = "running"
+        sync_run.finished_at = None
+        sync_run.error = None
+        db.commit()
+
     run_id = sync_run.id
-    logger.info("Bankrot sync started: run_id=%d", run_id)
+    persisted_stats = dict(sync_run.stats_json or {})
+    start_offset, inferred_legacy_cursor = _resolve_resume_offset(
+        sync_run, persisted_stats, page_size
+    )
+    if inferred_legacy_cursor:
+        logger.warning(
+            "Bankrot: inferred legacy cursor from counters: run_id=%d offset=%d",
+            sync_run.id,
+            start_offset,
+        )
+    logger.info(
+        "Bankrot sync started: run_id=%d resume=%s start_offset=%d last_page=%d",
+        run_id,
+        bool(start_offset),
+        start_offset,
+        int(sync_run.last_page or 0),
+    )
 
     # --- Prepare output paths ---
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts = (sync_run.started_at or datetime.utcnow()).strftime("%Y%m%d_%H%M%S")
     tmp_path   = out_dir / f"bankrot_cases_{run_id}_{ts}.jsonl.tmp"
     final_path = out_dir / f"bankrot_cases_{run_id}_{ts}.jsonl"
 
@@ -436,6 +502,14 @@ def sync_bankrot_cases(
         "datasets_failed": 0,
         "duplicate_cases_skipped": 0,
     }
+    for key in tuple(stats):
+        if key in persisted_stats:
+            stats[key] = persisted_stats[key]
+    stats["next_offset"] = start_offset
+    stats["last_page"] = int(sync_run.last_page or 0)
+    stats["complete"] = False
+    previous_duration = float(persisted_stats.get("duration_seconds") or 0.0)
+    checkpoint_stats: Dict[str, Any] = dict(stats)
 
     def refresh_summary_stats() -> None:
         total_datasets = stats["datasets_fetched"] + stats["datasets_failed"]
@@ -449,21 +523,69 @@ def sync_bankrot_cases(
             stats["datasets_fetched"] * 100 / total_datasets, 2
         ) if total_datasets else 100.0
         stats["duration_seconds"] = round(
-            max(0.0, time.monotonic() - sync_started_monotonic), 2
+            previous_duration
+            + max(0.0, time.monotonic() - sync_started_monotonic),
+            2,
         )
 
     pending: List[Dict] = []
     pending_datasets: List[Dict[str, Any]] = []
     seen_case_ids: set[int] = set()
+    stopped_early = False
+
+    def flush_pending() -> None:
+        if not pending and not pending_datasets:
+            return
+        if pending:
+            _upsert_cases(db, list(pending))
+            stats["upserted"] += len(pending)
+            pending.clear()
+        if pending_datasets:
+            _upsert_case_datasets(db, list(pending_datasets))
+            pending_datasets.clear()
+
+    def page_complete(page_num: int, next_offset: int, total: int) -> bool:
+        """Commit one full page and its cursor atomically enough for safe replay."""
+        nonlocal checkpoint_stats, stopped_early
+        flush_pending()
+        stats["next_offset"] = next_offset
+        stats["last_page"] = page_num
+        if total:
+            stats["source_total"] = total
+        refresh_summary_stats()
+        db.query(BankrotSyncRun).filter_by(id=run_id).update({
+            "last_page": page_num,
+            "total_cases": stats["total_cases"],
+            "processed_cases": stats["processed"],
+            "failed_cases": stats["failed"],
+            "stats_json": dict(stats),
+        })
+        db.commit()
+        checkpoint_stats = dict(stats)
+
+        elapsed = time.monotonic() - sync_started_monotonic
+        if max_runtime and elapsed >= max_runtime:
+            stopped_early = True
+            logger.info(
+                "Bankrot: batch runtime reached %.0fs; pausing at page=%d offset=%d",
+                elapsed,
+                page_num,
+                next_offset,
+            )
+            return False
+        return True
 
     try:
+        output_mode = "a" if start_offset and tmp_path.exists() else "w"
         with BankrotClient(token=token) as client, \
-             open(tmp_path, "w", encoding="utf-8") as fout:
+             open(tmp_path, output_mode, encoding="utf-8") as fout:
 
             for list_item in client.iter_all_cases(
                 page_size=page_size,
                 filters=filters,
                 delay=delay,
+                start_offset=start_offset,
+                page_complete=page_complete,
             ):
                 case_id: Any = list_item.get("id")
                 if not case_id:
@@ -500,6 +622,8 @@ def sync_bankrot_cases(
                         "Bankrot: detail error case_id=%d: %s", case_id, exc
                     )
                     errors.append(f"detail: {exc}")
+                except SoftTimeLimitExceeded:
+                    raise
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Bankrot: unexpected detail error case_id=%d: %s",
@@ -572,6 +696,8 @@ def sync_bankrot_cases(
                         "Bankrot: judgements error case_id=%d: %s", case_id, exc
                     )
                     errors.append(f"judgements: {exc}")
+                except SoftTimeLimitExceeded:
+                    raise
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Bankrot: unexpected judgements error case_id=%d: %s",
@@ -636,11 +762,7 @@ def sync_bankrot_cases(
                         "Bankrot: flushing %d cases to DB (total processed=%d)…",
                         len(pending), stats["processed"],
                     )
-                    _upsert_cases(db, list(pending))
-                    _upsert_case_datasets(db, list(pending_datasets))
-                    stats["upserted"] += len(pending)
-                    pending.clear()
-                    pending_datasets.clear()
+                    flush_pending()
 
                     # Update progress in sync run
                     refresh_summary_stats()
@@ -653,20 +775,39 @@ def sync_bankrot_cases(
                     db.commit()
 
         # --- Final flush ---
-        if pending:
+        if pending or pending_datasets:
             logger.info("Bankrot: final flush of %d cases…", len(pending))
-            _upsert_cases(db, list(pending))
-            _upsert_case_datasets(db, list(pending_datasets))
-            stats["upserted"] += len(pending)
-            pending.clear()
-            pending_datasets.clear()
+            flush_pending()
+
+        if stopped_early:
+            refresh_summary_stats()
+            stats["complete"] = False
+            db.query(BankrotSyncRun).filter_by(id=run_id).update({
+                "status": "partial",
+                "finished_at": datetime.utcnow(),
+                "last_page": stats["last_page"],
+                "total_cases": stats["total_cases"],
+                "processed_cases": stats["processed"],
+                "failed_cases": stats["failed"],
+                "output_file": str(tmp_path),
+                "stats_json": dict(stats),
+            })
+            db.commit()
+            logger.info(
+                "Bankrot sync paused: run_id=%d next_offset=%d last_page=%d",
+                run_id,
+                stats["next_offset"],
+                stats["last_page"],
+            )
+            return stats
 
         # --- Atomic rename tmp → final ---
-        tmp_path.rename(final_path)
+        tmp_path.replace(final_path)
         logger.info("Bankrot: output saved to %s", final_path)
 
         # --- Mark done ---
         refresh_summary_stats()
+        stats["complete"] = True
         db.query(BankrotSyncRun).filter_by(id=run_id).update({
             "status":          "done",
             "finished_at":     datetime.utcnow(),
@@ -689,31 +830,58 @@ def sync_bankrot_cases(
         )
         return stats
 
+    except SoftTimeLimitExceeded:
+        # Не даём вложенным обработчикам превратить системный soft-limit в
+        # обычную ошибку одного dataset. Возвращаемся к последней полностью
+        # закоммиченной странице; незавершённая страница безопасно повторится.
+        logger.warning(
+            "Bankrot soft time limit: pausing run_id=%d at page=%d offset=%d",
+            run_id,
+            checkpoint_stats.get("last_page", 0),
+            checkpoint_stats.get("next_offset", 0),
+        )
+        db.rollback()
+        stats.clear()
+        stats.update(checkpoint_stats)
+        refresh_summary_stats()
+        stats["complete"] = False
+        stats["paused_by"] = "soft_time_limit"
+        db.query(BankrotSyncRun).filter_by(id=run_id).update({
+            "status": "partial",
+            "finished_at": datetime.utcnow(),
+            "last_page": stats.get("last_page", 0),
+            "total_cases": stats["total_cases"],
+            "processed_cases": stats["processed"],
+            "failed_cases": stats["failed"],
+            "error": None,
+            "output_file": str(tmp_path),
+            "stats_json": dict(stats),
+        })
+        db.commit()
+        return stats
+
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "Bankrot sync FAILED: run_id=%d error=%s\n%s",
             run_id, exc, traceback.format_exc(),
         )
 
-        # Clean up tmp file
-        try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except OSError:
-            pass
-
         # Mark run as failed
         try:
             db.rollback()
+            stats.clear()
+            stats.update(checkpoint_stats)
             refresh_summary_stats()
             db.query(BankrotSyncRun).filter_by(id=run_id).update({
                 "status":          "failed",
                 "finished_at":     datetime.utcnow(),
+                "last_page":       stats.get("last_page", 0),
                 "total_cases":     stats["total_cases"],
                 "processed_cases": stats["processed"],
                 "failed_cases":    stats["failed"],
                 "error":           str(exc),
-                "stats_json":      stats,
+                "output_file":     str(tmp_path),
+                "stats_json":      dict(stats),
             })
             db.commit()
         except Exception as db_exc:  # noqa: BLE001

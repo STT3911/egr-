@@ -11,6 +11,7 @@ from typing import Optional
 from urllib.parse import urljoin
 
 import httpx
+from billiard.exceptions import SoftTimeLimitExceeded
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -37,6 +38,8 @@ def _decode_jwt_exp(token: str) -> Optional[int]:
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
         exp = payload.get("exp")
         return int(exp) if exp is not None else None
+    except SoftTimeLimitExceeded:
+        raise
     except Exception:
         return None
 
@@ -77,6 +80,8 @@ class BankrotTokenManager:
                 saved = f.read_text(encoding="utf-8").strip()
                 if saved:
                     return saved
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             logger.warning("Не удалось прочитать сохранённый refresh-токен: %s", exc)
         return self._configured_refresh_token
@@ -86,6 +91,8 @@ class BankrotTokenManager:
         try:
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(token, encoding="utf-8")
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             logger.warning("Не удалось сохранить ротированный refresh-токен: %s", exc)
 
@@ -166,6 +173,8 @@ class BankrotTokenManager:
                 ):
                     self._client_secret = secret_match.group(1)
                     return self._client_secret
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             raise BankrotAuthError(
                 f"не удалось прочитать публичную OIDC-конфигурацию Bankrot: {exc}"
@@ -196,6 +205,8 @@ class BankrotTokenManager:
             )
             response.raise_for_status()
             body = response.json()
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             raise BankrotAuthError(
                 f"Bankrot client_credentials не выдал токен: {exc}"
@@ -229,6 +240,8 @@ class BankrotTokenManager:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=getattr(settings, "BANKROT_TIMEOUT_SECONDS", 30.0),
             )
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             logger.error("Bankrot refresh: сетевая ошибка обмена токена: %s", exc)
             raise BankrotAuthError(

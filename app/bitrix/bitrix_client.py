@@ -233,6 +233,59 @@ class BitrixClient:
             logger.error(f"Error updating requisite {requisite_id}: {e}")
             return False
 
+    async def get_requisite_preset_country_id(self, preset_id: int) -> int:
+        """Country used by a requisite preset; Belarus is the safe local fallback."""
+        try:
+            result = await self.call("crm.requisite.preset.get", {"id": preset_id})
+            return int(result["COUNTRY_ID"])
+        except (BitrixAPIError, KeyError, TypeError, ValueError) as e:
+            logger.warning(
+                "Could not resolve COUNTRY_ID for requisite preset %s, using BY=4: %s",
+                preset_id,
+                e,
+            )
+            return 4
+
+    async def get_bank_details(self, requisite_id: int) -> list[dict]:
+        """Return existing bank details attached to one requisite."""
+        result = await self.call(
+            "crm.requisite.bankdetail.list",
+            {
+                "filter": {"ENTITY_ID": requisite_id},
+                "select": [
+                    "ID",
+                    "ENTITY_ID",
+                    "XML_ID",
+                    "RQ_ACC_NUM",
+                    "RQ_IBAN",
+                    "RQ_BIK",
+                    "RQ_BIC",
+                    "RQ_SWIFT",
+                    "RQ_ACC_CURRENCY",
+                ],
+            },
+        )
+        return result if isinstance(result, list) else []
+
+    async def create_bank_detail(
+        self,
+        requisite_id: int,
+        country_id: int,
+        fields: dict,
+    ) -> int:
+        """Create one bank detail without changing existing/manual details."""
+        result = await self.call(
+            "crm.requisite.bankdetail.add",
+            {
+                "fields": {
+                    "ENTITY_ID": requisite_id,
+                    "COUNTRY_ID": country_id,
+                    **fields,
+                }
+            },
+        )
+        return int(result)
+
     async def upsert_requisite_address(self, requisite_id: int, address_type_id: int, address_fields: dict) -> bool:
         """Создать или обновить юридический адрес реквизита через crm.address.*.
 

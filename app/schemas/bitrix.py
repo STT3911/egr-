@@ -1,6 +1,6 @@
 """Schemas for the Bitrix24 integration (thin requisite endpoint)."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
@@ -9,6 +9,17 @@ class BitrixRequisiteAddress(BaseModel):
     full_address: Optional[str] = None
     postal_code: Optional[int] = None
     region: Optional[str] = None
+
+
+class BitrixBankAccount(BaseModel):
+    """Банковский счёт GIAS, подготовленный для реквизита Битрикс24."""
+
+    account_number: str
+    bank_code: Optional[str] = None
+    bank_name: Optional[str] = None
+    currency_code: Optional[str] = None
+    currency_name: Optional[str] = None
+    source_contract_id: Optional[str] = None
 
 
 class BitrixRequisiteData(BaseModel):
@@ -30,6 +41,7 @@ class BitrixRequisiteData(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
+    bank_accounts: list[BitrixBankAccount] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

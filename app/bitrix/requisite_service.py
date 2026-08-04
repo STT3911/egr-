@@ -1,5 +1,6 @@
 import logging
 import re
+import hashlib
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -122,10 +123,133 @@ def _split_phones(raw: str | None) -> list[str]:
     return result
 
 
+_CURRENCY_NAMES = {
+    "933": "BYN",
+    "840": "USD",
+    "978": "EUR",
+    "643": "RUB",
+}
+
+
+def _normalize_bank_value(value: object) -> str:
+    """Normalize identifiers used for bank-detail comparison and Bitrix writes."""
+    return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def _bank_account_key(value: object) -> str:
+    return _normalize_bank_value(value)
+
+
+def _bitrix_bank_fields(account: dict, unp: str) -> dict | None:
+    """Map one normalized GIAS account to writable Bitrix24 fields."""
+    account_number = _normalize_bank_value(account.get("account_number"))
+    if not account_number:
+        return None
+
+    bank_code = _normalize_bank_value(account.get("bank_code"))
+    bank_name = str(account.get("bank_name") or "").strip()
+    currency = str(account.get("currency_name") or "").strip().upper()
+    if not currency:
+        currency_code = _normalize_bank_value(account.get("currency_code"))
+        currency = _CURRENCY_NAMES.get(currency_code, currency_code)
+    contract_id = str(account.get("source_contract_id") or "").strip()
+
+    identity = "|".join((unp, account_number, bank_code, currency))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+    label = bank_name or bank_code or "Банковский счёт"
+    fields = {
+        "NAME": f"GIAS · {label}"[:255],
+        "XML_ID": f"tendex:gias:{digest}",
+        "ORIGINATOR_ID": "tendex-gias",
+        "RQ_ACC_NUM": account_number,
+    }
+    if bank_code:
+        # Порталы и шаблоны РБ отображают банковский код по-разному. Значение
+        # GIAS вида AKBBBY2X является BIC/SWIFT, но часть форм называет его БИК.
+        fields.update(
+            {
+                "RQ_BIK": bank_code,
+                "RQ_BIC": bank_code,
+                "RQ_SWIFT": bank_code,
+            }
+        )
+    if bank_name:
+        fields["RQ_BANK_NAME"] = bank_name
+    if currency:
+        fields["RQ_ACC_CURRENCY"] = currency
+    if contract_id:
+        fields["COMMENTS"] = f"Источник: GIAS; договор {contract_id}"
+    return fields
+
+
 class RequisiteService:
     def __init__(self, bitrix_client, egr_client):
         self.bitrix = bitrix_client
         self.egr = egr_client
+
+    async def _sync_bank_details(
+        self,
+        *,
+        requisite_id: int,
+        preset_id: int,
+        unp: str,
+        accounts: list[dict],
+    ) -> int:
+        """Add missing GIAS accounts and preserve every existing Bitrix record."""
+        if not accounts:
+            return 0
+
+        try:
+            existing = await self.bitrix.get_bank_details(requisite_id)
+            country_id = await self.bitrix.get_requisite_preset_country_id(preset_id)
+        except Exception as e:
+            # If the list cannot be read, abort instead of risking duplicates.
+            logger.error(
+                "[Requisite %s] Cannot read bank details, sync aborted: %s",
+                requisite_id,
+                e,
+            )
+            return 0
+
+        existing_accounts = {
+            key
+            for item in existing
+            for key in (
+                _bank_account_key(item.get("RQ_ACC_NUM")),
+                _bank_account_key(item.get("RQ_IBAN")),
+            )
+            if key
+        }
+        created = 0
+        for account in accounts:
+            fields = _bitrix_bank_fields(account, unp)
+            if fields is None:
+                continue
+            key = _bank_account_key(fields["RQ_ACC_NUM"])
+            if key in existing_accounts:
+                continue
+            try:
+                bank_detail_id = await self.bitrix.create_bank_detail(
+                    requisite_id,
+                    country_id,
+                    fields,
+                )
+                existing_accounts.add(key)
+                created += 1
+                logger.info(
+                    "[Requisite %s] Created GIAS bank detail ID=%s for account %s",
+                    requisite_id,
+                    bank_detail_id,
+                    key,
+                )
+            except Exception as e:
+                logger.error(
+                    "[Requisite %s] Failed to create account %s: %s",
+                    requisite_id,
+                    key,
+                    e,
+                )
+        return created
 
     async def process_company_update(self, company_id: int):
         """Main processing logic for OnCrmCompanyUpdate."""
@@ -258,17 +382,34 @@ class RequisiteService:
                         "ENTITY_ID": company_id, 
                         "ENTITY_TYPE_ID": 4,  
                         "RQ_INN": unp  # Ищем именно реквизит с таким же УНП!
-                    }
+                    },
+                    "select": ["ID", "PRESET_ID", "RQ_INN"],
                 })
                 requisite = req_list[0] if req_list else None
             except Exception as e:
                 logger.error(f"[Company {company_id}] Error finding requisite: {e}")
                 return
                 
-            # Правило лида: если реквизит по этому УНП уже существует — НИЧЕГО не трогаем
-            # (ни реквизит, ни карточку), чтобы не перезатирать правки, внесённые вручную.
+            # Существующий реквизит и карточку не меняем, чтобы не перезаписывать
+            # ручные правки. Банковские записи независимы: добавляем только счета,
+            # которых ещё нет, и никогда не обновляем/удаляем существующие.
             if requisite is not None:
-                logger.info(f"[Company {company_id}] Requisite for UNP {unp} already exists (ID={requisite.get('ID')}) — skip, ничего не меняем")
+                requisite_id = int(requisite["ID"])
+                preset_id = int(
+                    requisite.get("PRESET_ID")
+                    or (cfg.requisite_preset_id if cfg else None)
+                    or 1
+                )
+                created = await self._sync_bank_details(
+                    requisite_id=requisite_id,
+                    preset_id=preset_id,
+                    unp=unp,
+                    accounts=egr_info.bank_accounts,
+                )
+                logger.info(
+                    f"[Company {company_id}] Requisite for UNP {unp} already exists "
+                    f"(ID={requisite_id}); core fields untouched, bank details created={created}"
+                )
                 return
 
             # Реквизита по УНП ещё нет → первичное заполнение карточки и реквизита.
@@ -303,6 +444,13 @@ class RequisiteService:
                     fields=fields_to_write,
                 )
                 logger.info(f"[Company {company_id}] Created new requisite ID={requisite_id} using preset {preset_id}")
+
+                await self._sync_bank_details(
+                    requisite_id=requisite_id,
+                    preset_id=preset_id,
+                    unp=unp,
+                    accounts=egr_info.bank_accounts,
+                )
 
                 # Юридический адрес — отдельным вызовом через crm.address.*
                 if address_fields and requisite_id:
