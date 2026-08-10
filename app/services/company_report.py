@@ -304,6 +304,7 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     addresses = profile.get("addresses") or []
     ved_rows = profile.get("ved") or []
     contacts = profile.get("contacts_aggregated") or profile.get("contacts") or []
+    leadership_rows = profile.get("leadership_observations") or []
     trade_rows = profile.get("trade_registry_records") or []
     license_rows = profile.get("license_records") or []
     inspection_rows = profile.get("inspection_plan_records") or []
@@ -372,6 +373,25 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
             "data": _compact_lines(contacts, lambda row: f"{row.get('contact_type') or 'контакт'}: {row.get('value') or row.get('email') or row.get('phone') or row.get('website') or '—'}"),
             "period": _period_for_rows(contacts, observed_keys=("last_seen_at", "updated_at")),
             "sheet": "Контакты",
+        },
+        {
+            "section": "Руководители в публикациях",
+            "count": len(leadership_rows),
+            "data": _compact_lines(
+                leadership_rows,
+                lambda row: " — ".join(
+                    filter(
+                        None,
+                        [
+                            str(row.get("person_name") or ""),
+                            str(row.get("position") or ""),
+                            _display_date(row.get("event_date")),
+                        ],
+                    )
+                ),
+            ),
+            "period": _period_for_rows(leadership_rows, observed_keys=("event_date",)),
+            "sheet": "Руководители публикации",
         },
         {
             "section": "События ЕГР",
@@ -456,6 +476,7 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     _add_sheet(workbook, "Адреса ЕГР", [("full_address", "Адрес"), ("postal_code", "Индекс"), ("region", "Область"), ("district", "Район"), ("valid_from", "С"), ("valid_to", "По")], addresses)
     _add_sheet(workbook, "ВЭД ЕГР", [("ved_code", "Код"), ("ved_name", "Наименование"), ("valid_from", "С"), ("valid_to", "По")], ved_rows)
     _add_sheet(workbook, "Контакты", [("contact_type", "Тип"), ("value", "Значение"), ("full_name", "Контактное лицо"), ("position", "Должность"), ("sources", "Источники"), ("email", "Email"), ("phone", "Телефон"), ("website", "Сайт"), ("fax", "Факс")], contacts)
+    _add_sheet(workbook, "Руководители публикации", [("person_name", "ФИО"), ("position", "Должность"), ("organization_name", "Организация в источнике"), ("event_date", "Дата списка"), ("exam_type", "Вид проверки"), ("source_url", "Источник"), ("match_method", "Метод привязки"), ("match_confidence", "Уверенность")], leadership_rows)
     _add_sheet(workbook, "События ЕГР", [("event_record_id", "ID"), ("event_type", "Тип"), ("event_date", "Дата"), ("cancel_date", "Отмена"), ("document_date", "Документ"), ("deadline_date", "Срок"), ("suspension_end_date", "Окончание приостановления"), ("document_number", "Номер документа"), ("decision_authority", "Орган решения"), ("document_authority", "Орган документа"), ("foundation", "Основание"), ("notes", "Примечание")], events)
     _add_sheet(workbook, "ГРП МНС", [("full_name", "Полное название"), ("short_name", "Краткое название"), ("registration_date", "Регистрация"), ("inspectorate_code", "Код инспекции"), ("inspectorate_name", "Инспекция"), ("status_code", "Статус"), ("status_date", "Дата статуса"), ("address", "Адрес"), ("fetched_at", "Получено"), ("updated_at", "Обновлено")], grp_rows)
     _add_sheet(workbook, "Задолженность МНС", [("imns_code", "Код ИМНС"), ("imns_name", "ИМНС"), ("debt_date", "Дата долга"), ("repayment_date", "Погашение"), ("slice_date", "Дата среза")], tax_rows)

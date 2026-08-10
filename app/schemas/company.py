@@ -245,6 +245,19 @@ class CompanyGiasBankAccountSchema(BaseModel):
     source_updated_at: Optional[str] = None
 
 
+class CompanyLeadershipObservationSchema(BaseModel):
+    person_name: str
+    position: str
+    organization_name: str
+    event_date: Optional[str] = None
+    exam_type: Optional[str] = None
+    source_name: str
+    source_title: Optional[str] = None
+    source_url: str
+    match_method: Optional[str] = None
+    match_confidence: Optional[float] = None
+
+
 class CompanyProfileResponse(BaseModel):
     """Company full profile response"""
     unp: int
@@ -267,6 +280,7 @@ class CompanyProfileResponse(BaseModel):
     gias_locked_suppliers: List[CompanyGiasLockedSupplierSchema] = []
     gias_contracts: List[CompanyGiasContractSchema] = []
     gias_bank_accounts: List[CompanyGiasBankAccountSchema] = []
+    leadership_observations: List[CompanyLeadershipObservationSchema] = []
     pvt_resident: Optional[CompanyPVTResidentSchema] = None
     trade_registry_records: List[CompanyTradeRegistryRecordSchema] = []
     contacts_aggregated: List[AggregatedContactSchema] = []

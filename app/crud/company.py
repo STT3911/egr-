@@ -26,6 +26,7 @@ from app.database.models import (
     BeltppOwnCertificate,
     GiasContract,
     GiasContractAccount,
+    CompanyLeadershipObservation,
 )
 from datetime import datetime
 import logging
@@ -703,6 +704,38 @@ class CompanyCRUD:
             for row in bankrot_rows
         ]
 
+        # Public, dated evidence only. These rows must not be presented as an
+        # authoritative current director because the source has no UNP and is
+        # linked solely by an unambiguous normalized organization name.
+        leadership_rows = (
+            self.db.query(CompanyLeadershipObservation)
+            .filter(
+                CompanyLeadershipObservation.company_id == company.id,
+                CompanyLeadershipObservation.is_head.is_(True),
+            )
+            .order_by(
+                CompanyLeadershipObservation.event_date.desc().nullslast(),
+                CompanyLeadershipObservation.person_name.asc(),
+            )
+            .limit(20)
+            .all()
+        )
+        leadership_observations = [
+            {
+                "person_name": row.person_name,
+                "position": row.position,
+                "organization_name": row.organization_name,
+                "event_date": row.event_date.isoformat() if row.event_date else None,
+                "exam_type": row.exam_type,
+                "source_name": row.source_name,
+                "source_title": row.source_title,
+                "source_url": row.source_url,
+                "match_method": row.match_method,
+                "match_confidence": row.match_confidence,
+            }
+            for row in leadership_rows
+        ]
+
         # Агрегированные контакты: дедуп по (type, value_norm), источники — списком.
         contact_rows = (
             self.db.query(CompanyContact)
@@ -753,6 +786,7 @@ class CompanyCRUD:
             "inspection_plan_records": inspection_plan_records,
             "belltpp_own_certificates": belltpp_own_certificates,
             "bankrot_cases": bankrot_cases,
+            "leadership_observations": leadership_observations,
             "names": [
                 {
                     "full_name_ru": n.full_name_ru,

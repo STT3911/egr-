@@ -103,10 +103,19 @@ class Settings(BaseSettings):
     ADMIN_SESSION_TTL_HOURS: int = 12
     ADMIN_COOKIE_SECURE: Optional[bool] = None
     
-    # Security - Rate Limiting (requests per minute)
+    # Security - Rate Limiting
     RATE_LIMIT_ENABLED: bool = True
-    RATE_LIMIT_PER_MINUTE: int = 60
+    # A company page makes 5 normal API requests and up to 6 when geocoding is
+    # needed. Keep the technical ceiling above 15 complete company checks.
+    RATE_LIMIT_PER_MINUTE: int = 180
     RATE_LIMIT_LOOKUP_PER_MINUTE: Optional[int] = 80  # Lookup/search requests per client
+    RATE_LIMIT_COMPANIES_PER_MINUTE: int = 15  # Distinct company UNPs per client
+
+    # Minsk labour committee: dated public lists of managers and specialists.
+    MINSK_LEADERSHIP_SCHEDULE_ENABLED: bool = True
+    MINSK_LEADERSHIP_TIMEOUT_SECONDS: float = 30.0
+    MINSK_LEADERSHIP_RETRIES: int = 2
+    MINSK_LEADERSHIP_REQUEST_DELAY_SECONDS: float = 0.25
 
     # Nalog debt (portal.nalog.gov.by) — папка для выгрузки JSON.
     # Обязательно под /app/data (это записываемый том; корень /app доступен

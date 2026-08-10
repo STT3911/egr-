@@ -191,6 +191,18 @@ export type CompanyProfile = {
     }[];
     last_seen_at?: string;
   }[];
+  leadership_observations?: {
+    person_name: string;
+    position: string;
+    organization_name: string;
+    event_date?: string;
+    exam_type?: string;
+    source_name: string;
+    source_title?: string;
+    source_url: string;
+    match_method?: string;
+    match_confidence?: number;
+  }[];
   gias_contracts?: CompanyGiasContract[];
   gias_bank_accounts?: CompanyGiasBankAccount[];
 };

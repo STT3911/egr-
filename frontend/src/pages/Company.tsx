@@ -1078,6 +1078,49 @@ const Company = () => {
               </Card>
             </SectionCard>
 
+          {profile.leadership_observations && profile.leadership_observations.length > 0 && (
+            <SectionCard>
+              <Card className="glass shadow-card border-amber-500/25">
+                <CardHeader className="border-b border-border/60 bg-gradient-to-r from-amber-500/10 via-primary/5 to-transparent">
+                  <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                    <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                    Руководители в открытых публикациях
+                  </CardTitle>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    Датированные сведения Комитета по труду Минска. Источник не содержит УНП,
+                    поэтому привязка выполнена только по однозначному совпадению названия и не
+                    подтверждает, что человек занимает должность сейчас.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3 p-4 sm:p-6">
+                  {profile.leadership_observations.map((item) => (
+                    <div
+                      key={`${item.source_url}-${item.person_name}-${item.position}`}
+                      className="rounded-xl border border-border/60 bg-background/50 p-4"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <div className="font-semibold text-foreground">{item.person_name}</div>
+                          <div className="mt-1 text-sm text-muted-foreground">{item.position}</div>
+                          <div className="mt-1 text-xs text-muted-foreground/80">
+                            В публикации: {item.organization_name}
+                            {item.event_date ? ` · список на ${formatDate(item.event_date)}` : ""}
+                          </div>
+                        </div>
+                        <Button asChild size="sm" variant="outline" className="shrink-0">
+                          <a href={item.source_url} target="_blank" rel="noopener noreferrer">
+                            Источник
+                            <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                          </a>
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </SectionCard>
+          )}
+
           {profile.gias_contracts && (
             <SectionCard>
               <GiasContractsSection

@@ -20,6 +20,7 @@ celery_app = Celery(
         "app.tasks.eaeu_sez_tasks",
         "app.tasks.address_tasks",
         "app.tasks.nalog_debt_tasks",
+        "app.tasks.minsk_leadership_tasks",
     ],
 )
 
@@ -35,6 +36,7 @@ from app.tasks import contacts_tasks
 from app.tasks import eaeu_sez_tasks
 from app.tasks import address_tasks
 from app.tasks import nalog_debt_tasks
+from app.tasks import minsk_leadership_tasks
 from app.tasks import parser_alerts
 
 # Базовое расписание: EGR всегда в расписании, GRP — только если GRP_SCHEDULE_ENABLED
@@ -276,6 +278,15 @@ if settings.SEZ_SCHEDULE_ENABLED:
         "options": {"expires": int(settings.SEZ_SCHEDULE_SECONDS * 0.8)},
     }
 
+# Public occupational-safety examination lists are normally posted on Thursday.
+if settings.MINSK_LEADERSHIP_SCHEDULE_ENABLED:
+    _beat_schedule["minsk-leadership-sync"] = {
+        "task": "app.tasks.minsk_leadership_tasks.sync_minsk_leadership",
+        "schedule": crontab(day_of_week="thu,fri", hour=17, minute=30),
+        "args": (),
+        "options": {"expires": 23 * 3600},
+    }
+
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
@@ -316,6 +327,7 @@ celery_app.conf.update(
         "app.tasks.eaeu_sez_tasks.sync_eaeu_sez_residents":   {"queue": "heavy"},
         "app.tasks.nalog_debt_tasks.sync_nalog_debt":         {"queue": "heavy"},
         "app.tasks.address_tasks.rebuild_company_address_keys_task": {"queue": "heavy"},
+        "app.tasks.minsk_leadership_tasks.sync_minsk_leadership": {"queue": "heavy"},
         # ── Default (celery) queue — всё остальное ────────────────────
         # process_search_index_queue, grp_process_raw, egr_process_raw,
         # sync_daily_changes, load_companies_from_json,

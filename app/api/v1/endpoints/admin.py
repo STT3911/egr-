@@ -1006,6 +1006,15 @@ async def list_data_sources(
             records_count_column="id",
             source_date_column="slice_date",
         ),
+        _table_snapshot_source(
+            db,
+            key="minsk_leadership",
+            name="Комитет по труду Минска: руководители в публикациях",
+            table_name="company_leadership_observations",
+            updated_column="last_seen_at",
+            records_count_column="id",
+            source_date_column="event_date",
+        ),
         _latest_run_source(
             db,
             key="bankrot",

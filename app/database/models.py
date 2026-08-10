@@ -341,6 +341,7 @@ class Company(Base):
     license_records = relationship("LicenseRecord", back_populates="company")
     inspection_plan_records = relationship("InspectionPlanRecord", back_populates="company")
     belltpp_own_certificates = relationship("BeltppOwnCertificate", back_populates="company")
+    leadership_observations = relationship("CompanyLeadershipObservation", back_populates="company")
 
 
 class TradeRegistryRecord(Base):
@@ -671,6 +672,49 @@ class CompanyNameHistory(Base):
     valid_to = Column(Date)
     
     company = relationship("Company", back_populates="names_history")
+
+
+class CompanyLeadershipObservation(Base):
+    """Dated public evidence about a person and their role at an organization.
+
+    The source does not publish UNPs and may be historical. Records therefore
+    remain observations, not authoritative current-director fields. A company
+    link is populated only for an unambiguous exact normalized-name match.
+    """
+    __tablename__ = "company_leadership_observations"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("egr_companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    unp = Column(BigInteger, nullable=True, index=True)
+
+    person_name = Column(Text, nullable=False, index=True)
+    position = Column(Text, nullable=False)
+    organization_name = Column(Text, nullable=False)
+    organization_name_norm = Column(Text, nullable=True, index=True)
+    is_head = Column(Boolean, nullable=False, server_default=false(), index=True)
+    event_date = Column(Date, nullable=True, index=True)
+    exam_type = Column(String(32), nullable=True)
+
+    source_name = Column(String(64), nullable=False)
+    source_title = Column(Text, nullable=True)
+    source_url = Column(Text, nullable=False)
+    source_row_no = Column(Integer, nullable=True)
+    match_method = Column(String(32), nullable=True)
+    match_confidence = Column(Float, nullable=True)
+    raw_json = Column(JSONB, nullable=False, server_default="{}")
+    sync_key = Column(String(64), nullable=False, unique=True)
+
+    first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    company = relationship("Company", back_populates="leadership_observations")
 
 
 class CompanyAddressHistory(Base):

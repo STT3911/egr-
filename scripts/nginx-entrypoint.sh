@@ -12,7 +12,7 @@ if [ ! -f "$SSL_CERT" ]; then
   [ -f "$MAIN_CONF" ] && mv "$MAIN_CONF" "${MAIN_CONF}.disabled"
 cat > "$FALLBACK_CONF" << 'NGINX_HTTP'
 # EGR Service - HTTP only (SSL certs not yet present)
-limit_req_zone $binary_remote_addr zone=api_per_ip:10m rate=80r/m;
+limit_req_zone $binary_remote_addr zone=api_per_ip:10m rate=180r/m;
 
 server {
   listen 80;
@@ -33,7 +33,7 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
   }
   location /api {
-    limit_req zone=api_per_ip burst=80 nodelay;
+    limit_req zone=api_per_ip burst=180 nodelay;
     set $backend_upstream http://egr-api:8000;
     proxy_pass $backend_upstream;
     proxy_http_version 1.1;
@@ -69,6 +69,18 @@ NGINX_HTTP
 else
   rm -f "$FALLBACK_CONF"
   [ -f "${MAIN_CONF}.disabled" ] && mv "${MAIN_CONF}.disabled" "$MAIN_CONF"
+fi
+
+# Existing deployments keep the active TLS config in an ignored, mounted file.
+# Normalize its transport ceilings on every start so the application-level
+# quota of 15 distinct companies is reached before nginx's request counter.
+if [ -f "$MAIN_CONF" ]; then
+  sed -i \
+    -e 's/zone=api_general:10m rate=[0-9][0-9]*r\/m;/zone=api_general:10m rate=180r\/m;/' \
+    -e 's/zone=api_lookup:10m rate=[0-9][0-9]*r\/m;/zone=api_lookup:10m rate=80r\/m;/' \
+    -e 's/zone=api_general burst=[0-9][0-9]*/zone=api_general burst=180/' \
+    -e 's/zone=api_lookup burst=[0-9][0-9]*/zone=api_lookup burst=80/' \
+    "$MAIN_CONF"
 fi
 
 exec "$@"
