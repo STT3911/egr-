@@ -299,10 +299,7 @@ def discover_source_urls(
 def _unique_company_matches(
     candidate_rows: Iterable[tuple[str, Any, int]],
 ) -> dict[str, tuple[Any, int]]:
-    grouped: dict[str, set[tuple[Any, int]]] = {}
-    for normalized_name, company_id, unp in candidate_rows:
-        if normalized_name:
-            grouped.setdefault(normalized_name, set()).add((company_id, int(unp)))
+    grouped = _group_company_matches(candidate_rows)
     return {
         normalized_name: next(iter(companies))
         for normalized_name, companies in grouped.items()
@@ -310,12 +307,65 @@ def _unique_company_matches(
     }
 
 
-def resolve_company_matches(
+def _group_company_matches(
+    candidate_rows: Iterable[tuple[str, Any, int]],
+) -> dict[str, set[tuple[Any, int]]]:
+    grouped: dict[str, set[tuple[Any, int]]] = {}
+    for normalized_name, company_id, unp in candidate_rows:
+        if normalized_name:
+            grouped.setdefault(normalized_name, set()).add((company_id, int(unp)))
+    return grouped
+
+
+def _normalized_organization_aliases(value: str) -> tuple[str, ...]:
+    """Return the full source name and explicit parenthesized aliases.
+
+    Some committee rows contain both the former and current legal name in one
+    cell, for example ``Name A (Name B)``. EGR stores those names as separate
+    history rows, so matching the combined cell verbatim cannot succeed.
+    """
+    source_value = clean_text(value)
+    pieces = [source_value]
+    parenthesized = [clean_text(item) for item in re.findall(r"\(([^()]*)\)", source_value)]
+    if parenthesized:
+        pieces.append(clean_text(re.sub(r"\([^()]*\)", " ", source_value)))
+        pieces.extend(parenthesized)
+
+    aliases: list[str] = []
+    for piece in pieces:
+        normalized = normalize_company_name(piece) or ""
+        if normalized and normalized not in aliases:
+            aliases.append(normalized)
+    return tuple(aliases)
+
+
+def _select_company_match(
+    aliases: Iterable[str],
+    candidates_by_name: dict[str, set[tuple[Any, int]]],
+) -> tuple[Any, int] | None:
+    """Resolve aliases only when their candidate sets identify one company."""
+    candidate_sets = [
+        candidates_by_name[alias]
+        for alias in aliases
+        if candidates_by_name.get(alias)
+    ]
+    if not candidate_sets:
+        return None
+
+    common_candidates = set(candidate_sets[0])
+    for candidates in candidate_sets[1:]:
+        common_candidates.intersection_update(candidates)
+    if len(common_candidates) != 1:
+        return None
+    return next(iter(common_candidates))
+
+
+def resolve_company_match_candidates(
     db: Any,
     normalized_names: set[str],
     *,
     batch_size: int = 500,
-) -> dict[str, tuple[Any, int]]:
+) -> dict[str, set[tuple[Any, int]]]:
     candidate_rows: list[tuple[str, Any, int]] = []
     names = sorted(name for name in normalized_names if name)
     for offset in range(0, len(names), batch_size):
@@ -326,7 +376,7 @@ def resolve_company_matches(
             .filter(CompanyNameHistory.search_name.in_(batch))
             .all()
         )
-    return _unique_company_matches(candidate_rows)
+    return _group_company_matches(candidate_rows)
 
 
 def _sync_key(row: ParsedLeadershipRow) -> str:
@@ -349,11 +399,16 @@ def import_observations(
     dry_run: bool = False,
 ) -> dict[str, int]:
     materialized = list(rows)
-    normalized_by_org = {
-        row.organization_name: normalize_company_name(row.organization_name) or ""
+    aliases_by_org = {
+        row.organization_name: _normalized_organization_aliases(row.organization_name)
         for row in materialized
     }
-    matches = resolve_company_matches(db, set(normalized_by_org.values()))
+    all_aliases = {
+        alias
+        for aliases in aliases_by_org.values()
+        for alias in aliases
+    }
+    candidates_by_name = resolve_company_match_candidates(db, all_aliases)
     now = datetime.utcnow()
     payloads: list[dict[str, Any]] = []
     stats = {
@@ -366,9 +421,14 @@ def import_observations(
     }
 
     for row in materialized:
-        normalized_name = normalized_by_org[row.organization_name]
-        match = matches.get(normalized_name)
+        aliases = aliases_by_org[row.organization_name]
+        normalized_name = aliases[0] if aliases else ""
+        match = _select_company_match(aliases, candidates_by_name)
         company_id, unp = match if match else (None, None)
+        direct_match = (
+            match is not None
+            and match in candidates_by_name.get(normalized_name, set())
+        )
         if row.is_head:
             stats["head_rows"] += 1
         if match:
@@ -393,7 +453,11 @@ def import_observations(
                 "source_title": row.source_title,
                 "source_url": row.source_url,
                 "source_row_no": row.source_row_no,
-                "match_method": "exact_normalized_name" if match else None,
+                "match_method": (
+                    "exact_normalized_name"
+                    if direct_match
+                    else "exact_normalized_alias" if match else None
+                ),
                 "match_confidence": 1.0 if match else None,
                 "raw_json": {
                     **asdict(row),

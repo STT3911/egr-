@@ -7,6 +7,8 @@ from app.services.minsk_leadership import (
     CHECK_KNOWLEDGE_URL,
     KNOWN_SOURCE_URLS,
     _canonical_source_url,
+    _normalized_organization_aliases,
+    _select_company_match,
     _unique_company_matches,
     discover_source_urls,
     is_organization_head,
@@ -81,6 +83,40 @@ def test_only_unambiguous_company_name_candidates_are_linked() -> None:
     )
 
     assert matches == {"альфа": (first, 100000001)}
+
+
+def test_parenthesized_legal_names_resolve_to_the_same_company() -> None:
+    company = UUID("00000000-0000-0000-0000-000000000001")
+    aliases = _normalized_organization_aliases(
+        "Иностранное унитарное предприятие «ФЕСТО» "
+        "(Иностранное торгово-производственное унитарное предприятие «ФЕСТО»)"
+    )
+
+    assert aliases == (
+        "иностранное унитарное предприятие фесто иностранное торгово производственное унитарное предприятие фесто",
+        "иностранное унитарное предприятие фесто",
+        "иностранное торгово производственное унитарное предприятие фесто",
+    )
+    assert _select_company_match(
+        aliases,
+        {
+            aliases[1]: {(company, 190660662)},
+            aliases[2]: {(company, 190660662)},
+        },
+    ) == (company, 190660662)
+
+
+def test_parenthesized_names_do_not_link_conflicting_companies() -> None:
+    first = UUID("00000000-0000-0000-0000-000000000001")
+    second = UUID("00000000-0000-0000-0000-000000000002")
+
+    assert _select_company_match(
+        ("альфа", "бета"),
+        {
+            "альфа": {(first, 100000001)},
+            "бета": {(second, 100000002)},
+        },
+    ) is None
 
 
 def test_known_sources_survive_search_endpoint_failure() -> None:
