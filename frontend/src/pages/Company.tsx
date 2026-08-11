@@ -9,7 +9,7 @@ import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
 import { GiasBankAccountsSection } from "@/components/gias/GiasBankAccountsSection";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
 import { motion, type Variants, useScroll, useSpring } from "framer-motion";
-import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Info, Loader2, Mail, Moon, Phone, Printer, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Loader2, Mail, Moon, Phone, Printer, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   getCompanyProfile,
@@ -169,7 +169,6 @@ const Company = () => {
   const [error, setError] = useState<string | null>(null);
   const [grpData, setGrpData] = useState<GrpTaxpayerData | null>(null);
   const [grpLoading, setGrpLoading] = useState(false);
-  const [grpError, setGrpError] = useState<string | null>(null);
   const [taxDebtData, setTaxDebtData] = useState<CompanyTaxDebtResponse | null>(null);
   const [taxDebtLoading, setTaxDebtLoading] = useState(false);
   const [taxDebtError, setTaxDebtError] = useState<string | null>(null);
@@ -292,30 +291,28 @@ const Company = () => {
     load();
   }, [unp]);
 
-  const loadGrp = async (forceRefresh = false) => {
-    if (!unp) return;
-    const requestId = ++grpRequestRef.current;
-    setGrpLoading(true);
-    setGrpError(null);
-    if (!forceRefresh) setGrpData(null);
-    try {
-      const data = await getGrpTaxpayerData(unp, forceRefresh);
-      if (requestId === grpRequestRef.current) setGrpData(data);
-    } catch (err) {
-      if (requestId === grpRequestRef.current) {
-        setGrpError(err instanceof Error ? err.message : "Ошибка загрузки данных ГРП");
-        setGrpData(null);
-      }
-    } finally {
-      if (requestId === grpRequestRef.current) setGrpLoading(false);
-    }
-  };
-
   useEffect(() => {
-    // Load cached GRP record (if present). User can force refresh from UI.
-    if (!unp) return;
-    loadGrp(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const loadCachedGrp = async () => {
+      const requestId = ++grpRequestRef.current;
+      if (!unp) {
+        setGrpData(null);
+        setGrpLoading(false);
+        return;
+      }
+
+      setGrpLoading(true);
+      setGrpData(null);
+      try {
+        const data = await getGrpTaxpayerData(unp);
+        if (requestId === grpRequestRef.current) setGrpData(data);
+      } catch {
+        if (requestId === grpRequestRef.current) setGrpData(null);
+      } finally {
+        if (requestId === grpRequestRef.current) setGrpLoading(false);
+      }
+    };
+
+    loadCachedGrp();
   }, [unp]);
 
   useEffect(() => {
@@ -424,23 +421,6 @@ const Company = () => {
     } finally {
       if (requestId === bankruptcyRequestRef.current) setBankruptcyLoading(false);
     }
-  };
-
-  const formatUpdatedAtUTC = (iso?: string) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-
-    return (
-      new Intl.DateTimeFormat("ru-RU", {
-        timeZone: "UTC",
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      }).format(d) + " UTC"
-    );
   };
 
   const formatDate = (value?: string) => {
@@ -553,7 +533,6 @@ const Company = () => {
       profile.registration_date && { label: "Регистрация", value: formatDate(profile.registration_date), icon: CalendarDays },
       profile.liquidation_date && { label: "Ликвидация", value: formatDate(profile.liquidation_date), icon: AlertTriangle },
       taxDebtData?.latest_slice_date && { label: "Последний срез долгов", value: formatDate(taxDebtData.latest_slice_date), icon: AlertTriangle },
-      profile.pvt_resident?.last_seen_at && { label: "Обновление ПВТ", value: formatUpdatedAtUTC(profile.pvt_resident.last_seen_at), icon: Award },
     ].filter(Boolean).slice(0, 4) as { label: string; value: string; icon: typeof CalendarDays }[];
     const signals: { label: string; value: string; tone: PulseTone }[] = [
       {
@@ -673,19 +652,7 @@ const Company = () => {
                 Поделиться
               </Button>
             </div>
-            <div className="grid grid-cols-1 gap-2 border-t border-border/60 pt-2 sm:grid-cols-3">
-              <Button asChild size="sm" variant="outline" className="w-full min-w-0 glass hover:bg-primary/10 dark:hover:bg-primary/20">
-                <Link to={`/company/${unp}/raw`}>
-                  <Database className="h-4 w-4" />
-                  Raw данные
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="w-full min-w-0 glass hover:bg-accent/10 dark:hover:bg-accent/20">
-                <Link to={`/company/${unp}/compare`}>
-                  <Activity className="h-4 w-4" />
-                  Сравнение API
-                </Link>
-              </Button>
+            <div className="border-t border-border/60 pt-2">
               <Button asChild size="sm" variant="outline" className="w-full min-w-0 glass hover:bg-primary/10 dark:hover:bg-primary/20">
                 <Link to={`/company/${unp}/relations`}>
                   <Users className="h-4 w-4" />
@@ -1385,56 +1352,21 @@ const Company = () => {
             </SectionCard>
           )}
 
-          {/* Примечание о реорганизованных органах */}
-          <SectionCard>
-          <div className="glass p-3 sm:p-4 rounded-lg border-l-4 border-amber-500/50 text-xs sm:text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400 mb-1">
-              <Info className="w-3.5 h-3.5 flex-shrink-0" />
-              Примечание:
-            </span>{" "}
-            Органы, отмеченные как «Реорганизованный орган», — это устаревшие регистрирующие органы (исполкомы, министерства),
-            которые были реорганизованы или ликвидированы. Актуальные названия этих органов недоступны в данных ЕГР.
-          </div>
-          </SectionCard>
-
           {/* Данные налоговой (GRP) */}
+          {(grpLoading || grpData) && (
           <SectionCard>
           <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-primary/15">
             <CardHeader className="rounded-t-lg" style={{
               background: 'linear-gradient(90deg, hsl(var(--primary) / 0.08) 0%, hsl(var(--secondary) / 0.08) 100%)'
             }}>
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
-                  <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
-                  Данные налоговой
-                </CardTitle>
-                {unp && (
-                  <Button
-                    variant="outline"
-                    className="w-full sm:w-auto glass hover:bg-primary/10 dark:hover:bg-primary/20 transition-all duration-300"
-                    onClick={() => loadGrp(true)}
-                    disabled={grpLoading}
-                  >
-                    {grpLoading ? "Обновление..." : "Обновить"}
-                  </Button>
-                )}
-              </div>
+              <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
+                <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                Данные налоговой
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-4 sm:p-6">
               {grpLoading && !grpData && (
                 <p className="text-muted-foreground text-sm">Загрузка данных из налоговой...</p>
-              )}
-
-              {grpError && (
-                <div className="glass p-3 rounded-lg border border-destructive/30 text-destructive text-sm mb-4">
-                  {grpError}
-                </div>
-              )}
-
-              {!grpLoading && !grpError && !grpData && (
-                <p className="text-muted-foreground text-sm">
-                  Данных пока нет. Нажмите «Обновить», чтобы подтянуть информацию из ГРП.
-                </p>
               )}
 
               {grpData && (
@@ -1473,23 +1405,12 @@ const Company = () => {
                       </tr>
                     </tbody>
                   </table>
-
-                  {grpData.last_error && (
-                    <div className="mt-4 text-xs text-muted-foreground">
-                      Последняя ошибка обновления: <span className="text-destructive">{grpData.last_error}</span>
-                    </div>
-                  )}
-                  {grpData.updated_at && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Обновлено (UTC): {formatUpdatedAtUTC(grpData.updated_at)}
-                    </div>
-                  )}
-
                 </div>
               )}
             </CardContent>
           </Card>
           </SectionCard>
+          )}
 
           {profile.pvt_resident && (
             <SectionCard>
@@ -1571,11 +1492,6 @@ const Company = () => {
                       <ExternalLink className="h-4 w-4" />
                       Профиль на park.by
                     </a>
-                  )}
-                  {profile.pvt_resident.last_seen_at && (
-                    <div className="text-xs text-muted-foreground">
-                      Обновлено (UTC): {formatUpdatedAtUTC(profile.pvt_resident.last_seen_at)}
-                    </div>
                   )}
                 </div>
               </CardContent>
@@ -1664,11 +1580,6 @@ const Company = () => {
                         Запись в реестре ЕАЭС
                       </a>
                     )}
-                    {record.last_seen_at && (
-                      <div className="text-xs text-muted-foreground">
-                        Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
-                      </div>
-                    )}
                   </div>
                 ))}
               </CardContent>
@@ -1736,11 +1647,6 @@ const Company = () => {
                       )}
                     </div>
 
-                    {record.last_seen_at && (
-                      <div className="text-xs text-muted-foreground">
-                        Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
-                      </div>
-                    )}
                   </div>
                 ))}
               </CardContent>
@@ -1825,11 +1731,6 @@ const Company = () => {
                       <div className="text-sm">
                         <span className="text-muted-foreground block">План</span>
                         <span className="text-foreground font-medium">{record.plan_title}</span>
-                      </div>
-                    )}
-                    {record.last_seen_at && (
-                      <div className="text-xs text-muted-foreground">
-                        Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
                       </div>
                     )}
                   </div>
@@ -1952,11 +1853,6 @@ const Company = () => {
                         </div>
                       )}
 
-                      {record.last_seen_at && (
-                        <div className="text-xs text-muted-foreground">
-                          Обновлено (UTC): {formatUpdatedAtUTC(record.last_seen_at)}
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -2153,12 +2049,6 @@ const Company = () => {
                           </div>
                         )}
                       </div>
-
-                      {c.updated_at && (
-                        <div className="text-xs text-muted-foreground">
-                          Обновлено: {formatUpdatedAtUTC(c.updated_at)}
-                        </div>
-                      )}
 
                       {showBankruptcyDetails && fullCase && (
                         <div className="space-y-2 border-t border-border/60 pt-3">

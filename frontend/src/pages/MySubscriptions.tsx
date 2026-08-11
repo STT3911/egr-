@@ -316,7 +316,7 @@ const MySubscriptions = () => {
           <div>
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/[0.07] px-3 py-1 text-xs font-medium text-primary">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-              Обновление каждые 30 секунд
+              Лента обновляется автоматически
             </div>
             <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
               Центр событий

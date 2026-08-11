@@ -501,10 +501,9 @@ export const compareCompanyApis = async (unp: string) => {
   );
 };
 
-export const getGrpTaxpayerData = async (unp: string, forceRefresh = false) => {
-  const qs = forceRefresh ? "?force_refresh=true" : "";
+export const getGrpTaxpayerData = async (unp: string) => {
   return request<GrpTaxpayerData>(
-    `/api/v1/grp/${encodeURIComponent(unp)}${qs}`
+    `/api/v1/grp/${encodeURIComponent(unp)}`
   );
 };
 
