@@ -14,8 +14,6 @@ const CompanyCompare = lazy(() => import("./pages/CompanyCompare"));
 const CompanyRelations = lazy(() => import("./pages/CompanyRelations"));
 const GiasContract = lazy(() => import("./pages/GiasContract"));
 const Admin = lazy(() => import("./pages/Admin"));
-const Login = lazy(() => import("./pages/Login"));
-const MySubscriptions = lazy(() => import("./pages/MySubscriptions"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -71,8 +69,6 @@ const App = () => (
             <Route path="/references" element={<References />} />
             <Route path="/references/:type" element={<ReferenceDetail />} />
             <Route path="/admin" element={<Admin />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/subscriptions" element={<MySubscriptions />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

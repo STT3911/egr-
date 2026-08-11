@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Bell, Menu, Moon, Search, Sun, X } from "lucide-react";
+import { Menu, Moon, Search, Sun, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { CompanySearch } from "@/components/CompanySearch";
 
@@ -125,14 +125,6 @@ export const Header = () => {
                   Проверить
                 </a>
               )}
-
-              <Link
-                to="/subscriptions"
-                className="hidden items-center gap-2 rounded-full border border-border/80 bg-card/72 px-4 py-2 text-sm font-semibold text-foreground hover:-translate-y-0.5 hover:shadow-soft md:inline-flex"
-              >
-                <Bell className="h-4 w-4 text-primary" />
-                Мои подписки
-              </Link>
 
               <button
                 onClick={toggleTheme}

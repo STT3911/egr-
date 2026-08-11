@@ -77,7 +77,7 @@ export const HeroSection = () => {
                 <ArrowDownRight className="h-4 w-4 text-primary transition-transform group-hover:translate-x-0.5 group-hover:translate-y-0.5" />
               </a>
               <span className="h-1 w-1 rounded-full bg-border" />
-              <span>Без регистрации для поиска</span>
+              <span>Открытый поиск по ЕГР</span>
             </motion.div>
 
           </div>

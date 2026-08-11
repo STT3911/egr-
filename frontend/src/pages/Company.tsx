@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SubscribeButton } from "@/components/SubscribeButton";
 import { CompanyMap } from "@/components/CompanyMap";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
@@ -629,7 +628,7 @@ const Company = () => {
 
         {unp && (
           <div className="space-y-2 rounded-2xl border border-border/70 bg-card/95 p-3 shadow-soft">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Button
                 type="button"
                 variant="default"
@@ -640,7 +639,6 @@ const Company = () => {
                 {reportDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                 Скачать досье
               </Button>
-              <SubscribeButton unp={unp} />
               <Button
                 type="button"
                 variant="outline"
