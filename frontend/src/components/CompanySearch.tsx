@@ -163,7 +163,7 @@ export const CompanySearch = ({
               onChange={(e) => setQuery(e.target.value)}
               onFocus={handleInputFocus}
               onBlur={() => setFocused(false)}
-              className={`h-auto border-0 bg-transparent px-0 py-0 focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60 ${
+              className={`h-9 border-0 bg-transparent px-0 py-1 leading-7 focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60 ${
                 isHero ? "text-base sm:text-lg" : "text-sm"
               }`}
             />

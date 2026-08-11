@@ -1080,7 +1080,7 @@ const Company = () => {
 
           {profile.leadership_observations && profile.leadership_observations.length > 0 && (
             <SectionCard>
-              <Card className="glass shadow-card border-amber-500/25">
+              <Card className="glass overflow-hidden border-amber-500/25 shadow-card">
                 <CardHeader className="border-b border-border/60 bg-gradient-to-r from-amber-500/10 via-primary/5 to-transparent">
                   <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
                     <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
