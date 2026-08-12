@@ -21,6 +21,7 @@ from app.services.mapper_service import CompanyMapper
 from app.crud.company import CompanyCRUD
 from app.services.egr_client import EGRClient
 from app.services.egr_client import MobileEGRClient
+from app.services.egr_event_notifications import emit_egr_source_events
 from app.services.grp_client import GRPClient
 from app.services.gias_directory import GiasDirectoryService
 from app.services.gias_contracts import GiasContractService
@@ -748,29 +749,56 @@ def refresh_subscribed_companies(batch_size: int | None = None):
             try:
                 for start in range(0, len(unps), batch_size):
                     batch = unps[start:start + batch_size]
+
+                    async def _fetch_subscription_data(unp: int):
+                        history, events = await asyncio.gather(
+                            client.get_full_company_history(unp),
+                            client.get_events(unp),
+                            return_exceptions=True,
+                        )
+                        return history, events
+
                     results = await asyncio.gather(
-                        *[client.get_full_company_history(u) for u in batch],
+                        *[_fetch_subscription_data(u) for u in batch],
                         return_exceptions=True,
                     )
-                    for u, res in zip(batch, results):
-                        if isinstance(res, Exception) or not res:
+                    for u, result in zip(batch, results):
+                        if isinstance(result, Exception):
+                            logger.error("refresh_subscribed_companies UNP %s fetch failed: %s", u, result)
                             continue
-                        row = service.db.query(RawCompanyData).filter(RawCompanyData.unp == u).first()
-                        if not row:
-                            row = RawCompanyData(unp=u)
-                            service.db.add(row)
-                        row.data = res
-                        row.processed_at = None
-                        row.last_error = None
-                        row.updated_at = datetime.now()
-                        service.db.commit()
-                        try:
-                            # process_raw_data → save_full_company_data → эмиссия событий подписки
-                            service.process_raw_data(u, raw_entry=row)
-                            refreshed += 1
-                        except Exception as e:
-                            service.db.rollback()
-                            logger.error("refresh_subscribed_companies UNP %s: %s", u, e)
+
+                        history, source_events = result
+                        if not isinstance(history, Exception) and history:
+                            row = service.db.query(RawCompanyData).filter(RawCompanyData.unp == u).first()
+                            if not row:
+                                row = RawCompanyData(unp=u)
+                                service.db.add(row)
+                            row.data = history
+                            row.processed_at = None
+                            row.last_error = None
+                            row.updated_at = datetime.now()
+                            service.db.commit()
+                            try:
+                                # process_raw_data → field-diff subscription events
+                                service.process_raw_data(u, raw_entry=row)
+                                refreshed += 1
+                            except Exception as e:
+                                service.db.rollback()
+                                logger.error("refresh_subscribed_companies UNP %s: %s", u, e)
+                        elif isinstance(history, Exception):
+                            logger.warning("refresh_subscribed_companies UNP %s history failed: %s", u, history)
+
+                        if isinstance(source_events, Exception):
+                            logger.warning("refresh_subscribed_companies UNP %s events failed: %s", u, source_events)
+                        else:
+                            emitted = emit_egr_source_events(service.db, u, source_events)
+                            service.db.commit()
+                            if emitted:
+                                logger.info(
+                                    "refresh_subscribed_companies UNP %s: emitted %s official EGR events",
+                                    u,
+                                    emitted,
+                                )
                     if start + batch_size < len(unps):
                         await asyncio.sleep(0.5)
             finally:
@@ -1576,7 +1604,14 @@ def sync_daily_changes():
                 for e in events:
                     unp = e.get("ngrn") or e.get("vunp")
                     if unp:
-                        unps.add(int(unp))
+                        unp_int = int(unp)
+                        unps.add(unp_int)
+                        emit_egr_source_events(
+                            db,
+                            unp_int,
+                            [e],
+                            fallback_date=process_date,
+                        )
 
                 logger.info(f"Found {len(unps)} companies for {d_str} (fetch raw)")
                 fetched = 0

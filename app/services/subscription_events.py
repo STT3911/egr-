@@ -5,12 +5,10 @@
 кто-то подписан, сюда складывается запись в таблицу subscription_events
 (очередь). Доставку/рассылку этих записей сделаем отдельно (пулинг).
 
-Важно по производительности: при массовой обработке (сотни тысяч компаний)
-большинство UNP никто не отслеживает. Поэтому держим в памяти короткоживущий
-кэш множества подписанных UNP — для неотслеживаемой компании всё сводится к
-проверке принадлежности множеству, без запроса в БД.
+Запрос подписок делается только при уже обнаруженном изменении. Межпроцессный
+кэш здесь не используется: API и Celery-воркеры живут в разных процессах, и локальный кэш
+может пропустить новую подписку.
 """
-import time
 import logging
 from datetime import datetime, timedelta
 
@@ -26,35 +24,19 @@ EVENT_LOCKED_SUPPLIER = "locked_supplier"        # реестр недоброс
 EVENT_TAX_DEBT = "tax_debt"                      # налоговая задолженность (МНС)
 EVENT_NAME_CHANGED = "name_changed"              # смена наименования
 EVENT_ADDRESS_CHANGED = "address_changed"        # смена юр. адреса
-EVENT_DIRECTOR_CHANGED = "director_changed"      # смена руководителя/учредителей
+EVENT_DIRECTOR_CHANGED = "director_changed"      # назначение/замена руководителя по журналу ЕГР
 EVENT_LICENSE_CHANGED = "license_changed"        # лицензия выдана/отозвана
 EVENT_VED_CHANGED = "ved_changed"                # изменение видов деятельности
 EVENT_REGISTRY_APPEARANCE = "registry_appearance"  # появление в реестрах МАРТ/ПВТ/ЕАЭС
 EVENT_NEW_REGISTRATION = "new_registration"      # новая регистрация
+EVENT_EGR_EVENT = "egr_event"                    # официальное событие из журнала ЕГР
 
 ALL_EVENT_TYPES = {
     EVENT_STATUS_CHANGED, EVENT_LIQUIDATION, EVENT_BANKRUPTCY, EVENT_LOCKED_SUPPLIER,
     EVENT_TAX_DEBT, EVENT_NAME_CHANGED, EVENT_ADDRESS_CHANGED, EVENT_DIRECTOR_CHANGED,
     EVENT_LICENSE_CHANGED, EVENT_VED_CHANGED, EVENT_REGISTRY_APPEARANCE, EVENT_NEW_REGISTRATION,
+    EVENT_EGR_EVENT,
 }
-
-# Кэш подписанных UNP (на процесс), TTL в секундах
-_CACHE_TTL = 30
-_cache = {"unps": frozenset(), "ts": 0.0}
-
-
-def _subscribed_unps(db) -> frozenset:
-    now = time.time()
-    if now - _cache["ts"] > _CACHE_TTL:
-        try:
-            rows = db.query(CompanySubscription.unp).distinct().all()
-            _cache["unps"] = frozenset(r[0] for r in rows)
-            _cache["ts"] = now
-        except Exception as e:  # таблицы ещё нет / БД недоступна — не валим обработку
-            logger.warning("subscription cache refresh failed: %s", e)
-            _cache["ts"] = now  # не долбим БД каждую строку
-    return _cache["unps"]
-
 
 def _as_text(value) -> str | None:
     if value is None:
@@ -62,7 +44,22 @@ def _as_text(value) -> str | None:
     return str(value)
 
 
-def emit_company_event(db, unp, event_type: str, old_value=None, new_value=None) -> int:
+def _naive_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=None) if value.tzinfo else value
+
+
+def emit_company_event(
+    db,
+    unp,
+    event_type: str,
+    old_value=None,
+    new_value=None,
+    *,
+    occurred_at: datetime | None = None,
+    source_key: str | None = None,
+) -> int:
     """
     Поставить событие в очередь для всех подписчиков этой компании,
     у кого event_type попадает в их подписку (пустой список event_types = все).
@@ -76,36 +73,36 @@ def emit_company_event(db, unp, event_type: str, old_value=None, new_value=None)
     except (TypeError, ValueError):
         return 0
 
-    # Быстрый путь: компанию никто не отслеживает — выходим без запроса в БД.
-    if unp_int not in _subscribed_unps(db):
-        return 0
-
     subs = (
         db.query(CompanySubscription)
         .filter(CompanySubscription.unp == unp_int)
         .all()
     )
+    if not subs:
+        return 0
     old_text = _as_text(old_value)
     new_text = _as_text(new_value)
-    duplicate_since = datetime.now() - timedelta(minutes=2)
-    duplicate_user_ids = {
-        row[0]
-        for row in (
-            db.query(SubscriptionEvent.user_id)
-            .filter(
-                SubscriptionEvent.unp == unp_int,
-                SubscriptionEvent.event_type == event_type,
-                SubscriptionEvent.old_value == old_text,
-                SubscriptionEvent.new_value == new_text,
-                SubscriptionEvent.occurred_at >= duplicate_since,
-            )
-            .all()
+    event_time = _naive_datetime(occurred_at) or datetime.now()
+    duplicate_query = db.query(SubscriptionEvent.user_id).filter(
+        SubscriptionEvent.unp == unp_int,
+        SubscriptionEvent.event_type == event_type,
+    )
+    if source_key:
+        duplicate_query = duplicate_query.filter(SubscriptionEvent.source_key == source_key)
+    else:
+        duplicate_query = duplicate_query.filter(
+            SubscriptionEvent.old_value == old_text,
+            SubscriptionEvent.new_value == new_text,
+            SubscriptionEvent.occurred_at >= datetime.now() - timedelta(minutes=2),
         )
-    }
+    duplicate_user_ids = {row[0] for row in duplicate_query.all()}
     created = 0
     for s in subs:
         types = s.event_types or []
         if types and event_type not in types:
+            continue
+        subscribed_at = _naive_datetime(getattr(s, "created_at", None))
+        if subscribed_at and event_time.date() < subscribed_at.date():
             continue
         if s.user_id in duplicate_user_ids:
             continue
@@ -113,9 +110,10 @@ def emit_company_event(db, unp, event_type: str, old_value=None, new_value=None)
             user_id=s.user_id,
             unp=unp_int,
             event_type=event_type,
+            source_key=source_key,
             old_value=old_text,
             new_value=new_text,
-            occurred_at=datetime.now(),
+            occurred_at=event_time,
         ))
         created += 1
     if created:

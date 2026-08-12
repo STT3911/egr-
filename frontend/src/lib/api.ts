@@ -860,11 +860,12 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   tax_debt: "Налоговая задолженность",
   name_changed: "Смена наименования",
   address_changed: "Смена юр. адреса",
-  director_changed: "Смена руководителя / учредителей",
+  director_changed: "Назначение / замена руководителя",
   license_changed: "Лицензия (выдача / отзыв)",
   ved_changed: "Изменение видов деятельности (ВЭД)",
   registry_appearance: "Появление в реестрах (МАРТ/ПВТ/ЕАЭС)",
   new_registration: "Новая регистрация",
+  egr_event: "Прочее официальное событие ЕГР",
 };
 
 export const registerUser = async (email: string, password: string) =>

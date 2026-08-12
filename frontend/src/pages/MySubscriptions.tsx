@@ -61,6 +61,7 @@ const eventTone: Record<string, string> = {
   tax_debt: "border-red-500/25 bg-red-500/10 text-red-400",
   status_changed: "border-sky-500/25 bg-sky-500/10 text-sky-400",
   new_registration: "border-emerald-500/25 bg-emerald-500/10 text-emerald-400",
+  egr_event: "border-cyan-500/25 bg-cyan-500/10 text-cyan-400",
   registry_appearance: "border-violet-500/25 bg-violet-500/10 text-violet-400",
 };
 

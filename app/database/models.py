@@ -956,6 +956,10 @@ class SubscriptionEvent(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     unp = Column(BigInteger, nullable=False, index=True)
     event_type = Column(String(64), nullable=False, index=True)
+    # Stable identifier from an upstream registry (for example egr:<unp>:<event-id>).
+    # NULL for locally detected field diffs. Unique per user prevents replayed
+    # source snapshots from generating duplicate feed rows and notifications.
+    source_key = Column(String(160), nullable=True)
     old_value = Column(Text, nullable=True)   # было
     new_value = Column(Text, nullable=True)   # стало
     occurred_at = Column(DateTime, nullable=False, server_default=func.now())  # когда событие возникло
@@ -976,6 +980,10 @@ class SubscriptionEvent(Base):
     telegram_delivered_at = Column(DateTime, nullable=True)
     telegram_attempts = Column(Integer, nullable=False, server_default="0")
     telegram_error = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "source_key", name="uq_subscription_events_user_source_key"),
+    )
 
 
 # =====================================================
