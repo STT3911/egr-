@@ -1,7 +1,7 @@
 #!/bin/bash
-# Quick status check for test.tendex.by Docker services
+# Quick status check for company.tenders.by Docker services
 
-echo "📊 Status check for test.tendex.by"
+echo "📊 Status check for company.tenders.by"
 echo "==================================="
 
 # Service status
@@ -51,9 +51,9 @@ fi
 # External access
 echo ""
 echo "🌐 External access:"
-if curl -f --max-time 10 https://test.tendex.by > /dev/null 2>&1; then
+if curl -f --max-time 10 https://company.tenders.by > /dev/null 2>&1; then
     echo "✅ HTTPS: Working"
-elif curl -f --max-time 10 http://test.tendex.by > /dev/null 2>&1; then
+elif curl -f --max-time 10 http://company.tenders.by > /dev/null 2>&1; then
     echo "⚠️ HTTP: Working (HTTPS not configured)"
 else
     echo "❌ External access: Not working (DNS or config issue)"

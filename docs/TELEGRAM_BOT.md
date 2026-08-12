@@ -21,7 +21,7 @@ TELEGRAM_BOT_USERNAME=tendex_bot
 TELEGRAM_API_BASE_URL=http://egr-api:8000
 TELEGRAM_API_KEY=
 TELEGRAM_LOOKUP_LIMIT=5
-APP_URL=https://test.tendex.by
+APP_URL=https://company.tenders.by
 ```
 
 - `TELEGRAM_BOT_TOKEN` обязателен.

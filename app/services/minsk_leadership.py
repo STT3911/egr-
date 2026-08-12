@@ -51,7 +51,7 @@ KNOWN_SOURCE_URLS = (
 DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ru-RU,ru;q=0.9",
-    "User-Agent": "Tendex-EGR/1.0 (+https://test.tendex.by)",
+    "User-Agent": "Tendex-EGR/1.0 (+https://company.tenders.by)",
 }
 
 

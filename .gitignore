@@ -103,8 +103,6 @@ ngrn_list.csv
 *.tmp
 *.temp
 .claude/settings.local.json
-nginx/conf.d/test.tendex.by.conf
-nginx/conf.d/00-http-only-fallback.conf
-nginx/conf.d/test.tendex.by.conf.disabled
+/nginx/conf.d/
+/test.tendex.by.conf.disabled
 data/
-*.conf

@@ -19,7 +19,7 @@ import requests
 
 BASE_URL = "https://www.cci.by/certs/own/"
 DEFAULT_PAGE_SIZE = 20
-USER_AGENT = "Mozilla/5.0 (compatible; EGR-Service/1.0; +https://test.tendex.by)"
+USER_AGENT = "Mozilla/5.0 (compatible; EGR-Service/1.0; +https://company.tenders.by)"
 
 
 @dataclass(frozen=True)

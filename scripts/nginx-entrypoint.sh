@@ -3,9 +3,15 @@
 # Used by egr-nginx when ./ssl is empty (e.g. first deploy before certbot).
 
 set -e
-MAIN_CONF=/etc/nginx/conf.d/test.tendex.by.conf
+MAIN_CONF=/etc/nginx/conf.d/company.tenders.by.conf
+LEGACY_CONF=/etc/nginx/conf.d/test.tendex.by.conf
 FALLBACK_CONF=/etc/nginx/conf.d/00-http-only-fallback.conf
 SSL_CERT=/etc/nginx/ssl/fullchain.pem
+
+# The old production config is an ignored bind-mounted file on existing
+# deployments. Disable it before nginx parses conf.d, otherwise it keeps the
+# old domain active and duplicates the shared rate-limit zones.
+[ -f "$LEGACY_CONF" ] && mv "$LEGACY_CONF" "${LEGACY_CONF}.legacy-disabled"
 
 if [ ! -f "$SSL_CERT" ]; then
   echo "No SSL cert at $SSL_CERT — enabling HTTP-only fallback."
@@ -16,7 +22,7 @@ limit_req_zone $binary_remote_addr zone=api_per_ip:10m rate=180r/m;
 
 server {
   listen 80;
-  server_name test.tendex.by _;
+  server_name company.tenders.by test.tendex.by _;
   limit_req_status 429;
   resolver 127.0.0.11 valid=30s;
   client_max_body_size 100M;

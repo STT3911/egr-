@@ -6,7 +6,7 @@
 по данным Единого государственного регистра 
 Республики Беларусь
 
-URL: https://test.tendex.by
+URL: https://company.tenders.by
 Version: 1.0
 Year: 2026
 

@@ -1,4 +1,4 @@
-# robots.txt for test.tendex.by
+# robots.txt for company.tenders.by
 User-agent: *
 Allow: /
 
@@ -6,7 +6,7 @@ Allow: /
 # Disallow: /admin/
 
 # Sitemap (uncomment when sitemap is available)
-# Sitemap: https://test.tendex.by/sitemap.xml
+# Sitemap: https://company.tenders.by/sitemap.xml
 
 # Crawl-delay for all bots
 Crawl-delay: 1

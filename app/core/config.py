@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     # Нигде больше не используется (по требованию прод-интеграции tenders.by).
     STABLE_API_TOKEN: Optional[str] = None
     ALLOWED_API_KEYS: str = ""  # Comma-separated list of API keys
-    ALLOWED_HOSTS: str = "test.tendex.by,localhost,127.0.0.1,egr-api,egr_api"
+    ALLOWED_HOSTS: str = "company.tenders.by,test.tendex.by,localhost,127.0.0.1,egr-api,egr_api"
 
     # Admin panel authentication
     ADMIN_USERNAME: str = "admin"
@@ -171,7 +171,7 @@ class Settings(BaseSettings):
     EGR_RECONCILE_LIMIT: int = 20000                   # сколько (пере)заборов ставить за прогон
 
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,http://test.tendex.by,https://test.tendex.by"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8000,http://localhost:8080,https://company.tenders.by,https://test.tendex.by"
     
     # Bitrix24 Integration
     BITRIX_CLIENT_ID: Optional[str] = None
@@ -250,7 +250,7 @@ class Settings(BaseSettings):
     # Геокодинг адресов через OSM/Nominatim (координаты можно хранить, в отличие
     # от Яндекса). Nominatim требует валидный User-Agent с контактом и лимит 1 req/sec.
     NOMINATIM_BASE_URL: str = "https://nominatim.openstreetmap.org"
-    NOMINATIM_USER_AGENT: str = "egr-service/1.0 (+https://test.tendex.by; stt04032@gmail.com)"
+    NOMINATIM_USER_AGENT: str = "egr-service/1.0 (+https://company.tenders.by; stt04032@gmail.com)"
     NOMINATIM_TIMEOUT_SECONDS: float = 30.0
     NOMINATIM_DELAY_SECONDS: float = 1.1     # пауза между запросами (лимит 1/сек)
     NOMINATIM_COUNTRY_CODES: str = "by"      # ограничиваем поиск Беларусью

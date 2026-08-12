@@ -1,187 +1,92 @@
 #!/bin/bash
-# Setup SSL for Docker-based test.tendex.by
-# Run this on your server after docker-fix.sh
+# Issue/renew the production certificate for company.tenders.by and switch the
+# Docker deployment to the new public URL. Run from the repository root.
 
-set -e
+set -euo pipefail
 
-DOMAIN="test.tendex.by"
-EMAIL="admin@tendex.by"
+DOMAIN="${DOMAIN:-company.tenders.by}"
+LEGACY_DOMAIN="${LEGACY_DOMAIN:-test.tendex.by}"
+EMAIL="${EMAIL:-admin@tendex.by}"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ENV_FILE="$PROJECT_DIR/.env"
+CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
 
-echo "🔐 Setting up SSL for Docker-based $DOMAIN"
-
-# Check if we're on the server with root access
-if [ "$EUID" -ne 0 ]; then
-    echo "❌ Please run as root or with sudo"
-    exit 1
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+  echo "Run with sudo: sudo bash scripts/deploy/setup-docker-ssl.sh"
+  exit 1
 fi
 
-# Install certbot if not installed
-echo "📦 Installing certbot..."
-if ! command -v certbot &> /dev/null; then
-    apt update
-    apt install -y certbot
+cd "$PROJECT_DIR"
+
+upsert_env() {
+  key="$1"
+  value="$2"
+  touch "$ENV_FILE"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+echo "Checking DNS for $DOMAIN..."
+domain_ip="$(getent ahostsv4 "$DOMAIN" | awk 'NR == 1 { print $1 }')"
+public_ip="$(curl -4fsS --max-time 10 https://api.ipify.org || true)"
+if [ -z "$domain_ip" ]; then
+  echo "No A record found for $DOMAIN"
+  exit 1
+fi
+if [ -n "$public_ip" ] && [ "$domain_ip" != "$public_ip" ]; then
+  echo "$DOMAIN resolves to $domain_ip, but this server reports $public_ip"
+  exit 1
 fi
 
-# Check if nginx is running in Docker
-echo "🌐 Checking Docker nginx..."
-if docker ps | grep -q egr_nginx; then
-    echo "✅ Docker nginx is running"
-else
-    echo "❌ Docker nginx is not running. Start services first:"
-    echo "docker compose up -d"
-    exit 1
+if ! command -v certbot >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y certbot
 fi
 
-# Stop Docker nginx temporarily for certbot standalone
-echo "🛑 Stopping Docker nginx for SSL setup..."
+# Port 80 is published by the Docker nginx container. Stop only that service;
+# the API, workers and database remain running while certbot uses standalone.
 docker compose stop egr-nginx
-
-# Get SSL certificate
-echo "🔐 Getting SSL certificate..."
-certbot certonly --standalone \
-  --non-interactive \
-  --agree-tos \
-  --email $EMAIL \
-  --domain $DOMAIN \
-  --domain www.$DOMAIN
-
-# Create SSL directory for Docker
-echo "📁 Creating SSL directory..."
-mkdir -p /opt/egr-service/ssl
-
-# Copy certificates
-echo "📋 Copying certificates..."
-cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem /opt/egr-service/ssl/
-cp /etc/letsencrypt/live/$DOMAIN/privkey.pem /opt/egr-service/ssl/
-
-# Update nginx config to use SSL
-echo "🌐 Updating nginx config for SSL..."
-cat > nginx/conf.d/test.tendex.by.conf << 'EOF'
-# EGR Service - test.tendex.by (HTTPS with Docker SSL)
-upstream backend {
-  server egr-api:8002;
+restore_nginx() {
+  docker compose up -d egr-nginx >/dev/null 2>&1 || true
 }
+trap restore_nginx EXIT
 
-upstream frontend {
-  server frontend:80;
-}
+cert_args=(
+  certonly --standalone --non-interactive --agree-tos
+  --email "$EMAIL"
+  --cert-name "$DOMAIN"
+  --domain "$DOMAIN"
+)
 
-# HTTP to HTTPS redirect
-server {
-  listen 80;
-  server_name test.tendex.by www.test.tendex.by;
-  return 301 https://$server_name$request_uri;
-}
-
-# HTTPS Server
-server {
-  listen 443 ssl http2;
-  server_name test.tendex.by www.test.tendex.by;
-
-  # SSL Configuration
-  ssl_certificate /etc/ssl/certs/fullchain.pem;
-  ssl_certificate_key /etc/ssl/private/privkey.pem;
-
-  ssl_protocols TLSv1.2 TLSv1.3;
-  ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
-  ssl_prefer_server_ciphers off;
-  ssl_session_cache shared:SSL:10m;
-  ssl_session_timeout 10m;
-
-  client_max_body_size 100M;
-
-  # Security Headers
-  add_header X-Frame-Options "SAMEORIGIN" always;
-  add_header X-Content-Type-Options "nosniff" always;
-  add_header X-XSS-Protection "1; mode=block" always;
-  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-
-  # Main location
-  location / {
-    proxy_pass http://frontend;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection 'upgrade';
-    proxy_set_header Host $host;
-    proxy_cache_bypass $http_upgrade;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  # API location
-  location /api {
-    proxy_pass http://backend;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_connect_timeout 300s;
-    proxy_send_timeout 300s;
-    proxy_read_timeout 300s;
-  }
-
-  # Documentation
-  location ~ ^/(docs|redoc|openapi.json) {
-    proxy_pass http://backend;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  # Health check
-  location /health {
-    proxy_pass http://backend/api/v1/health;
-    access_log off;
-  }
-
-  # Favicon and static assets
-  location ~* \.(ico|png|jpg|jpeg|gif|svg|css|js|woff|woff2|ttf|eot|webmanifest)$ {
-    proxy_pass http://frontend;
-    expires 1y;
-    add_header Cache-Control "public, immutable";
-  }
-
-  access_log /var/log/nginx/access.log;
-  error_log /var/log/nginx/error.log;
-}
-EOF
-
-# Update docker-compose to mount SSL certificates
-echo "🐳 Updating docker-compose for SSL..."
-# Add SSL volume mount to egr-nginx service
-sed -i '/egr-nginx:/,/networks:/ {
-  /volumes:/a\
-      - /opt/egr-service/ssl:/etc/ssl:ro
-}' docker-compose.yml
-
-# Restart services with SSL
-echo "🔄 Restarting services with SSL..."
-cd /opt/egr-service
-docker compose down
-docker compose up -d
-
-# Setup auto-renewal with Docker restart
-echo "🔄 Setting up SSL auto-renewal..."
-(crontab -l ; echo "0 12 * * * /usr/bin/certbot renew --quiet --deploy-hook 'cd /opt/egr-service && docker compose restart egr-nginx'") 2>/dev/null | crontab -
-
-# Test SSL
-echo "🧪 Testing SSL..."
-sleep 5
-
-if curl -f --max-time 10 https://$DOMAIN > /dev/null 2>&1; then
-    echo "✅ HTTPS works perfectly!"
-    echo "🔒 SSL certificate is valid"
-else
-    echo "❌ HTTPS not working"
-    echo "📋 Check: curl -v https://$DOMAIN"
+# Keep the previous public URL valid long enough to return a clean 301 redirect.
+if getent ahostsv4 "$LEGACY_DOMAIN" >/dev/null 2>&1; then
+  cert_args+=(--domain "$LEGACY_DOMAIN")
 fi
 
-echo ""
-echo "🎉 SSL setup complete!"
-echo "🌐 Site: https://$DOMAIN"
-echo "🔒 Certificate auto-renews monthly"
-echo "🔄 Docker services include SSL certificates"
+certbot "${cert_args[@]}"
+
+install -d -m 0755 "$PROJECT_DIR/ssl"
+install -m 0644 "$CERT_DIR/fullchain.pem" "$PROJECT_DIR/ssl/fullchain.pem"
+install -m 0600 "$CERT_DIR/privkey.pem" "$PROJECT_DIR/ssl/privkey.pem"
+
+upsert_env APP_URL "https://$DOMAIN"
+upsert_env TENDEX_API_URL "https://$DOMAIN"
+upsert_env ALLOWED_HOSTS "$DOMAIN,$LEGACY_DOMAIN,localhost,127.0.0.1,egr-api,egr_api"
+upsert_env CORS_ORIGINS "https://$DOMAIN,https://$LEGACY_DOMAIN"
+upsert_env LETSENCRYPT_LIVE "$CERT_DIR"
+
+docker compose up -d --build --force-recreate frontend egr-api egr-celery-worker egr-nginx
+trap - EXIT
+
+docker compose exec -T egr-nginx nginx -t
+curl -fsS --max-time 20 "https://$DOMAIN/health" >/dev/null
+
+cat >/etc/cron.d/tendex-cert-renew <<EOF
+17 3 * * * root certbot renew --quiet --cert-name $DOMAIN --pre-hook 'cd $PROJECT_DIR && docker compose stop egr-nginx' --deploy-hook 'install -m 0644 $CERT_DIR/fullchain.pem $PROJECT_DIR/ssl/fullchain.pem && install -m 0600 $CERT_DIR/privkey.pem $PROJECT_DIR/ssl/privkey.pem' --post-hook 'cd $PROJECT_DIR && docker compose up -d egr-nginx'
+EOF
+chmod 0644 /etc/cron.d/tendex-cert-renew
+
+echo "Domain migration complete: https://$DOMAIN"

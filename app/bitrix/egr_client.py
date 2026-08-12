@@ -57,13 +57,13 @@ class EGRCompanyInfo:
 
 class EGRClient:
     """
-    Client for EGR API (test.tendex.by).
+    Client for the Tendex company API.
     Uses the same endpoints as the frontend.
     """
     
     def __init__(self):
-        # Источник данных — наш сервис (test.tendex.by), а НЕ upstream egr.gov.by.
-        api_url = getattr(settings, "TENDEX_API_URL", None) or "https://test.tendex.by"
+        # Источник данных — наш сервис, а НЕ upstream egr.gov.by.
+        api_url = getattr(settings, "TENDEX_API_URL", None) or "https://company.tenders.by"
         self.base_url = api_url.rstrip("/")
     
     async def _get(self, path: str) -> dict | None:
