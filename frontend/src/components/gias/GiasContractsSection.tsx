@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   Building2,
   CalendarDays,
+  ChevronDown,
   FileClock,
   Handshake,
   ReceiptText,
@@ -11,7 +12,13 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import type { CompanyGiasContract } from "@/lib/api";
 
 type RoleFilter = "all" | "customer" | "provider";
@@ -120,40 +127,45 @@ export const GiasContractsSection = ({
       id="gias-contracts"
       className="glass overflow-hidden border-cyan-500/25 shadow-card transition-all duration-300 hover:shadow-glow"
     >
-      <CardHeader className="border-b border-border/60 bg-gradient-to-r from-cyan-500/10 via-primary/5 to-transparent p-4 sm:p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300">
-              <Handshake className="h-3.5 w-3.5" />
-              Связи по УНП
+      <Accordion type="single" collapsible>
+        <AccordionItem value="gias-contracts" className="border-0">
+          <AccordionTrigger className="group border-b-0 bg-gradient-to-r from-cyan-500/10 via-primary/5 to-transparent p-4 text-left hover:no-underline sm:p-6 [&>svg]:hidden">
+            <div className="flex w-full flex-col gap-3 pr-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300">
+                  <Handshake className="h-3.5 w-3.5" />
+                  Связи по УНП
+                </div>
+                <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                  <ReceiptText className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+                  Договоры GIAS
+                </CardTitle>
+                <p className="mt-1 text-sm font-normal text-muted-foreground">
+                  Государственные закупки, где компания выступает заказчиком или поставщиком
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <div className="rounded-xl border border-border/60 bg-background/65 px-3 py-2 text-sm font-normal">
+                  <span className="text-muted-foreground">Найдено </span>
+                  <span className="font-semibold text-foreground">{contracts.length}</span>
+                </div>
+                <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </div>
             </div>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <ReceiptText className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
-              Договоры GIAS
-            </CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Государственные закупки, где компания выступает заказчиком или поставщиком
-            </p>
-          </div>
-          <div className="rounded-xl border border-border/60 bg-background/65 px-3 py-2 text-sm">
-            <span className="text-muted-foreground">Найдено </span>
-            <span className="font-semibold text-foreground">{contracts.length}</span>
-          </div>
-        </div>
-      </CardHeader>
+          </AccordionTrigger>
 
-      <CardContent className="space-y-4 p-4 sm:p-6">
-        {contracts.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-background/45 px-5 py-10 text-center">
-            <FileClock className="mx-auto h-8 w-8 text-muted-foreground/70" />
-            <div className="mt-3 font-semibold text-foreground">Договоры пока не найдены</div>
-            <p className="mx-auto mt-1 max-w-lg text-sm leading-relaxed text-muted-foreground">
-              Первичная загрузка GIAS идёт постепенно. Новые связи появятся здесь
-              автоматически после обработки сторон договора.
-            </p>
-          </div>
-        ) : (
-          <>
+          <AccordionContent className="border-t border-border/60 pb-0">
+            <CardContent className="space-y-4 p-4 sm:p-6">
+            {contracts.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border bg-background/45 px-5 py-10 text-center">
+                <FileClock className="mx-auto h-8 w-8 text-muted-foreground/70" />
+                <div className="mt-3 font-semibold text-foreground">Договоры пока не найдены</div>
+                <p className="mx-auto mt-1 max-w-lg text-sm leading-relaxed text-muted-foreground">
+                  Новые связи появятся здесь автоматически после обработки сторон договора.
+                </p>
+              </div>
+            ) : (
+              <>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap gap-2" role="group" aria-label="Роль компании в договоре">
                 {(
@@ -289,9 +301,12 @@ export const GiasContractsSection = ({
                 В досье показаны 100 последних договоров. Полный реестр доступен через API GIAS.
               </p>
             )}
-          </>
-        )}
-      </CardContent>
+              </>
+            )}
+            </CardContent>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </Card>
   );
 };

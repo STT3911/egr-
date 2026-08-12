@@ -1086,15 +1086,6 @@ const Company = () => {
             </SectionCard>
           )}
 
-          {profile.gias_contracts && (
-            <SectionCard>
-              <GiasContractsSection
-                contracts={profile.gias_contracts}
-                companyUnp={profile.unp}
-              />
-            </SectionCard>
-          )}
-
           {profile.gias_bank_accounts && profile.gias_bank_accounts.length > 0 && (
             <SectionCard>
               <GiasBankAccountsSection
@@ -2275,6 +2266,15 @@ const Company = () => {
                 )}
               </CardContent>
             </Card>
+            </SectionCard>
+          )}
+
+          {profile.gias_contracts && (
+            <SectionCard>
+              <GiasContractsSection
+                contracts={profile.gias_contracts}
+                companyUnp={profile.unp}
+              />
             </SectionCard>
           )}
           </motion.div>
