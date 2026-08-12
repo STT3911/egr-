@@ -11,13 +11,8 @@ export const Footer = () => {
                 <div className="gradient-primary flex h-12 w-12 items-center justify-center rounded-2xl text-lg font-extrabold text-primary-foreground shadow-soft">
                   T
                 </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                    Tendex
-                  </div>
-                  <div className="text-xl font-semibold text-foreground">
-                    ЕГР · бизнес-разведка
-                  </div>
+                <div className="text-lg font-bold uppercase tracking-[0.2em] text-foreground">
+                  TENDERS.BY
                 </div>
               </Link>
               <p className="max-w-xl text-sm leading-6 text-muted-foreground">
@@ -46,8 +41,8 @@ export const Footer = () => {
           <div className="section-divider my-8" />
 
           <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <p>© {new Date().getFullYear()} Tendex. Все права защищены.</p>
-            <p>Данные ЕГР Беларуси · понятный интерфейс для решений</p>
+            <p>© {new Date().getFullYear()} TENDERS.BY. Все права защищены.</p>
+            <p>Официальные данные · понятный интерфейс для решений</p>
           </div>
         </div>
       </div>

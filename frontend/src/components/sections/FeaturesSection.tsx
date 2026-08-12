@@ -64,7 +64,7 @@ export const FeaturesSection = () => {
             </h2>
           </div>
           <p className="max-w-xl text-base leading-7 text-muted-foreground lg:max-w-sm">
-            Tendex собирает разрозненные сведения в один рабочий сценарий проверки.
+            TENDERS.BY собирает разрозненные сведения в один рабочий сценарий проверки.
           </p>
         </motion.div>
 

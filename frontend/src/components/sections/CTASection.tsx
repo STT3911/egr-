@@ -40,7 +40,7 @@ export const CTASection = () => {
                 <span className="block text-gradient">с правильной проверки</span>
               </h2>
               <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-                Введите УНП или название — Tendex соберёт профиль и покажет, на что стоит обратить внимание.
+                Введите УНП или название — TENDERS.BY соберёт профиль и покажет, на что стоит обратить внимание.
               </p>
 
               <button

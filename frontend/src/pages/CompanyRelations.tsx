@@ -151,30 +151,33 @@ const CompanyRelations = () => {
 
         {graph && !loading && (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              {[
-                { label: "Компаний", value: graph.stats.companies, Icon: Building2 },
-                { label: "Связей", value: graph.stats.connections, Icon: Network },
-                { label: "Телефоны", value: graph.stats.phones, Icon: Phone },
-                { label: "Email", value: graph.stats.emails, Icon: Mail },
-                { label: "Адреса", value: graph.stats.addresses, Icon: MapPin },
-              ].map(({ label, value, Icon }: { label: string; value: number; Icon: LucideIcon }) => (
-                <Card key={label}>
-                  <CardContent className="flex items-center gap-3 p-4">
-                    <div className="rounded-xl bg-primary/10 p-2.5">
+            <Card className="overflow-hidden">
+              <CardContent className="grid grid-cols-2 gap-px bg-border/60 p-0 sm:grid-cols-3 lg:grid-cols-5">
+                {[
+                  { label: "Компаний", value: graph.stats.companies, Icon: Building2 },
+                  { label: "Связей", value: graph.stats.connections, Icon: Network },
+                  { label: "Телефоны", value: graph.stats.phones, Icon: Phone },
+                  { label: "Email", value: graph.stats.emails, Icon: Mail },
+                  { label: "Адреса", value: graph.stats.addresses, Icon: MapPin },
+                ].map(({ label, value, Icon }: { label: string; value: number; Icon: LucideIcon }) => (
+                  <div
+                    key={label}
+                    className="flex min-w-0 items-center gap-3 bg-card p-4 sm:p-5"
+                  >
+                    <div className="shrink-0 rounded-xl bg-primary/10 p-2.5">
                       <Icon className="h-5 w-5 text-primary" />
                     </div>
-                    <div>
-                      <div className="text-2xl font-bold">{value}</div>
-                      <div className="text-xs text-muted-foreground">{label}</div>
+                    <div className="min-w-0">
+                      <div className="text-2xl font-bold leading-none">{value}</div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">{label}</div>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-              <Card className="overflow-hidden">
+            <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+              <Card className="min-w-0 overflow-hidden">
                 <CardHeader className="border-b border-border/60">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <CardTitle className="text-lg">Сеть контрагентов</CardTitle>
@@ -195,13 +198,13 @@ const CompanyRelations = () => {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="overflow-x-auto p-0">
+                <CardContent className="min-w-0 max-w-full overflow-x-auto p-0">
                   {graph.nodes.length === 1 ? (
                     <div className="flex min-h-[520px] items-center justify-center px-6 text-center text-muted-foreground">
                       Связи по общим контактам и адресам не найдены
                     </div>
                   ) : (
-                    <svg viewBox="0 0 900 720" className="min-h-[560px] min-w-[760px] bg-muted/10">
+                    <svg viewBox="0 0 900 720" className="block h-auto min-h-[560px] min-w-[760px] max-w-none bg-muted/10">
                       <defs>
                         <filter id="node-shadow" x="-50%" y="-50%" width="200%" height="200%">
                           <feDropShadow dx="0" dy="3" stdDeviation="4" floodOpacity="0.18" />
@@ -273,7 +276,7 @@ const CompanyRelations = () => {
                 </CardContent>
               </Card>
 
-              <Card className="h-fit xl:sticky xl:top-6">
+              <Card className="h-fit min-w-0 xl:sticky xl:top-6">
                 <CardHeader>
                   <CardTitle className="text-lg">Выбранная компания</CardTitle>
                 </CardHeader>
@@ -281,7 +284,7 @@ const CompanyRelations = () => {
                   {selectedNode && (
                     <>
                       <div>
-                        <div className="font-semibold leading-snug">
+                        <div className="break-words font-semibold leading-snug">
                           {selectedNode.name || `Компания ${selectedNode.unp}`}
                         </div>
                         <div className="mt-1 font-mono text-sm text-muted-foreground">
@@ -315,7 +318,7 @@ const CompanyRelations = () => {
                               key={`${edge.type}-${relatedUnp}-${index}`}
                               type="button"
                               onClick={() => setSelectedUnp(relatedUnp)}
-                              className="w-full rounded-xl border border-border/60 p-3 text-left transition-colors hover:bg-muted/50"
+                              className="w-full min-w-0 rounded-xl border border-border/60 p-3 text-left transition-colors hover:bg-muted/50"
                             >
                               <div className="flex items-center gap-2 text-xs font-medium" style={{ color: meta.color }}>
                                 <meta.Icon className="h-3.5 w-3.5" />
@@ -335,9 +338,9 @@ const CompanyRelations = () => {
             </div>
 
             {graph.truncated && (
-              <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-                <AlertTriangle className="h-4 w-4" />
-                Показаны 40 наиболее близких компаний. Сеть содержит больше связей.
+              <div className="flex min-w-0 items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>Показаны 40 наиболее близких компаний. Сеть содержит больше связей.</span>
               </div>
             )}
           </>

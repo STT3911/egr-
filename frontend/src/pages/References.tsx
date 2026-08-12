@@ -44,7 +44,7 @@ const References = () => {
         </div>
 
         <div className="space-y-2">
-          <h1 className="text-3xl font-extrabold text-foreground sm:text-4xl">Справочники ЕГР</h1>
+          <h1 className="text-3xl font-extrabold text-foreground sm:text-4xl">Справочники данных</h1>
           <p className="max-w-2xl text-base leading-7 text-muted-foreground">
             Список справочников оформлен в том же визуальном ритме: мягкие карточки,
             чистая иерархия и быстрый переход к нужным данным.

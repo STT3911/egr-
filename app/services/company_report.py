@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from app.crud.company import CompanyCRUD
 from app.database.models import CompanyEvent, GrpTaxpayerData, NalogDebtRecord
 from app.services.company_relations import find_related_by_address, find_related_by_contact
-from app.services.risk_scoring import compute_risk
 
 
 EXCEL_CELL_LIMIT = 32_000
@@ -287,7 +286,6 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     bankruptcy = company_crud.get_bankrot_dossier(unp)
     grp_rows = _grp_rows(db, unp)
     tax_rows = _tax_debt_rows(db, unp)
-    risk = compute_risk(db, unp) or {}
     related_by_contact = find_related_by_contact(db, company.id, limit=200)
     related_by_address = find_related_by_address(db, company.id, limit=200)
     events = _event_rows(db, company.id)
@@ -296,7 +294,7 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     workbook.remove(workbook.active)
     workbook.properties.title = f"Досье компании {unp}"
     workbook.properties.subject = "Агрегированные данные по компании"
-    workbook.properties.creator = "Tendex EGR Aggregator"
+    workbook.properties.creator = "TENDERS.BY"
 
     generated_at = datetime.now(timezone.utc)
     company_name = profile.get("current_name_ru") or profile.get("current_short_name_ru") or ""
@@ -314,15 +312,6 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     accreditation = profile.get("gias_accreditation")
     locked_suppliers = profile.get("gias_locked_suppliers") or []
     sez_rows = profile.get("eaeu_sez_resident_records") or []
-    risk_rows = (
-        [{"kind": "risk", **item} for item in risk.get("factors") or []]
-        + [{"kind": "trust", **item} for item in risk.get("trust_signals") or []]
-        + [{"kind": "category", **item} for item in risk.get("categories") or []]
-        + [
-            {"kind": "coverage", **item}
-            for item in (risk.get("coverage") or {}).get("sources") or []
-        ]
-    )
     related_rows = [
         {**item, "relation_type": "Совпадение контакта"} for item in related_by_contact
     ] + [
@@ -415,18 +404,6 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
             "sheet": "Дела о банкротстве",
         },
         {
-            "section": "Риск-профиль",
-            "count": len(risk.get("factors") or []),
-            "data": "\n".join(filter(None, [
-                f"Индекс: {risk.get('score', '—')}/100",
-                f"Вывод: {risk.get('decision_label') or '—'}",
-                risk.get("summary"),
-                f"Покрытие источников: {(risk.get('coverage') or {}).get('score', '—')}%",
-            ])),
-            "period": f"Расчёт на {generated_at.date().isoformat()}",
-            "sheet": "Риск-профиль",
-        },
-        {
             "section": "Торговый реестр МАРТ",
             "count": len(trade_rows),
             "data": _compact_lines(trade_rows, lambda row: " — ".join(filter(None, [str(row.get("object_type") or ""), str(row.get("object_name") or row.get("internet_shop_domain") or ""), str(row.get("object_locality") or "")]))),
@@ -481,29 +458,6 @@ def build_company_report(db: Session, unp: int) -> bytes | None:
     _add_sheet(workbook, "ГРП МНС", [("full_name", "Полное название"), ("short_name", "Краткое название"), ("registration_date", "Регистрация"), ("inspectorate_code", "Код инспекции"), ("inspectorate_name", "Инспекция"), ("status_code", "Статус"), ("status_date", "Дата статуса"), ("address", "Адрес"), ("fetched_at", "Получено"), ("updated_at", "Обновлено")], grp_rows)
     _add_sheet(workbook, "Задолженность МНС", [("imns_code", "Код ИМНС"), ("imns_name", "ИМНС"), ("debt_date", "Дата долга"), ("repayment_date", "Погашение"), ("slice_date", "Дата среза")], tax_rows)
 
-    _add_sheet(
-        workbook,
-        "Риск-профиль",
-        [
-            ("kind", "Тип"),
-            ("code", "Код"),
-            ("title", "Фактор / источник"),
-            ("category", "Категория"),
-            ("severity", "Критичность"),
-            ("weight", "Вес"),
-            ("earned_weight", "Учтённый вес"),
-            ("raw_score", "Балл до лимита"),
-            ("score", "Балл"),
-            ("cap", "Лимит категории"),
-            ("status", "Состояние источника"),
-            ("source", "Источник"),
-            ("observed_at", "Дата сигнала"),
-            ("available", "Доступен"),
-            ("checked_at", "Дата проверки"),
-            ("detail", "Детали"),
-        ],
-        risk_rows,
-    )
     _add_sheet(workbook, "Связи по контактам", [("unp", "УНП"), ("name", "Наименование"), ("matched_type", "Тип"), ("matched_value", "Совпадение")], related_by_contact)
     _add_sheet(workbook, "Связи по адресу", [("unp", "УНП"), ("name", "Наименование"), ("address", "Адрес")], related_by_address)
 

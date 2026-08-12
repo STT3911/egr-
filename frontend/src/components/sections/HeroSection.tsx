@@ -10,7 +10,7 @@ const proof = [
   { icon: Gauge, value: "120 мс", label: "средний отклик" },
 ];
 
-const sourceLabels = ["ЕГР", "Банкротства", "Лицензии", "Проверки", "Связанные компании", "История названий"];
+const sourceLabels = ["Регистрационные данные", "Банкротства", "Лицензии", "Проверки", "Связанные компании", "История названий"];
 
 export const HeroSection = () => {
   return (
@@ -27,7 +27,7 @@ export const HeroSection = () => {
               className="eyebrow mb-6"
             >
               <Sparkles className="h-4 w-4 text-accent" />
-              Платформа бизнес-разведки Tendex
+              Платформа бизнес-разведки TENDERS.BY
             </motion.div>
 
             <motion.h1
@@ -77,7 +77,7 @@ export const HeroSection = () => {
                 <ArrowDownRight className="h-4 w-4 text-primary transition-transform group-hover:translate-x-0.5 group-hover:translate-y-0.5" />
               </a>
               <span className="h-1 w-1 rounded-full bg-border" />
-              <span>Открытый поиск по ЕГР</span>
+              <span>Открытый поиск по официальным данным</span>
             </motion.div>
 
           </div>

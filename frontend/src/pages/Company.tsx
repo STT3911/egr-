@@ -223,7 +223,7 @@ const Company = () => {
     if (!profile) return;
 
     const title = profile.current_short_name_ru || profile.current_name_ru || `УНП ${profile.unp || unp}`;
-    const text = `${title}: карточка компании в EGR`;
+    const text = `${title}: карточка компании на TENDERS.BY`;
     const url = window.location.href;
 
     try {

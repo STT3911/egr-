@@ -17,7 +17,7 @@ const particles = [
 ];
 
 const metrics = [
-  { icon: Database, value: "ЕГР", label: "официальные данные", className: "data-cube-metric-a" },
+  { icon: Database, value: "Реестры", label: "официальные данные", className: "data-cube-metric-a" },
   { icon: Network, value: "Связи", label: "между компаниями", className: "data-cube-metric-b" },
   { icon: ShieldAlert, value: "Риски", label: "важные сигналы", className: "data-cube-metric-c" },
 ];

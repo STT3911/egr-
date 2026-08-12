@@ -280,7 +280,7 @@ class TelegramBot:
                 )
             await self.telegram.send_message(
                 chat_id,
-                "✅ <b>Telegram подключён к аккаунту TENDEX.</b>\n"
+                "✅ <b>Telegram подключён к аккаунту TENDERS.BY.</b>\n"
                 "Теперь изменения по веб-подпискам будут приходить сюда."
                 f"{details}",
             )

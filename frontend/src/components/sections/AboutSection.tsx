@@ -27,13 +27,13 @@ export const AboutSection = () => {
             viewport={{ once: true, margin: "-80px" }}
             transition={{ duration: 0.5 }}
           >
-            <div className="eyebrow mb-5">Почему Tendex</div>
+            <div className="eyebrow mb-5">Почему TENDERS.BY</div>
             <h2 className="text-3xl font-extrabold leading-tight text-foreground sm:text-4xl lg:text-5xl">
               Данные становятся
               <span className="text-gradient"> ясным решением</span>
             </h2>
             <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg">
-              Мы не просто показываем поля реестра. Tendex собирает контекст компании и помогает быстро понять, что действительно требует внимания.
+              Мы не просто показываем поля реестра. TENDERS.BY собирает контекст компании и помогает быстро понять, что действительно требует внимания.
             </p>
 
             <div className="mt-8 space-y-3">

@@ -28,7 +28,7 @@ const Dashboard = () => {
 
           <Card>
             <CardHeader>
-              <CardTitle>Справочники ЕГР</CardTitle>
+              <CardTitle>Справочники данных</CardTitle>
               <CardDescription>Просматривайте справочники и коды.</CardDescription>
             </CardHeader>
             <CardContent>

@@ -865,7 +865,7 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   ved_changed: "Изменение видов деятельности (ВЭД)",
   registry_appearance: "Появление в реестрах (МАРТ/ПВТ/ЕАЭС)",
   new_registration: "Новая регистрация",
-  egr_event: "Прочее официальное событие ЕГР",
+  egr_event: "Прочее официальное регистрационное событие",
 };
 
 export const registerUser = async (email: string, password: string) =>

@@ -74,13 +74,8 @@ export const Header = () => {
               <div className="gradient-primary flex h-11 w-11 items-center justify-center rounded-2xl text-lg font-extrabold text-primary-foreground shadow-soft">
                 T
               </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                  Tendex
-                </div>
-                <div className="truncate text-base font-semibold text-foreground max-[560px]:hidden">
-                  ЕГР Беларуси
-                </div>
+              <div className="truncate text-sm font-bold uppercase tracking-[0.2em] text-foreground sm:text-base">
+                TENDERS.BY
               </div>
             </Link>
 
