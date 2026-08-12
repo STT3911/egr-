@@ -111,6 +111,28 @@ def test_emit_company_event_skips_source_history_before_subscription():
     assert db.added == []
 
 
+def test_emit_company_event_skips_earlier_event_on_subscription_day():
+    db = _DB([
+        _subscription(
+            "user-1",
+            [],
+            created_at=datetime(2026, 6, 12, 10, 23),
+        )
+    ])
+
+    created = emit_company_event(
+        db,
+        193712492,
+        "egr_event",
+        new_value="Изменение сведений",
+        occurred_at=datetime(2026, 6, 12, 0, 0),
+        source_key="egr:193712492:2:v1",
+    )
+
+    assert created == 0
+    assert db.added == []
+
+
 def test_egr_source_event_has_stable_versioned_key_and_readable_description():
     payload = {
         "NGR04004": 77,

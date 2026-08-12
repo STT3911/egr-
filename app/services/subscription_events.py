@@ -102,7 +102,7 @@ def emit_company_event(
         if types and event_type not in types:
             continue
         subscribed_at = _naive_datetime(getattr(s, "created_at", None))
-        if subscribed_at and event_time.date() < subscribed_at.date():
+        if subscribed_at and event_time < subscribed_at:
             continue
         if s.user_id in duplicate_user_ids:
             continue
