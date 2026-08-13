@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.database.models import CompanyAddressKey
-from app.utils.address_key import building_address_key
+from app.utils.address_key import building_address_key, unit_address_key
 
 logger = get_logger("company_addresses")
 
@@ -61,6 +61,7 @@ def rebuild_company_address_keys(db: Session) -> dict:
                 "unp": stmt.excluded.unp,
                 "full_address": stmt.excluded.full_address,
                 "address_key": stmt.excluded.address_key,
+                "unit_address_key": stmt.excluded.unit_address_key,
                 "last_seen_at": run_started,
             },
         )
@@ -83,7 +84,9 @@ def rebuild_company_address_keys(db: Session) -> dict:
                 continue
             batch.append({
                 "company_id": company_id, "unp": unp,
-                "full_address": full_address, "address_key": key,
+                "full_address": full_address,
+                "address_key": key,
+                "unit_address_key": unit_address_key(full_address),
                 "last_seen_at": run_started,
             })
             if len(batch) >= _BATCH:

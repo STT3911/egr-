@@ -802,7 +802,9 @@ class CompanyAddressKey(Base):
     Одна строка на компанию (текущий адрес: valid_to IS NULL в приоритете, иначе
     последний valid_from — тот же критерий 'current', что и везде в кодовой базе).
     address_key — адрес ЗДАНИЯ без квартиры/офиса (app.utils.address_key), чтобы
-    компании в одном доме, но в разных кабинетах, попадали в один кластер.
+    компании в одном доме, но в разных кабинетах, попадали в один кластер связей.
+    unit_address_key — полный адрес с квартирой/офисом; заполняется только когда
+    помещение явно указано и используется для адресного риска.
     Перестраивается периодической задачей rebuild_company_address_keys.
     """
     __tablename__ = "company_address_keys"
@@ -811,6 +813,7 @@ class CompanyAddressKey(Base):
     unp = Column(BigInteger, nullable=False, index=True)
     full_address = Column(Text, nullable=True)
     address_key = Column(Text, nullable=True, index=True)
+    unit_address_key = Column(Text, nullable=True, index=True)
     last_seen_at = Column(DateTime, nullable=False, server_default=func.now())
 
 

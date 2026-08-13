@@ -279,7 +279,7 @@ def _build_coverage(
             TAX_DEBT_FRESH_DAYS,
         ),
         _coverage_source("locked_suppliers", "Ограничения МАРТ", 15, mart_checked_at, 14),
-        _coverage_source("address_cluster", "Кластер юридического адреса", 10, address_checked_at, 45),
+        _coverage_source("address_cluster", "Кластер точного юридического адреса", 10, address_checked_at, 45),
     ]
     score = sum(source["earned_weight"] for source in sources)
     if score >= 80:
@@ -532,7 +532,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         )
 
     address_row = (
-        db.query(CompanyAddressKey.address_key, CompanyAddressKey.last_seen_at)
+        db.query(CompanyAddressKey.unit_address_key, CompanyAddressKey.last_seen_at)
         .filter(CompanyAddressKey.company_id == company.id)
         .first()
     )
@@ -540,7 +540,7 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         same_addr = (
             db.query(func.count(CompanyAddressKey.company_id))
             .join(Company, Company.id == CompanyAddressKey.company_id)
-            .filter(CompanyAddressKey.address_key == address_row[0])
+            .filter(CompanyAddressKey.unit_address_key == address_row[0])
             .filter(Company.liquidation_date.is_(None))
             .scalar()
         ) or 0
@@ -548,9 +548,9 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
             factors.append(
                 _factor(
                     "mass_address_high",
-                    "Критически массовый адрес",
+                    "Критически массовый точный адрес",
                     8,
-                    f"По адресу зарегистрировано компаний: {same_addr}",
+                    f"В одном помещении зарегистрировано компаний: {same_addr}",
                     category="behavioral",
                     severity="high",
                     source="ЕГР",
@@ -561,9 +561,9 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
             factors.append(
                 _factor(
                     "mass_address",
-                    "Массовый адрес регистрации",
+                    "Массовый точный адрес регистрации",
                     4,
-                    f"По адресу зарегистрировано компаний: {same_addr}",
+                    f"В одном помещении зарегистрировано компаний: {same_addr}",
                     category="behavioral",
                     severity="medium",
                     source="ЕГР",

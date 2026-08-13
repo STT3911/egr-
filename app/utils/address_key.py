@@ -1,4 +1,4 @@
-"""Building-level address normalization for "companies at the same address" matching.
+"""Address normalization for company matching and exact-unit risk checks.
 
 ЕГР-адреса включают квартиру/офис, поэтому две компании в одном доме, но в разных
 кабинетах, текстуально не совпадают. Нормализация отрезает квартиру/офис/помещение
@@ -22,6 +22,14 @@ _COUNTRY_RE = re.compile(r"республика\s+беларусь|^\s*бела�
 _UNIT_MARKER_RE = re.compile(
     r"\b(кв|квартира|оф|офис|пом|помещение|ком|комн|каб|кабинет)\.?\s*№?\s*\d",
     re.IGNORECASE,
+)
+
+_UNIT_LABELS = (
+    (re.compile(r"\b(?:квартира|кв)\.?\s*№?\s*", re.IGNORECASE), "кв "),
+    (re.compile(r"\b(?:офис|оф)\.?\s*№?\s*", re.IGNORECASE), "оф "),
+    (re.compile(r"\b(?:помещение|пом)\.?\s*№?\s*", re.IGNORECASE), "пом "),
+    (re.compile(r"\b(?:комната|комн|ком)\.?\s*№?\s*", re.IGNORECASE), "ком "),
+    (re.compile(r"\b(?:кабинет|каб)\.?\s*№?\s*", re.IGNORECASE), "каб "),
 )
 
 # Подписи компонентов адреса: сами по себе не различают адреса (то есть, то нет),
@@ -58,6 +66,32 @@ def building_address_key(full_address: str | None) -> str | None:
         kept.append(part)
 
     cleaned = " ".join(kept).lower()
+    cleaned = _LABEL_RE.sub(" ", cleaned)
+    cleaned = _NON_ALNUM_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    if len(cleaned) < MIN_KEY_LENGTH:
+        return None
+    return cleaned
+
+
+def unit_address_key(full_address: str | None) -> str | None:
+    """Return a normalized *full* address only when a unit is explicitly present.
+
+    A building by itself is intentionally not enough for a risk match: several
+    unrelated companies can normally occupy different offices in one building.
+    Apartment/office/premise labels remain part of the key so, for example,
+    ``кв. 12`` and ``оф. 12`` do not become the same address.
+    """
+    if not full_address or not _UNIT_MARKER_RE.search(full_address):
+        return None
+
+    text = full_address.replace("\xa0", " ")
+    text = _COUNTRY_RE.sub("", text)
+    for pattern, replacement in _UNIT_LABELS:
+        text = pattern.sub(replacement, text)
+
+    cleaned = text.lower()
     cleaned = _LABEL_RE.sub(" ", cleaned)
     cleaned = _NON_ALNUM_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
