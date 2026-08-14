@@ -7,6 +7,7 @@ import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
 import { GiasBankAccountsSection } from "@/components/gias/GiasBankAccountsSection";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
+import { getCompanyAgeYears } from "@/lib/companyAge";
 import { motion, type Variants, useScroll, useSpring } from "framer-motion";
 import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Loader2, Mail, Moon, Phone, Printer, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -503,10 +504,7 @@ const Company = () => {
   })();
 
   const businessPulse = profile ? (() => {
-    const registeredAt = profile.registration_date ? new Date(profile.registration_date).getTime() : NaN;
-    const ageYears = Number.isFinite(registeredAt)
-      ? Math.max(0, Math.floor((Date.now() - registeredAt) / (365.25 * 24 * 60 * 60 * 1000)))
-      : null;
+    const ageYears = getCompanyAgeYears(profile.registration_date, profile.liquidation_date);
     const taxDebtCount = taxDebtData?.count ?? 0;
     const currentTaxDebtCount = taxDebtData?.current_count ?? 0;
     const hasCurrentTaxDebt = taxDebtData?.has_current_debt ?? currentTaxDebtCount > 0;

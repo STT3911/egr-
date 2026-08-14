@@ -24,6 +24,7 @@ from app.database.models import (
     ReferenceStatus,
     SystemState,
 )
+from app.utils.company_age import company_age_days
 
 MASS_ADDRESS_WARN = 10
 MASS_ADDRESS_HIGH = 50
@@ -619,7 +620,10 @@ def compute_risk(db: Session, unp: int) -> Optional[Dict[str, Any]]:
         )
 
     if company.registration_date is not None:
-        age_days = (date.today() - company.registration_date).days
+        age_days = company_age_days(
+            company.registration_date,
+            company.liquidation_date,
+        )
         if 0 <= age_days < YOUNG_COMPANY_DAYS:
             factors.append(
                 _factor(
