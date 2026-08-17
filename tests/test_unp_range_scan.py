@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from scripts.unp_enumerate import _summarize_range_candidates
 
 
-def test_range_candidate_summary_combines_db_and_probe_results() -> None:
+def test_range_candidate_summary_counts_only_current_source_checks() -> None:
     candidates = [
         "100000001",
         "100000012",
@@ -18,9 +18,7 @@ def test_range_candidate_summary_combines_db_and_probe_results() -> None:
 
     summary = _summarize_range_candidates(
         candidates,
-        egr_present={100000001, 100000012},
-        grp_present={100000001},
         results_by_unp=results,
     )
 
-    assert summary == (2, 1, 1)
+    assert summary == (1, 1, 1)

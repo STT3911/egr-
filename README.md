@@ -142,13 +142,14 @@ The service resumes from `data/unp_enumerate_checkpoint.json`. Set
 `UNP_PIPELINE_EMPTY_STOP=0` in `.env` only when a complete region-wide scan is
 required together with `UNP_PIPELINE_SCAN_MODE=full`.
 
-The default `frontier` mode continuously walks every inferred issuance range.
-Each pass is stored in `unp_range_scan_runs` with its cycle number, source and
-scan boundaries, next sequence, first and last checked UNP, counters and
-completion status. After every range in a cycle is complete, the service
-rebuilds the range map from newly found companies and starts the next cycle.
-The five-second interval only separates completed cycles; it does not pause
-between ranges.
+The default `frontier` mode scans only the latest narrow issuance window in
+each region. Each pass is stored in `unp_range_scan_runs` with its cycle number,
+source and scan boundaries, next sequence, first and last externally checked
+UNP, counters and completion status. Confirmed misses and partial source hits
+are stored in `unp_scan_candidates` and are not requested again until their
+`next_check_at` deadline. The registry/range map is rebuilt on the separate
+registry refresh interval; completed frontier cycles are separated by the
+frontier interval.
 
 ```dotenv
 UNP_PIPELINE_SCAN_MODE=frontier
@@ -156,7 +157,10 @@ UNP_PIPELINE_FRONTIER_LOOKAHEAD=50
 UNP_PIPELINE_FRONTIER_BACKTRACK=50
 UNP_PIPELINE_RANGE_GAP=50
 UNP_PIPELINE_REGISTRY_REFRESH_INTERVAL_SECONDS=86400
-UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS=5
+UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS=300
+UNP_PIPELINE_NOT_FOUND_RECHECK_SECONDS=86400
+UNP_PIPELINE_PARTIAL_RECHECK_SECONDS=86400
+UNP_PIPELINE_ERROR_RECHECK_SECONDS=300
 UNP_PIPELINE_CANDIDATE_BATCH=500
 ```
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from sqlalchemy import text
 
@@ -37,6 +37,19 @@ class RangeScanRun:
     scan_end: int
     next_sequence: int
     status: str
+
+
+def _frontier_scan_bounds(
+    issuance_range: Mapping[str, object],
+    *,
+    seq_start: int,
+    seq_end: int,
+) -> tuple[int, int]:
+    """Clamp a persisted frontier window to the configured sequence bounds."""
+    return (
+        max(int(seq_start), int(issuance_range["scan_start"])),
+        min(int(seq_end), int(issuance_range["scan_end"])),
+    )
 
 
 def sync_known_candidates() -> int:
@@ -120,7 +133,11 @@ def sync_known_candidates() -> int:
             true,
             :egr_status,
             :grp_status,
-            'found',
+            CASE
+                WHEN :egr_status = 'found' AND :grp_status = 'found'
+                THEN 'found'
+                ELSE 'partial'
+            END,
             now(),
             now()
         FROM valid
@@ -134,7 +151,17 @@ def sync_known_candidates() -> int:
                 WHEN EXCLUDED.grp_status = 'found' THEN 'found'
                 ELSE unp_scan_candidates.grp_status
             END,
-            overall_status = 'found',
+            overall_status = CASE
+                WHEN (
+                    unp_scan_candidates.egr_status = 'found'
+                    OR EXCLUDED.egr_status = 'found'
+                ) AND (
+                    unp_scan_candidates.grp_status = 'found'
+                    OR EXCLUDED.grp_status = 'found'
+                )
+                THEN 'found'
+                ELSE 'partial'
+            END,
             last_error = NULL,
             updated_at = now()
         WHERE unp_scan_candidates.known_in_db = false
@@ -393,11 +420,18 @@ def ensure_range_scan_cycle(
     frontier_backtrack: int,
     frontier_lookahead: int,
 ) -> dict:
-    """Resume an unfinished range cycle or create the next full cycle."""
+    """Resume an unfinished frontier cycle or create the next one.
+
+    Frontier cycles contain only the latest issuance island for each region and
+    use its narrow ``scan_start``/``scan_end`` window.  Older versions created
+    one run for every historical island; those unfinished cycles are retired
+    here so a deployment cannot resume the expensive legacy scan.
+    """
     selected_regions = sorted({int(region) for region in regions})
     if not selected_regions:
         raise ValueError("At least one region is required")
 
+    repaired_legacy_ranges = 0
     db = SessionLocal()
     try:
         active_cycle = db.execute(
@@ -412,21 +446,72 @@ def ensure_range_scan_cycle(
             {"regions": selected_regions},
         ).scalar()
         if active_cycle is not None:
-            return get_range_scan_cycle_status(int(active_cycle))
+            legacy_cycle = bool(
+                db.execute(
+                    text(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM unp_range_scan_runs AS run
+                            LEFT JOIN unp_issuance_ranges AS issuance
+                              ON issuance.region = run.region
+                             AND issuance.is_latest = true
+                             AND issuance.seq_start = run.source_seq_start
+                             AND issuance.seq_end = run.source_seq_end
+                            WHERE run.cycle_number = :cycle_number
+                              AND run.region = ANY(:regions)
+                              AND run.status IN ('pending', 'running', 'error')
+                              AND (
+                                  issuance.id IS NULL
+                                  OR run.scan_start <> greatest(
+                                      :seq_start,
+                                      issuance.scan_start
+                                  )
+                                  OR run.scan_end <> least(
+                                      :seq_end,
+                                      issuance.scan_end
+                                  )
+                              )
+                        )
+                        """
+                    ),
+                    {
+                        "cycle_number": int(active_cycle),
+                        "regions": selected_regions,
+                        "seq_start": int(seq_start),
+                        "seq_end": int(seq_end),
+                    },
+                ).scalar()
+            )
+            if not legacy_cycle:
+                return get_range_scan_cycle_status(int(active_cycle))
+
+            result = db.execute(
+                text(
+                    """
+                    UPDATE unp_range_scan_runs
+                    SET
+                        status = 'completed',
+                        completed_at = COALESCE(completed_at, now()),
+                        updated_at = now()
+                    WHERE cycle_number = :cycle_number
+                      AND region = ANY(:regions)
+                      AND status IN ('pending', 'running', 'error')
+                    """
+                ),
+                {
+                    "cycle_number": int(active_cycle),
+                    "regions": selected_regions,
+                },
+            )
+            repaired_legacy_ranges = max(0, int(result.rowcount or 0))
+            db.commit()
 
         previous_cycle = db.execute(
             text("SELECT max(cycle_number) FROM unp_range_scan_runs")
         ).scalar()
     finally:
         db.close()
-
-    if previous_cycle is not None:
-        sync_known_candidates()
-        refresh_issuance_ranges(
-            gap_limit=gap_limit,
-            frontier_backtrack=frontier_backtrack,
-            frontier_lookahead=frontier_lookahead,
-        )
 
     db = SessionLocal()
     try:
@@ -439,11 +524,13 @@ def ensure_range_scan_cycle(
                         region,
                         seq_start,
                         seq_end,
+                        scan_start,
                         scan_end
                     FROM unp_issuance_ranges
                     WHERE region = ANY(:regions)
+                      AND is_latest = true
                       AND scan_end >= :seq_start
-                      AND seq_start <= :seq_end
+                      AND scan_start <= :seq_end
                     ORDER BY region, seq_start
                     """
                 ),
@@ -462,8 +549,11 @@ def ensure_range_scan_cycle(
         cycle_number = int(previous_cycle or 0) + 1
         rows = []
         for item in ranges:
-            range_scan_start = max(int(seq_start), int(item["seq_start"]))
-            range_scan_end = min(int(seq_end), int(item["scan_end"]))
+            range_scan_start, range_scan_end = _frontier_scan_bounds(
+                item,
+                seq_start=seq_start,
+                seq_end=seq_end,
+            )
             if range_scan_start > range_scan_end:
                 continue
             rows.append(
@@ -517,7 +607,9 @@ def ensure_range_scan_cycle(
             rows,
         )
         db.commit()
-        return get_range_scan_cycle_status(cycle_number)
+        status = get_range_scan_cycle_status(cycle_number)
+        status["repaired_legacy_ranges"] = repaired_legacy_ranges
+        return status
     except Exception:
         db.rollback()
         raise
@@ -818,8 +910,13 @@ def plan_candidates(
                 ELSE unp_scan_candidates.grp_status
             END,
             overall_status = CASE
-                WHEN unp_scan_candidates.overall_status = 'found'
-                  OR EXCLUDED.overall_status = 'found'
+                WHEN (
+                    unp_scan_candidates.egr_status = 'found'
+                    OR EXCLUDED.egr_status = 'found'
+                ) AND (
+                    unp_scan_candidates.grp_status = 'found'
+                    OR EXCLUDED.grp_status = 'found'
+                )
                 THEN 'found'
                 WHEN unp_scan_candidates.known_in_db
                   OR EXCLUDED.known_in_db
@@ -871,23 +968,125 @@ def plan_latest_range_candidates() -> int:
     return len(candidates)
 
 
-def record_probe_results(results: Iterable[object]) -> None:
+def get_due_probe_candidates(
+    candidates: Iterable[str],
+    *,
+    not_found_recheck_seconds: float,
+    partial_recheck_seconds: float,
+) -> set[str]:
+    """Return candidates whose missing source data is due for verification."""
+    candidate_values = [int(unp) for unp in candidates]
+    if not candidate_values:
+        return set()
+
+    statement = text(
+        """
+        SELECT unp
+        FROM unp_scan_candidates
+        WHERE unp = ANY(:unps)
+          AND (
+              last_checked_at IS NULL
+              OR (
+                  overall_status = 'error'
+                  AND (
+                      next_check_at IS NULL
+                      OR next_check_at <= now()
+                  )
+              )
+              OR (
+                  overall_status = 'not_found'
+                  AND COALESCE(
+                      next_check_at,
+                      last_checked_at
+                        + (:not_found_recheck_seconds * interval '1 second')
+                  ) <= now()
+              )
+              OR (
+                  (
+                      overall_status = 'partial'
+                      OR overall_status = 'found'
+                         AND (egr_status <> 'found' OR grp_status <> 'found')
+                  )
+                  AND COALESCE(
+                      next_check_at,
+                      last_checked_at
+                        + (:partial_recheck_seconds * interval '1 second')
+                  ) <= now()
+              )
+          )
+        """
+    )
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            statement,
+            {
+                "unps": candidate_values,
+                "not_found_recheck_seconds": max(
+                    0.0,
+                    float(not_found_recheck_seconds),
+                ),
+                "partial_recheck_seconds": max(
+                    0.0,
+                    float(partial_recheck_seconds),
+                ),
+            },
+        )
+        return {str(int(unp)) for (unp,) in rows}
+    finally:
+        db.close()
+
+
+def _probe_result_state(result: object) -> tuple[str, str, str, bool]:
+    """Map a dual-source result to persistent per-source verification state."""
+    egr_status = "found" if result.egr.status == "skipped" else result.egr.status
+    grp_status = "found" if result.grp.status == "skipped" else result.grp.status
+    for error in result.persist_errors:
+        if error.startswith("EGR persist:"):
+            egr_status = "error"
+        elif error.startswith("GRP persist:"):
+            grp_status = "error"
+
+    statuses = {egr_status, grp_status}
+    both_found = egr_status == "found" and grp_status == "found"
+    has_found = "found" in statuses
+    has_error = "error" in statuses
+    if both_found:
+        overall_status = "found"
+    elif has_found:
+        overall_status = "partial"
+    elif statuses == {"not_found"}:
+        overall_status = "not_found"
+    elif has_error:
+        overall_status = "error"
+    else:
+        overall_status = "pending"
+    return egr_status, grp_status, overall_status, has_found
+
+
+def record_probe_results(
+    results: Iterable[object],
+    *,
+    not_found_recheck_seconds: float = 86_400,
+    partial_recheck_seconds: float = 86_400,
+    error_recheck_seconds: float = 300,
+) -> None:
     rows = []
     for result in results:
-        egr_status = "found" if result.egr.status == "skipped" else result.egr.status
-        grp_status = "found" if result.grp.status == "skipped" else result.grp.status
-        has_found = "found" in {egr_status, grp_status}
-        has_error = "error" in {egr_status, grp_status} or bool(
-            result.persist_errors
+        egr_status, grp_status, overall_status, has_found = (
+            _probe_result_state(result)
         )
-        if has_found and has_error:
-            overall_status = "partial"
-        elif has_found:
-            overall_status = "found"
-        elif egr_status == "not_found" and grp_status == "not_found":
-            overall_status = "not_found"
-        else:
-            overall_status = "error"
+        recheck_seconds = (
+            0
+            if result.persist_errors
+            else not_found_recheck_seconds
+            if overall_status == "not_found"
+            else partial_recheck_seconds
+            if overall_status == "partial"
+            else error_recheck_seconds
+            if overall_status == "error"
+            else None
+        )
         rows.append(
             {
                 "unp": int(result.unp),
@@ -895,6 +1094,7 @@ def record_probe_results(results: Iterable[object]) -> None:
                 "egr_status": egr_status,
                 "grp_status": grp_status,
                 "overall_status": overall_status,
+                "recheck_seconds": recheck_seconds,
                 "last_error": result.error or None,
             }
         )
@@ -912,7 +1112,13 @@ def record_probe_results(results: Iterable[object]) -> None:
             attempts = attempts + 1,
             first_checked_at = COALESCE(first_checked_at, now()),
             last_checked_at = now(),
-            next_check_at = NULL,
+            next_check_at = CASE
+                WHEN :recheck_seconds IS NULL THEN NULL
+                ELSE now() + (
+                    CAST(:recheck_seconds AS double precision)
+                    * interval '1 second'
+                )
+            END,
             last_error = :last_error,
             updated_at = now()
         WHERE unp = :unp

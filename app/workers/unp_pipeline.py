@@ -106,21 +106,20 @@ class UnpPipeline:
             )
         except Exception:
             return
-        with self.status.lock:
-            pipeline_status = dict(self.status.data)
-        last_sync = pipeline_status.get("last_sync") or {}
-
         self._alert_throttled(
             "⏳ Перебор УНП работает\n"
+            f"Цикл: {checkpoint.get('cycle_number', '-')}\n"
             f"Регион: {checkpoint.get('region', '-')}\n"
             f"Последний УНП: {checkpoint.get('last_unp', '-')}\n"
             f"Следующий УНП: {checkpoint.get('next_unp', '-')}\n"
-            f"Запросов: {checkpoint.get('queried', 0)}\n"
-            f"Найдено: {checkpoint.get('found', 0)}\n"
+            f"Проверено УНП через источники: {checkpoint.get('queried', 0)}\n"
+            f"Проверок без ошибок: {checkpoint.get('verified', 0)}\n"
+            f"Найдено новых УНП: {checkpoint.get('found', 0)}\n"
+            f"Ответов ЕГР с данными: {checkpoint.get('egr_found', 0)}\n"
+            f"Ответов ГРП с данными: {checkpoint.get('grp_found', 0)}\n"
             f"Не найдено: {checkpoint.get('misses', 0)}\n"
-            f"Ошибок: {checkpoint.get('errors', 0)}\n"
-            f"Распарсено за последний цикл: {pipeline_status.get('last_parsed', 0)}\n"
-            f"Компаний добавлено: {last_sync.get('companies_added', 0)}",
+            f"Отложено до срока перепроверки: {checkpoint.get('deferred', 0)}\n"
+            f"Ошибок: {checkpoint.get('errors', 0)}",
             timestamp_attribute="last_progress_alert_at",
         )
 
@@ -271,6 +270,12 @@ class UnpPipeline:
             str(self.args.range_gap),
             "--registry-refresh-interval",
             str(self.args.registry_refresh_interval),
+            "--not-found-recheck-seconds",
+            str(self.args.not_found_recheck_seconds),
+            "--partial-recheck-seconds",
+            str(self.args.partial_recheck_seconds),
+            "--error-recheck-seconds",
+            str(self.args.error_recheck_seconds),
             "--resume",
         ]
         return unp_enumerate.build_argparser().parse_args(arguments)
@@ -481,7 +486,31 @@ def build_argparser() -> argparse.ArgumentParser:
         type=float,
         default=_env_float(
             "UNP_PIPELINE_FRONTIER_INTERVAL_SECONDS",
-            5.0,
+            300.0,
+        ),
+    )
+    parser.add_argument(
+        "--not-found-recheck-seconds",
+        type=float,
+        default=_env_float(
+            "UNP_PIPELINE_NOT_FOUND_RECHECK_SECONDS",
+            86400.0,
+        ),
+    )
+    parser.add_argument(
+        "--partial-recheck-seconds",
+        type=float,
+        default=_env_float(
+            "UNP_PIPELINE_PARTIAL_RECHECK_SECONDS",
+            86400.0,
+        ),
+    )
+    parser.add_argument(
+        "--error-recheck-seconds",
+        type=float,
+        default=_env_float(
+            "UNP_PIPELINE_ERROR_RECHECK_SECONDS",
+            300.0,
         ),
     )
     parser.add_argument(

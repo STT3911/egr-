@@ -51,6 +51,7 @@ from app.services.unp_scan_registry import (
     claim_next_range_scan,
     complete_range_scan,
     ensure_range_scan_cycle,
+    get_due_probe_candidates,
     get_latest_issuance_range,
     get_range_scan_cycle_status,
     get_registry_status,
@@ -393,18 +394,12 @@ def is_hit(payload: dict) -> bool:
 def _summarize_range_candidates(
     candidates: list[str],
     *,
-    egr_present: set[int],
-    grp_present: set[int],
     results_by_unp: dict[str, object],
 ) -> tuple[int, int, int]:
     found_count = 0
     not_found_count = 0
     error_count = 0
     for unp in candidates:
-        numeric_unp = int(unp)
-        if numeric_unp in egr_present and numeric_unp in grp_present:
-            found_count += 1
-            continue
         result = results_by_unp.get(unp)
         if result is None:
             continue
@@ -446,6 +441,10 @@ async def _run_range_scan_cycle(
     found = 0
     misses = 0
     errors = 0
+    verified = 0
+    deferred = 0
+    egr_found = 0
+    grp_found = 0
     last_unp: str | None = None
     try:
         while True:
@@ -494,6 +493,10 @@ async def _run_range_scan_cycle(
                         extra={
                             "cycle_number": cycle_number,
                             "range_scan_id": range_scan.id,
+                            "verified": verified,
+                            "deferred": deferred,
+                            "egr_found": egr_found,
+                            "grp_found": grp_found,
                         },
                     )
                     return "stopped"
@@ -519,12 +522,25 @@ async def _run_range_scan_cycle(
                     egr_present=egr_present,
                     grp_present=grp_present,
                 )
-                probe_candidates = [
+                missing_candidates = [
                     unp
                     for unp in candidates
                     if int(unp) not in egr_present
                     or int(unp) not in grp_present
                 ]
+                due_candidates = get_due_probe_candidates(
+                    missing_candidates,
+                    not_found_recheck_seconds=(
+                        args.not_found_recheck_seconds
+                    ),
+                    partial_recheck_seconds=(
+                        args.partial_recheck_seconds
+                    ),
+                )
+                probe_candidates = [
+                    unp for unp in missing_candidates if unp in due_candidates
+                ]
+                deferred += len(missing_candidates) - len(probe_candidates)
                 results_by_unp: dict[str, object] = {}
                 failed_unps: list[str] = []
 
@@ -549,11 +565,28 @@ async def _run_range_scan_cycle(
                             for unp in chunk
                         ]
                     )
-                    record_probe_results(results)
+                    record_probe_results(
+                        results,
+                        not_found_recheck_seconds=(
+                            args.not_found_recheck_seconds
+                        ),
+                        partial_recheck_seconds=(
+                            args.partial_recheck_seconds
+                        ),
+                        error_recheck_seconds=args.error_recheck_seconds,
+                    )
                     queried += len(results)
                     for result in results:
                         results_by_unp[result.unp] = result
                         last_unp = result.unp
+                        check_complete = (
+                            not result.persist_errors
+                            and result.egr.status != "error"
+                            and result.grp.status != "error"
+                        )
+                        verified += int(check_complete)
+                        egr_found += int(result.egr.status == "found")
+                        grp_found += int(result.grp.status == "found")
                         if result.outcome == "hit":
                             found += result.new_found
                             logger.info(
@@ -564,7 +597,7 @@ async def _run_range_scan_cycle(
                             )
                         elif result.outcome == "miss":
                             misses += 1
-                        else:
+                        if not check_complete:
                             errors += 1
                             if result.persist_errors:
                                 failed_unps.append(result.unp)
@@ -594,8 +627,6 @@ async def _run_range_scan_cycle(
                     range_found, range_misses, range_errors = (
                         _summarize_range_candidates(
                             completed_candidates,
-                            egr_present=egr_present,
-                            grp_present=grp_present,
                             results_by_unp=results_by_unp,
                         )
                     )
@@ -612,7 +643,10 @@ async def _run_range_scan_cycle(
                             if completed_candidates
                             else None
                         ),
-                        checked_count=len(completed_candidates),
+                        checked_count=sum(
+                            unp in results_by_unp
+                            for unp in completed_candidates
+                        ),
                         found_count=range_found,
                         not_found_count=range_misses,
                         error_count=range_errors + len(failed_unps),
@@ -628,6 +662,10 @@ async def _run_range_scan_cycle(
                         extra={
                             "cycle_number": cycle_number,
                             "range_scan_id": range_scan.id,
+                            "verified": verified,
+                            "deferred": deferred,
+                            "egr_found": egr_found,
+                            "grp_found": grp_found,
                         },
                     )
                     logger.error(
@@ -645,17 +683,23 @@ async def _run_range_scan_cycle(
                 range_found, range_misses, range_errors = (
                     _summarize_range_candidates(
                         candidates,
-                        egr_present=egr_present,
-                        grp_present=grp_present,
                         results_by_unp=results_by_unp,
                     )
                 )
                 update_range_scan_progress(
                     range_scan.id,
                     next_sequence=sequence,
-                    first_checked_unp=int(candidates[0]),
-                    last_checked_unp=int(candidates[-1]),
-                    checked_count=len(candidates),
+                    first_checked_unp=(
+                        int(probe_candidates[0])
+                        if probe_candidates
+                        else None
+                    ),
+                    last_checked_unp=(
+                        int(probe_candidates[-1])
+                        if probe_candidates
+                        else None
+                    ),
+                    checked_count=len(results_by_unp),
                     found_count=range_found,
                     not_found_count=range_misses,
                     error_count=range_errors,
@@ -672,6 +716,10 @@ async def _run_range_scan_cycle(
                     extra={
                         "cycle_number": cycle_number,
                         "range_scan_id": range_scan.id,
+                        "verified": verified,
+                        "deferred": deferred,
+                        "egr_found": egr_found,
+                        "grp_found": grp_found,
                     },
                 )
 
@@ -856,11 +904,23 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                     egr_present=egr_present,
                     grp_present=grp_present,
                 )
-                batch = [
+                missing_candidates = [
                     unp
                     for unp in candidates
                     if int(unp) not in egr_present
                     or int(unp) not in grp_present
+                ]
+                due_candidates = get_due_probe_candidates(
+                    missing_candidates,
+                    not_found_recheck_seconds=(
+                        args.not_found_recheck_seconds
+                    ),
+                    partial_recheck_seconds=(
+                        args.partial_recheck_seconds
+                    ),
+                )
+                batch = [
+                    unp for unp in missing_candidates if unp in due_candidates
                 ]
 
                 results = await asyncio.gather(*[
@@ -874,7 +934,16 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                     )
                     for u in batch
                 ])
-                record_probe_results(results)
+                record_probe_results(
+                    results,
+                    not_found_recheck_seconds=(
+                        args.not_found_recheck_seconds
+                    ),
+                    partial_recheck_seconds=(
+                        args.partial_recheck_seconds
+                    ),
+                    error_recheck_seconds=args.error_recheck_seconds,
+                )
                 queried += len(batch)
 
                 failed_unps: list[str] = []
@@ -885,7 +954,14 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                         empty_run = 0
                         continue
 
-                    result = results_by_unp[u]
+                    result = results_by_unp.get(u)
+                    if result is None:
+                        continue
+                    check_complete = (
+                        not result.persist_errors
+                        and result.egr.status != "error"
+                        and result.grp.status != "error"
+                    )
                     if result.outcome == "hit":
                         found += result.new_found
                         empty_run = 0
@@ -898,7 +974,7 @@ async def run(args, stop_event=None) -> Literal["completed", "retry", "stopped"]
                     elif result.outcome == "miss":
                         misses += 1
                         empty_run += 1
-                    else:
+                    if not check_complete:
                         errors += 1
                         if result.persist_errors:
                             failed_unps.append(u)
@@ -1089,6 +1165,12 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="split inferred issuance ranges when known sequence gaps exceed N")
     p.add_argument("--registry-refresh-interval", type=float, default=86400,
                    help="minimum seconds between full DB marking and range rebuilds")
+    p.add_argument("--not-found-recheck-seconds", type=float, default=86400,
+                   help="minimum delay before rechecking an UNP absent in both sources")
+    p.add_argument("--partial-recheck-seconds", type=float, default=86400,
+                   help="minimum delay before rechecking a missing source for a partial UNP")
+    p.add_argument("--error-recheck-seconds", type=float, default=300,
+                   help="minimum delay before rechecking a source error")
     p.add_argument("--prepare-only", action="store_true",
                    help="populate candidate marks and issuance ranges without external API requests")
     p.add_argument("--registry-status", action="store_true",
