@@ -597,7 +597,8 @@ async def get_company_profile(
     """
     try:
         unp = int(identifier)
-        cache_key = f"company_profile_v8:{unp}"
+        # v9 excludes expired/future EGR contacts from the public profile.
+        cache_key = f"company_profile_v9:{unp}"
 
         if not force_refresh and not db_only:
             aggregator = AggregatorService()

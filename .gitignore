@@ -106,3 +106,4 @@ ngrn_list.csv
 /nginx/conf.d/
 /test.tendex.by.conf.disabled
 data/
+/exports/

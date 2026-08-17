@@ -32,6 +32,7 @@ from datetime import datetime
 import logging
 from app.utils.search_normalizer import normalize_company_name
 from app.services.contact_parser import parse_contacts
+from app.services.company_contacts import is_current_contact_period
 
 logger = logging.getLogger(__name__)
 
@@ -825,6 +826,7 @@ class CompanyCRUD:
                     "fax": c.fax,
                 }
                 for c in company.contacts_history
+                if is_current_contact_period(c.valid_from, c.valid_to)
             ],
         }
 

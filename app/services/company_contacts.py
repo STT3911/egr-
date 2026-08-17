@@ -11,9 +11,9 @@ email — через общий app.services.contact_parser, чтобы логи
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import delete, text
+from sqlalchemy import delete, or_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -68,12 +68,29 @@ def _unp_to_int(unp) -> int | None:
     return int(digits) if digits else None
 
 
+def is_current_contact_period(valid_from, valid_to, on_date: date | None = None) -> bool:
+    """Return whether a dated EGR contact is effective on the requested date."""
+    current = on_date or date.today()
+    return (valid_from is None or valid_from <= current) and (
+        valid_to is None or valid_to >= current
+    )
+
+
 def _iter_source_contacts(read_db: Session):
     """Генерит кортежи (company_id, unp, type, value, value_norm, source, raw) из всех источников."""
     # ЕГР: phone/email/fax — свободный текст в колонках; website — отдельно
     q = read_db.query(
         CompanyContactHistory.company_id, CompanyContactHistory.phone,
         CompanyContactHistory.email, CompanyContactHistory.fax, CompanyContactHistory.website,
+    ).filter(
+        or_(
+            CompanyContactHistory.valid_from.is_(None),
+            CompanyContactHistory.valid_from <= date.today(),
+        ),
+        or_(
+            CompanyContactHistory.valid_to.is_(None),
+            CompanyContactHistory.valid_to >= date.today(),
+        ),
     ).yield_per(_BATCH)
     for company_id, phone, email, fax, website in q:
         blob = " ".join(x for x in (phone, email, fax) if x)
