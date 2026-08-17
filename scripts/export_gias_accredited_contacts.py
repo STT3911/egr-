@@ -22,8 +22,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("exports/gias_contacts"),
-        help="Directory for the two CSV files (default: exports/gias_contacts)",
+        default=Path("/tmp/gias_contacts"),
+        help="Directory for the two CSV files (default: /tmp/gias_contacts)",
     )
     parser.add_argument(
         "--delimiter",
