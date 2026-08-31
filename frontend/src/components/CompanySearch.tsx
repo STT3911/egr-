@@ -66,14 +66,16 @@ export const CompanySearch = ({
 
     setLoading(true);
     let cancelled = false;
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const data = await lookupCompanies(trimmed);
+        const data = await lookupCompanies(trimmed, controller.signal);
         if (cancelled) return;
         setSuggestions(data.results);
         setShowSuggestions(data.results.length > 0);
       } catch (err) {
         if (cancelled) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Autocomplete error:", err);
         setSuggestions([]);
         setShowSuggestions(false);
@@ -85,6 +87,7 @@ export const CompanySearch = ({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      controller.abort();
     };
   }, [query]);
 

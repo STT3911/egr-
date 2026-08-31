@@ -23,6 +23,7 @@ from app.core.security import verify_api_key
 from app.database.models import NalogDebtRecord, RawCompanyData
 from app.tasks.sync_tasks import process_pending_raw as process_pending_raw_task
 from app.utils.search_normalizer import (
+    keyboard_layout_query,
     normalize_company_name as normalize_search_name,
     transliterate_query,
 )
@@ -375,12 +376,21 @@ async def lookup_companies(
             normalize_search_name(translit_variant) or translit_variant
             if translit_variant else search_normalized
         )
+        keyboard_variant = keyboard_layout_query(query)
+        keyboard_normalized = (
+            normalize_search_name(keyboard_variant) or keyboard_variant
+            if keyboard_variant else search_normalized
+        )
 
         # SQL fallback must preserve the same multi-word semantics as ES, but
         # it should not require the user to remember the official word order.
         # Every word is required; only its position in the name is flexible.
         token_variants = []
-        for variant in (search_normalized, translit_normalized):
+        for variant in (
+            search_normalized,
+            translit_normalized,
+            keyboard_normalized,
+        ):
             tokens = list(dict.fromkeys(variant.split()))
             if len(tokens) > 1 and tokens not in token_variants:
                 token_variants.append(tokens)
@@ -462,7 +472,8 @@ async def lookup_companies(
                     WHEN n.search_name = :normalized_exact THEN 1
                     WHEN n.search_name LIKE :normalized_start THEN 2
                     WHEN n.search_name LIKE :normalized_contains
-                      OR n.search_name LIKE :translit_contains THEN 3
+                      OR n.search_name LIKE :translit_contains
+                      OR n.search_name LIKE :keyboard_contains THEN 3
                     ELSE 4
                 END as relevance_rank,
                 LENGTH(COALESCE(n.search_name, n.full_name_ru, '')) as name_length
@@ -470,6 +481,7 @@ async def lookup_companies(
             JOIN egr_companies c ON c.id = n.company_id
             WHERE (n.search_name LIKE :normalized_contains
                    OR n.search_name LIKE :translit_contains
+                   OR n.search_name LIKE :keyboard_contains
                    OR {current_token_match})
               AND n.valid_to IS NULL
             ORDER BY relevance_rank ASC, name_length ASC
@@ -482,6 +494,7 @@ async def lookup_companies(
                 "normalized_start": f"{search_normalized}%",
                 "normalized_contains": f"%{search_normalized}%",
                 "translit_contains": f"%{translit_normalized}%",
+                "keyboard_contains": f"%{keyboard_normalized}%",
                 "limit": limit,
                 **token_params,
             }).mappings().all()
@@ -503,7 +516,8 @@ async def lookup_companies(
                             WHEN hist_n.search_name = :normalized_exact THEN 1
                             WHEN hist_n.search_name LIKE :normalized_start THEN 2
                             WHEN hist_n.search_name LIKE :normalized_contains
-                              OR hist_n.search_name LIKE :translit_contains THEN 3
+                              OR hist_n.search_name LIKE :translit_contains
+                              OR hist_n.search_name LIKE :keyboard_contains THEN 3
                             ELSE 4
                         END as relevance_rank,
                         LENGTH(COALESCE(hist_n.search_name, hist_n.full_name_ru, '')) as name_length
@@ -517,6 +531,7 @@ async def lookup_companies(
                       AND hist_n.search_name != ''
                       AND (hist_n.search_name LIKE :normalized_contains
                            OR hist_n.search_name LIKE :translit_contains
+                           OR hist_n.search_name LIKE :keyboard_contains
                            OR {historical_token_match})
                     ORDER BY relevance_rank ASC, name_length ASC, hist_n.valid_to DESC NULLS LAST
                     LIMIT :limit
@@ -529,6 +544,7 @@ async def lookup_companies(
                         "normalized_start": f"{search_normalized}%",
                         "normalized_contains": f"%{search_normalized}%",
                         "translit_contains": f"%{translit_normalized}%",
+                        "keyboard_contains": f"%{keyboard_normalized}%",
                         "limit": remaining_limit,
                         **token_params,
                     },

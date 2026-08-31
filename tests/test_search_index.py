@@ -1,4 +1,5 @@
 from app.services import search_index
+from app.utils.search_normalizer import keyboard_layout_query
 
 
 class _FakeClient:
@@ -69,3 +70,17 @@ def test_historical_match_is_reported_only_for_historical_only_hit(monkeypatch):
 
     assert results[0]["matched_name"] == "ООО Старое имя"
     assert results[0]["matched_historical_name"] is True
+
+
+def test_wrong_keyboard_layout_is_added_without_replacing_latin_query(monkeypatch):
+    client = _FakeClient()
+    monkeypatch.setattr(search_index, "_get_shared_es_client", lambda: client)
+    monkeypatch.setattr(search_index.settings, "ELASTICSEARCH_FUZZY_SEARCH", False)
+
+    search_index.search_companies("vbycr", 5)
+
+    clauses = _multi_match_clauses(client)
+    by_name = {clause["_name"]: clause for clause in clauses}
+    assert by_name["current_normalized"]["query"] == "vbycr"
+    assert by_name["current_keyboard"]["query"] == "минск"
+    assert keyboard_layout_query("ntp") == "тез"

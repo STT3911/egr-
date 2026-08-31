@@ -50,8 +50,11 @@ describe("CompanySearch", () => {
     const input = screen.getByPlaceholderText("УНП, название, телефон, email или адрес");
     fireEvent.change(input, { target: { value: "старый" } });
     await act(() => vi.advanceTimersByTimeAsync(300));
+    const oldSignal = vi.mocked(lookupCompanies).mock.calls[0][1];
+    expect(oldSignal?.aborted).toBe(false);
 
     fireEvent.change(input, { target: { value: "новый" } });
+    expect(oldSignal?.aborted).toBe(true);
     await act(() => vi.advanceTimersByTimeAsync(300));
 
     await act(async () => {

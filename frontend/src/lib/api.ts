@@ -468,9 +468,9 @@ export type AdminDataSourcesResponse = {
   items: AdminDataSourceStatus[];
 };
 
-export const lookupCompanies = async (query: string) => {
+export const lookupCompanies = async (query: string, signal?: AbortSignal) => {
   const qs = toQuery({ q: query });
-  return request<CompanyLookupResponse>(`/api/v1/companies/lookup?${qs}`);
+  return request<CompanyLookupResponse>(`/api/v1/companies/lookup?${qs}`, { signal });
 };
 
 export const getCompanyProfile = async (unp: string) => {

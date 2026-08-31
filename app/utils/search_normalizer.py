@@ -159,6 +159,14 @@ _CYR_TO_LAT = {
 _HAS_CYRILLIC = re.compile(r"[а-яёіў]")
 _HAS_LATIN = re.compile(r"[a-z]")
 
+# Physical key positions for text entered with the wrong keyboard layout.
+# This is deliberately separate from transliteration: "vbycr" -> "минск",
+# while transliteration of the same text is "вбыцр".
+_EN_KEYBOARD = "`qwertyuiop[]asdfghjkl;'zxcvbnm,."
+_RU_KEYBOARD = "ёйцукенгшщзхъфывапролджэячсмитьбю"
+_EN_TO_RU_KEYBOARD = str.maketrans(_EN_KEYBOARD, _RU_KEYBOARD)
+_RU_TO_EN_KEYBOARD = str.maketrans(_RU_KEYBOARD, _EN_KEYBOARD)
+
 
 def transliterate_lat_to_cyr(text: str) -> str:
     """Грубая транслитерация латиницы в кириллицу (для поиска)."""
@@ -195,6 +203,22 @@ def transliterate_query(query: Optional[str]) -> Optional[str]:
     return variant if variant and variant != q else None
 
 
+def keyboard_layout_query(query: Optional[str]) -> Optional[str]:
+    """Return the same keystrokes interpreted in the other keyboard layout."""
+    if not query:
+        return None
+    q = query.lower().strip()
+    if not q:
+        return None
+    if _HAS_LATIN.search(q) and not _HAS_CYRILLIC.search(q):
+        variant = q.translate(_EN_TO_RU_KEYBOARD)
+    elif _HAS_CYRILLIC.search(q) and not _HAS_LATIN.search(q):
+        variant = q.translate(_RU_TO_EN_KEYBOARD)
+    else:
+        return None
+    return variant if variant and variant != q else None
+
+
 def generate_search_variants(name: Optional[str]) -> list[str]:
     """
     Генерирует варианты запроса для поиска:
@@ -220,6 +244,11 @@ def generate_search_variants(name: Optional[str]) -> list[str]:
         _add(translit)
         if translit:
             _add(normalize_company_name(translit))
+
+        keyboard_variant = keyboard_layout_query(name)
+        _add(keyboard_variant)
+        if keyboard_variant:
+            _add(normalize_company_name(keyboard_variant))
 
     return variants
 

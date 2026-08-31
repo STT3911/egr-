@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.utils.search_normalizer import normalize_company_name, transliterate_query
+from app.utils.search_normalizer import (
+    keyboard_layout_query,
+    normalize_company_name,
+    transliterate_query,
+)
 
 logger = get_logger("services.search_index")
 
@@ -805,6 +809,29 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
                 ),
             ]
         )
+
+    # Wrong keyboard layout is not transliteration: "vbycr" should also try
+    # "минск". Keep the original query clauses, so real Latin names still work.
+    keyboard_variant = keyboard_layout_query(query)
+    if keyboard_variant:
+        keyboard_normalized = (
+            normalize_company_name(keyboard_variant) or keyboard_variant
+        )
+        if keyboard_normalized not in {normalized_query, translit_normalized if translit else None}:
+            should.extend(
+                [
+                    _name_multi_match(
+                        keyboard_normalized,
+                        _CURRENT_NAME_FIELDS,
+                        query_name="current_keyboard",
+                    ),
+                    _name_multi_match(
+                        keyboard_normalized,
+                        _HISTORICAL_NAME_FIELDS,
+                        query_name="historical_keyboard",
+                    ),
+                ]
+            )
 
     # function_score: действующие компании (без даты ликвидации) поднимаем над
     # ликвидированными, не меняя базовую релевантность лексики.
