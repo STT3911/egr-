@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     APP_ENV: str = "production"
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
+    # Large MART snapshots are commonly well above 100 MiB. Keep an explicit
+    # application ceiling even though Nginx enforces the same limit first.
+    TRADE_REGISTRY_MAX_UPLOAD_BYTES: int = 512 * 1024 * 1024
 
     # Database connection pool settings
     DATABASE_POOL_SIZE: int = 10

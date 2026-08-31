@@ -271,12 +271,24 @@ def _safe_upload_name(filename: str | None) -> str:
 
 async def _save_uploaded_file(file: UploadFile, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("wb") as handle:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            handle.write(chunk)
+    bytes_written = 0
+    try:
+        with destination.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > settings.TRADE_REGISTRY_MAX_UPLOAD_BYTES:
+                    max_mib = settings.TRADE_REGISTRY_MAX_UPLOAD_BYTES // (1024 * 1024)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"CSV file exceeds the {max_mib} MiB upload limit",
+                    )
+                handle.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 def require_admin(request: Request) -> dict:
@@ -1315,6 +1327,8 @@ async def create_trade_registry_import(
 
     try:
         await _save_uploaded_file(file, stored_path)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {exc}") from exc
 

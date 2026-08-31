@@ -25,7 +25,7 @@ server {
   server_name company.tenders.by test.tendex.by _;
   limit_req_status 429;
   resolver 127.0.0.11 valid=30s;
-  client_max_body_size 100M;
+  client_max_body_size 512M;
   add_header X-Frame-Options "SAMEORIGIN" always;
   add_header X-Content-Type-Options "nosniff" always;
 
@@ -78,14 +78,16 @@ else
 fi
 
 # Existing deployments keep the active TLS config in an ignored, mounted file.
-# Normalize its transport ceilings on every start so the application-level
-# quota of 15 distinct companies is reached before nginx's request counter.
+# Normalize its transport ceilings on every start. MART CSV snapshots can be
+# larger than 100 MiB, so keep the proxy ceiling aligned with the explicit
+# 512 MiB application limit.
 if [ -f "$MAIN_CONF" ]; then
   sed -i \
     -e 's/zone=api_general:10m rate=[0-9][0-9]*r\/m;/zone=api_general:10m rate=180r\/m;/' \
     -e 's/zone=api_lookup:10m rate=[0-9][0-9]*r\/m;/zone=api_lookup:10m rate=80r\/m;/' \
     -e 's/zone=api_general burst=[0-9][0-9]*/zone=api_general burst=180/' \
     -e 's/zone=api_lookup burst=[0-9][0-9]*/zone=api_lookup burst=80/' \
+    -e 's/client_max_body_size[[:space:]][[:space:]]*[0-9][0-9]*[MmGg];/client_max_body_size 512M;/g' \
     "$MAIN_CONF"
 fi
 

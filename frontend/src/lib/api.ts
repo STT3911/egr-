@@ -790,8 +790,15 @@ export const createTradeRegistryImport = async (file: File) => {
   });
 
   if (!response.ok) {
+    if (response.status === 413) {
+      throw new Error("CSV слишком большой. Максимальный размер файла — 512 МБ");
+    }
     const data = (await response.json().catch(() => ({}))) as ApiError;
-    throw new Error(data.detail || data.message || "Trade registry import failed");
+    throw new Error(
+      data.detail ||
+        data.message ||
+        `Не удалось загрузить торговый реестр (HTTP ${response.status})`,
+    );
   }
 
   return response.json() as Promise<TradeRegistryImportRun>;
