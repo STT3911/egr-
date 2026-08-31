@@ -65,23 +65,26 @@ export const CompanySearch = ({
     }
 
     setLoading(true);
+    let cancelled = false;
     const timer = setTimeout(async () => {
       try {
         const data = await lookupCompanies(trimmed);
+        if (cancelled) return;
         setSuggestions(data.results);
         setShowSuggestions(data.results.length > 0);
       } catch (err) {
+        if (cancelled) return;
         console.error("Autocomplete error:", err);
         setSuggestions([]);
         setShowSuggestions(false);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }, 300);
 
     return () => {
+      cancelled = true;
       clearTimeout(timer);
-      setLoading(false);
     };
   }, [query]);
 

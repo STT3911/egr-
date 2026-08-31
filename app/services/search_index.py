@@ -685,23 +685,43 @@ def process_search_index_queue(db: Session, limit: int | None = None) -> dict[st
         client.close()
 
 
-_NAME_FIELDS = [
+_CURRENT_NAME_FIELDS = [
     "search_name^8",
     "full_name_ru^6",
     "short_name_ru^5",
     "full_name_by^4",
-    "all_names^3",
+]
+
+_HISTORICAL_NAME_FIELDS = [
     "historical_names^2",
     "historical_search_names^2",
 ]
 
+_CURRENT_RAW_NAME_FIELDS = [
+    "full_name_ru^3",
+    "short_name_ru^2.5",
+    "full_name_by^2",
+]
 
-def _name_multi_match(query_text: str) -> dict[str, Any]:
-    """multi_match по name-полям. Fuzzy добавляется только если включён в настройках."""
+_HISTORICAL_RAW_NAME_FIELDS = ["historical_names"]
+
+
+def _name_multi_match(
+    query_text: str,
+    fields: list[str],
+    *,
+    query_name: str,
+) -> dict[str, Any]:
+    """Build a precise name query, with optional typo tolerance."""
     clause: dict[str, Any] = {
         "query": query_text,
-        "fields": _NAME_FIELDS,
+        "fields": fields,
         "type": "best_fields",
+        # A company name query is a conjunction: for "минск строй" both
+        # tokens must be present. The previous OR default allowed a match on
+        # either common word and was the main source of noisy suggestions.
+        "operator": "and",
+        "_name": query_name,
     }
     if settings.ELASTICSEARCH_FUZZY_SEARCH:
         clause.update(fuzziness="AUTO", prefix_length=2, max_expansions=10)
@@ -732,13 +752,59 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
     # ngram-полям убраны — они дорогие и приводили к таймауту _search.
     # Fuzzy опционален (settings.ELASTICSEARCH_FUZZY_SEARCH): дорого и нестабильно
     # поверх ngram, по умолчанию выключен ради скорости.
-    should.append(_name_multi_match(normalized_query))
+    should.extend(
+        [
+            _name_multi_match(
+                normalized_query,
+                _CURRENT_NAME_FIELDS,
+                query_name="current_normalized",
+            ),
+            _name_multi_match(
+                normalized_query,
+                _HISTORICAL_NAME_FIELDS,
+                query_name="historical_normalized",
+            ),
+        ]
+    )
+
+    # Normalization intentionally removes the legal form. Use the raw query as
+    # a secondary signal so "ООО Ромашка" still prefers ООО over an otherwise
+    # equally relevant ИП/ОАО, without making the legal form mandatory.
+    raw_query = query.lower().strip()
+    if raw_query and raw_query != normalized_query:
+        should.extend(
+            [
+                _name_multi_match(
+                    raw_query,
+                    _CURRENT_RAW_NAME_FIELDS,
+                    query_name="current_raw",
+                ),
+                _name_multi_match(
+                    raw_query,
+                    _HISTORICAL_RAW_NAME_FIELDS,
+                    query_name="historical_raw",
+                ),
+            ]
+        )
 
     # Транслитерация лат<->кир: "minsk" -> "минск" и наоборот.
     translit = transliterate_query(query)
     if translit:
         translit_normalized = normalize_company_name(translit) or translit
-        should.append(_name_multi_match(translit_normalized))
+        should.extend(
+            [
+                _name_multi_match(
+                    translit_normalized,
+                    _CURRENT_NAME_FIELDS,
+                    query_name="current_translit",
+                ),
+                _name_multi_match(
+                    translit_normalized,
+                    _HISTORICAL_NAME_FIELDS,
+                    query_name="historical_translit",
+                ),
+            ]
+        )
 
     # function_score: действующие компании (без даты ликвидации) поднимаем над
     # ликвидированными, не меняя базовую релевантность лексики.
@@ -779,7 +845,14 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
         source = hit.get("_source", {})
         highlight = hit.get("highlight", {})
         historical_highlight = highlight.get("historical_names") or []
+        matched_queries = set(hit.get("matched_queries") or [])
+        matched_current = any(name.startswith("current_") for name in matched_queries)
+        matched_historical = any(
+            name.startswith("historical_") for name in matched_queries
+        )
         matched_name = historical_highlight[0] if historical_highlight else None
+        if not matched_name and matched_historical and not matched_current:
+            matched_name = next(iter(source.get("historical_names") or []), None)
         fallback_name = next(iter(source.get("all_names") or []), None)
 
         results.append(
@@ -789,7 +862,7 @@ def search_companies(query: str, limit: int = 10) -> list[dict[str, Any]] | None
                 "short_name_ru": source.get("short_name_ru"),
                 "full_name_by": source.get("full_name_by"),
                 "matched_name": matched_name,
-                "matched_historical_name": bool(matched_name),
+                "matched_historical_name": bool(matched_name and matched_historical),
             }
         )
 

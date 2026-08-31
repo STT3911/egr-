@@ -376,6 +376,33 @@ async def lookup_companies(
             if translit_variant else search_normalized
         )
 
+        # SQL fallback must preserve the same multi-word semantics as ES, but
+        # it should not require the user to remember the official word order.
+        # Every word is required; only its position in the name is flexible.
+        token_variants = []
+        for variant in (search_normalized, translit_normalized):
+            tokens = list(dict.fromkeys(variant.split()))
+            if len(tokens) > 1 and tokens not in token_variants:
+                token_variants.append(tokens)
+
+        token_params = {}
+        for variant_index, tokens in enumerate(token_variants):
+            for token_index, token in enumerate(tokens):
+                token_params[
+                    f"name_token_{variant_index}_{token_index}"
+                ] = f"%{token}%"
+
+        def token_match_sql(column: str) -> str:
+            groups = []
+            for variant_index, tokens in enumerate(token_variants):
+                groups.append(
+                    "(" + " AND ".join(
+                        f"{column} LIKE :name_token_{variant_index}_{token_index}"
+                        for token_index in range(len(tokens))
+                    ) + ")"
+                )
+            return " OR ".join(groups) if groups else "FALSE"
+
         logger.info(f"Smart name search: '{query}' -> '{search_normalized}'")
 
         try:
@@ -423,8 +450,9 @@ async def lookup_companies(
                 "results": results,
             }
         
-        # Для коротких запросов ищем только по началу слова
-        sql = text("""
+        # Сначала ищем по актуальным названиям.
+        current_token_match = token_match_sql("n.search_name")
+        sql = text(f"""
             SELECT
                 c.unp,
                 n.full_name_ru,
@@ -433,13 +461,16 @@ async def lookup_companies(
                 CASE
                     WHEN n.search_name = :normalized_exact THEN 1
                     WHEN n.search_name LIKE :normalized_start THEN 2
-                    ELSE 3
+                    WHEN n.search_name LIKE :normalized_contains
+                      OR n.search_name LIKE :translit_contains THEN 3
+                    ELSE 4
                 END as relevance_rank,
                 LENGTH(COALESCE(n.search_name, n.full_name_ru, '')) as name_length
             FROM egr_company_names_history n
             JOIN egr_companies c ON c.id = n.company_id
             WHERE (n.search_name LIKE :normalized_contains
-                   OR n.search_name LIKE :translit_contains)
+                   OR n.search_name LIKE :translit_contains
+                   OR {current_token_match})
               AND n.valid_to IS NULL
             ORDER BY relevance_rank ASC, name_length ASC
             LIMIT :limit
@@ -452,6 +483,7 @@ async def lookup_companies(
                 "normalized_contains": f"%{search_normalized}%",
                 "translit_contains": f"%{translit_normalized}%",
                 "limit": limit,
+                **token_params,
             }).mappings().all()
 
             for row in rows:
@@ -459,7 +491,8 @@ async def lookup_companies(
 
             remaining_limit = limit - len(results)
             if remaining_limit > 0:
-                historical_sql = text("""
+                historical_token_match = token_match_sql("hist_n.search_name")
+                historical_sql = text(f"""
                     SELECT
                         c.unp,
                         COALESCE(current_n.full_name_ru, hist_n.full_name_ru) AS full_name_ru,
@@ -469,7 +502,9 @@ async def lookup_companies(
                         CASE
                             WHEN hist_n.search_name = :normalized_exact THEN 1
                             WHEN hist_n.search_name LIKE :normalized_start THEN 2
-                            ELSE 3
+                            WHEN hist_n.search_name LIKE :normalized_contains
+                              OR hist_n.search_name LIKE :translit_contains THEN 3
+                            ELSE 4
                         END as relevance_rank,
                         LENGTH(COALESCE(hist_n.search_name, hist_n.full_name_ru, '')) as name_length
                     FROM egr_company_names_history hist_n
@@ -481,7 +516,8 @@ async def lookup_companies(
                       AND hist_n.search_name IS NOT NULL
                       AND hist_n.search_name != ''
                       AND (hist_n.search_name LIKE :normalized_contains
-                           OR hist_n.search_name LIKE :translit_contains)
+                           OR hist_n.search_name LIKE :translit_contains
+                           OR {historical_token_match})
                     ORDER BY relevance_rank ASC, name_length ASC, hist_n.valid_to DESC NULLS LAST
                     LIMIT :limit
                 """)
@@ -494,6 +530,7 @@ async def lookup_companies(
                         "normalized_contains": f"%{search_normalized}%",
                         "translit_contains": f"%{translit_normalized}%",
                         "limit": remaining_limit,
+                        **token_params,
                     },
                 ).mappings().all()
 
