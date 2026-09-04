@@ -24,8 +24,8 @@ git pull --ff-only origin develop
 
 COMPOSE=(docker compose --project-name egr-dev --env-file .env.dev -f deploy/dev/docker-compose.yml)
 "${COMPOSE[@]}" config --quiet
-"${COMPOSE[@]}" build api frontend
-"${COMPOSE[@]}" up -d --wait db redis api frontend
+"${COMPOSE[@]}" build api dev-frontend
+"${COMPOSE[@]}" up -d --wait db redis api dev-frontend
 "${COMPOSE[@]}" ps
 
 docker exec egr_nginx wget -q -O /dev/null http://egr-dev-api:8000/api/v1/health/ready
