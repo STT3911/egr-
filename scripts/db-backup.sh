@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Ежедневный бэкап БД egr_db с ротацией.
+# Ежедневный бэкап БД egr_db без автоматического удаления старых копий.
 # Запуск вручную:  ~/egr/scripts/db-backup.sh
 # Cron (пример):   30 3 * * * /home/user/egr/scripts/db-backup.sh >> /home/user/egr-backups/backup.log 2>&1
 #
@@ -24,16 +24,12 @@ trap cleanup_temp EXIT
 # pg_dump внутри контейнера → gzip на хосте
 docker exec "$DB_CONTAINER" pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$TEMP_FILE"
 
-# Проверяем архив до замены предыдущего бэкапа.
+# Проверяем архив до публикации нового бэкапа.
 if [ ! -s "$TEMP_FILE" ] || ! gzip -t "$TEMP_FILE"; then
   echo "$(date '+%F %T') ERROR: backup is empty or corrupted: $TEMP_FILE" >&2
   exit 1
 fi
 
 mv -- "$TEMP_FILE" "$FILE"
-
-# Новый бэкап готов: удаляем все предыдущие, оставляя только текущий.
-find "$BACKUP_DIR" -maxdepth 1 -type f -name 'egr_db_*.sql.gz' \
-  ! -name "$(basename "$FILE")" -delete
 
 echo "$(date '+%F %T') backup ok: $FILE ($(du -h "$FILE" | cut -f1))"
