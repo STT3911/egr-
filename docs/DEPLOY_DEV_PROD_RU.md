@@ -115,6 +115,11 @@ mkdir -p acme-webroot/.well-known/acme-challenge
 ./scripts/issue-certificates.sh
 ```
 
+Имена production-сети и постоянных volumes зафиксированы в Compose:
+`egr_egr_default`, `egr_egr_postgres_data`, `egr_egr_elasticsearch_data` и
+`egr_egr_grafana_data`. Поэтому смена каталога или имени Compose-проекта не
+создаст незаметно новую пустую production-БД.
+
 В `crontab -e` пользователя `user` добавьте:
 
 ```cron

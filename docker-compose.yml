@@ -651,12 +651,16 @@ services:
 
 volumes:
   egr_postgres_data:
+    name: egr_egr_postgres_data
     driver: local
   egr_elasticsearch_data:
+    name: egr_egr_elasticsearch_data
     driver: local
   egr_grafana_data:
+    name: egr_egr_grafana_data
     driver: local
 
 networks:
   egr_default:
+    name: egr_egr_default
     driver: bridge

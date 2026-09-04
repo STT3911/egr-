@@ -7,6 +7,11 @@ CERTBOT_IMAGE="${CERTBOT_IMAGE:-certbot/certbot:latest}"
 
 mkdir -p "$ROOT_DIR/acme-webroot/.well-known/acme-challenge" "$ROOT_DIR/ssl"
 
+if ! docker compose ps --status running --services | grep -qx 'egr-nginx'; then
+  echo "ERROR: egr-nginx must be running before the ACME challenge" >&2
+  exit 1
+fi
+
 docker run --rm \
   -v /etc/letsencrypt:/etc/letsencrypt \
   -v "$ROOT_DIR/acme-webroot:/var/www/acme" \
@@ -16,7 +21,7 @@ docker run --rm \
   --domain company.tenders.by \
   --domain test.tendex.by \
   --email "$CERTBOT_EMAIL" \
-  --agree-tos --non-interactive --expand
+  --agree-tos --non-interactive --expand --force-renewal
 
 docker run --rm \
   -v /etc/letsencrypt:/source:ro \
