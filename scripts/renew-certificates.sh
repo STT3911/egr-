@@ -9,7 +9,8 @@ mkdir -p "$ROOT_DIR/acme-webroot/.well-known/acme-challenge" "$ROOT_DIR/ssl"
 docker run --rm \
   -v /etc/letsencrypt:/etc/letsencrypt \
   -v "$ROOT_DIR/acme-webroot:/var/www/acme" \
-  "$CERTBOT_IMAGE" renew --webroot --webroot-path /var/www/acme --quiet
+  "$CERTBOT_IMAGE" renew --webroot --webroot-path /var/www/acme \
+  --quiet --no-directory-hooks
 
 docker run --rm \
   -v /etc/letsencrypt:/source:ro \

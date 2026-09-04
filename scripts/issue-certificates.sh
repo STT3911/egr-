@@ -21,7 +21,8 @@ docker run --rm \
   --domain company.tenders.by \
   --domain test.tendex.by \
   --email "$CERTBOT_EMAIL" \
-  --agree-tos --non-interactive --expand --force-renewal
+  --agree-tos --non-interactive --expand --force-renewal \
+  --no-directory-hooks
 
 docker run --rm \
   -v /etc/letsencrypt:/source:ro \
