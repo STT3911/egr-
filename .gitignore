@@ -107,3 +107,11 @@ ngrn_list.csv
 /test.tendex.by.conf.disabled
 data/
 /exports/
+
+# Server-only one-off exports and credentials (never commit)
+/cookie*.txt
+/*_unp.txt
+/gias_all.tsv
+/accredited_customers.json
+/*_merge_alembic_heads.py
+/scripts/*.sh.pre-*
