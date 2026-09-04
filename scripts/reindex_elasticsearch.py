@@ -11,6 +11,11 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="Maximum rows to index")
     parser.add_argument("--batch-size", type=int, default=None, help="Bulk batch size")
     parser.add_argument("--recreate", action="store_true", help="Drop and recreate the index")
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore a saved checkpoint and start a new pass from the first UNP",
+    )
     args = parser.parse_args()
 
     db = SessionLocal()
@@ -20,6 +25,7 @@ def main() -> None:
             batch_size=args.batch_size,
             limit=args.limit,
             recreate=args.recreate,
+            resume=not args.no_resume,
         )
         print(result)
     finally:

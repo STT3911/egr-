@@ -419,6 +419,7 @@ async def lookup_companies(
             from app.services.search_index import (
                 get_queue_status,
                 has_pending_index_work,
+                is_index_ready_for_search,
                 search_companies,
             )
 
@@ -427,16 +428,28 @@ async def lookup_companies(
             # Postgres LIKE). MAX_OUTSTANDING=0 -> старое строгое поведение.
             skip_es = False
             if settings.ELASTICSEARCH_REQUIRE_SYNCED:
-                max_outstanding = settings.ELASTICSEARCH_SYNC_MAX_OUTSTANDING
-                if max_outstanding <= 0:
-                    skip_es = has_pending_index_work(db)
+                if not is_index_ready_for_search(db):
+                    skip_es = True
+                    logger.info(
+                        "Elasticsearch lookup skipped: full index is not verified"
+                    )
                 else:
-                    status = get_queue_status(db)
-                    outstanding = status["outstanding"] if status else 0
-                    skip_es = outstanding > max_outstanding
+                    max_outstanding = settings.ELASTICSEARCH_SYNC_MAX_OUTSTANDING
+                    if max_outstanding <= 0:
+                        skip_es = has_pending_index_work(db)
+                    else:
+                        status = get_queue_status(db)
+                        outstanding = status["outstanding"] if status else 0
+                        skip_es = outstanding > max_outstanding
+                        if skip_es:
+                            logger.info(
+                                "Elasticsearch lookup skipped: index queue has %s "
+                                "outstanding rows (limit=%s)",
+                                outstanding,
+                                max_outstanding,
+                            )
 
             if skip_es:
-                logger.info("Elasticsearch lookup skipped: index queue too far behind")
                 es_rows = None
             else:
                 es_rows = search_companies(query, limit)
@@ -614,6 +627,7 @@ def company_search_status(
 def reindex_company_search(
     limit: Optional[int] = Query(None, ge=1, description="Maximum rows to index"),
     recreate: bool = Query(False, description="Drop and recreate the index first"),
+    resume: bool = Query(True, description="Resume from the saved full-index cursor"),
     async_run: bool = Query(True, description="Run in Celery instead of current request"),
     db: Session = Depends(get_db),
     api_key: str = Depends(verify_api_key),
@@ -622,17 +636,18 @@ def reindex_company_search(
     if async_run:
         from app.tasks.sync_tasks import reindex_elasticsearch
 
-        task = reindex_elasticsearch.delay(limit, recreate)
+        task = reindex_elasticsearch.delay(limit, recreate, resume)
         return {
             "status": "queued",
             "task_id": task.id,
             "limit": limit,
             "recreate": recreate,
+            "resume": resume,
         }
 
     from app.services.search_index import reindex_companies
 
-    result = reindex_companies(db, limit=limit, recreate=recreate)
+    result = reindex_companies(db, limit=limit, recreate=recreate, resume=resume)
     return {"status": "completed", **result}
 
 

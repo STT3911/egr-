@@ -1,4 +1,5 @@
 from app.services import search_index
+from app.database.models import SystemState
 from app.utils.search_normalizer import keyboard_layout_query
 
 
@@ -10,6 +11,33 @@ class _FakeClient:
     def search(self, *, index, body):
         self.body = body
         return {"hits": {"hits": self.hits}}
+
+
+class _FakeStateDb:
+    def __init__(self):
+        self.rows = {}
+
+    def get(self, model, key):
+        assert model is SystemState
+        return self.rows.get(key)
+
+    def add(self, row):
+        self.rows[row.key] = row
+
+
+class _EmptyMappingsResult:
+    def mappings(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _CaptureRowsDb:
+    def execute(self, statement, params):
+        self.statement = str(statement)
+        self.params = params
+        return _EmptyMappingsResult()
 
 
 def _multi_match_clauses(client):
@@ -84,3 +112,45 @@ def test_wrong_keyboard_layout_is_added_without_replacing_latin_query(monkeypatc
     assert by_name["current_normalized"]["query"] == "vbycr"
     assert by_name["current_keyboard"]["query"] == "минск"
     assert keyboard_layout_query("ntp") == "тез"
+
+
+def test_index_is_not_ready_without_completed_full_pass():
+    db = _FakeStateDb()
+
+    assert search_index.is_index_ready_for_search(db) is False
+
+    search_index._save_reindex_state(
+        db,
+        {
+            "index": search_index.settings.ELASTICSEARCH_INDEX,
+            "status": "running",
+            "synced": False,
+            "last_unp": 123,
+        },
+    )
+
+    assert search_index.is_index_ready_for_search(db) is False
+
+
+def test_index_is_ready_only_after_verified_full_pass():
+    db = _FakeStateDb()
+    search_index._save_reindex_state(
+        db,
+        {
+            "index": search_index.settings.ELASTICSEARCH_INDEX,
+            "status": "complete",
+            "synced": True,
+            "last_unp": 999999999,
+        },
+    )
+
+    assert search_index.is_index_ready_for_search(db) is True
+
+
+def test_reindex_pages_companies_before_history_joins():
+    db = _CaptureRowsDb()
+
+    assert search_index._company_rows(db, last_unp=100, limit=25) == []
+    assert "WITH company_page AS MATERIALIZED" in db.statement
+    assert "FROM company_page c" in db.statement
+    assert db.params == {"last_unp": 100, "limit": 25}

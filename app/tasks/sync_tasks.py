@@ -2835,13 +2835,17 @@ def auto_fetch_grp_and_load(limit: int = 10000, only_missing: bool = True):
 
 
 @celery_app.task
-def reindex_elasticsearch(limit: int | None = None, recreate: bool = False):
+def reindex_elasticsearch(
+    limit: int | None = None,
+    recreate: bool = False,
+    resume: bool = True,
+):
     """Rebuild the Elasticsearch company index from PostgreSQL."""
     from app.services.search_index import reindex_companies
 
     db = SessionLocal()
     try:
-        return reindex_companies(db, limit=limit, recreate=recreate)
+        return reindex_companies(db, limit=limit, recreate=recreate, resume=resume)
     finally:
         db.close()
 

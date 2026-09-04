@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 import socket
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Any, Iterable
 
@@ -13,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.database.models import SystemState
 from app.utils.search_normalizer import (
     keyboard_layout_query,
     normalize_company_name,
@@ -30,6 +33,8 @@ _resolution_cache = {"ok": False, "ts": 0.0}
 # Переиспользуемый ES-клиент для горячего пути чтения (search_companies):
 # строится один раз → keep-alive, без TCP/TLS-хендшейка на каждый запрос.
 _shared_client = None
+
+_REINDEX_STATE_KEY_PREFIX = "elasticsearch_reindex_v1"
 
 try:
     from elasticsearch import Elasticsearch, helpers
@@ -266,6 +271,7 @@ def get_index_status(db: Session | None = None) -> dict[str, Any]:
             "available": False,
             "queue": queue_status,
             "database_companies": company_count,
+            "reindex": get_reindex_state(db),
         }
     try:
         index_name = settings.ELASTICSEARCH_INDEX
@@ -282,6 +288,7 @@ def get_index_status(db: Session | None = None) -> dict[str, Any]:
             "documents": count,
             "database_companies": company_count,
             "queue": queue_status,
+            "reindex": get_reindex_state(db),
             "synced": bool(
                 exists
                 and queue_status
@@ -297,11 +304,53 @@ def get_index_status(db: Session | None = None) -> dict[str, Any]:
             "index": settings.ELASTICSEARCH_INDEX,
             "database_companies": company_count,
             "queue": queue_status,
+            "reindex": get_reindex_state(db),
             "synced": False,
             "error": str(exc),
         }
     finally:
         client.close()
+
+
+def _reindex_state_key(index_name: str | None = None) -> str:
+    return f"{_REINDEX_STATE_KEY_PREFIX}:{index_name or settings.ELASTICSEARCH_INDEX}"
+
+
+def get_reindex_state(db: Session | None) -> dict[str, Any] | None:
+    """Return the durable full-index progress marker for the configured index."""
+    if db is None:
+        return None
+
+    row = db.get(SystemState, _reindex_state_key())
+    if row is None:
+        return None
+    try:
+        value = json.loads(row.value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid Elasticsearch reindex state: %r", row.value)
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _save_reindex_state(db: Session, state: dict[str, Any]) -> None:
+    key = _reindex_state_key(state.get("index"))
+    row = db.get(SystemState, key)
+    value = json.dumps(state, ensure_ascii=False, default=str)
+    if row is None:
+        db.add(SystemState(key=key, value=value))
+    else:
+        row.value = value
+
+
+def is_index_ready_for_search(db: Session | None) -> bool:
+    """Use ES only after a complete full pass was verified against PostgreSQL."""
+    state = get_reindex_state(db)
+    return bool(
+        state
+        and state.get("index") == settings.ELASTICSEARCH_INDEX
+        and state.get("status") == "complete"
+        and state.get("synced") is True
+    )
 
 
 def get_company_count(db: Session | None) -> int | None:
@@ -347,9 +396,21 @@ def get_queue_status(db: Session | None) -> dict[str, Any] | None:
     }
 
 
-def _company_rows(db: Session, *, last_unp: int = 0, limit: int = 1000):
+def _company_rows(db: Session, *, last_unp: int = -1, limit: int = 1000):
     sql = text(
         """
+        WITH company_page AS MATERIALIZED (
+            SELECT
+                id,
+                unp,
+                current_status_code,
+                registration_date,
+                liquidation_date
+            FROM egr_companies
+            WHERE unp > :last_unp
+            ORDER BY unp ASC
+            LIMIT :limit
+        )
         SELECT
             c.id::text AS company_id,
             c.unp,
@@ -364,7 +425,7 @@ def _company_rows(db: Session, *, last_unp: int = 0, limit: int = 1000):
             array_remove(array_agg(DISTINCT hist_n.short_name_ru), NULL) AS historical_short_names,
             array_remove(array_agg(DISTINCT hist_n.full_name_by), NULL) AS historical_full_names_by,
             array_remove(array_agg(DISTINCT hist_n.search_name), NULL) AS historical_search_names
-        FROM egr_companies c
+        FROM company_page c
         LEFT JOIN LATERAL (
             SELECT
                 n.full_name_ru,
@@ -382,7 +443,6 @@ def _company_rows(db: Session, *, last_unp: int = 0, limit: int = 1000):
         LEFT JOIN egr_company_names_history hist_n
             ON hist_n.company_id = c.id
            AND hist_n.valid_to IS NOT NULL
-        WHERE c.unp > :last_unp
         GROUP BY
             c.id,
             c.unp,
@@ -394,7 +454,6 @@ def _company_rows(db: Session, *, last_unp: int = 0, limit: int = 1000):
             current_n.full_name_by,
             current_n.search_name
         ORDER BY c.unp ASC
-        LIMIT :limit
         """
     )
     return db.execute(sql, {"last_unp": last_unp, "limit": limit}).mappings().all()
@@ -549,6 +608,7 @@ def reindex_companies(
     batch_size: int | None = None,
     limit: int | None = None,
     recreate: bool = False,
+    resume: bool = True,
 ) -> dict[str, Any]:
     if helpers is None:
         raise RuntimeError("elasticsearch package is not installed")
@@ -558,9 +618,26 @@ def reindex_companies(
         raise RuntimeError("Elasticsearch is disabled")
 
     batch_size = batch_size or settings.ELASTICSEARCH_REINDEX_BATCH_SIZE
-    indexed = 0
-    last_unp = 0
+    indexed_this_run = 0
+    indexed_total = 0
+    last_unp = -1
     index_name = settings.ELASTICSEARCH_INDEX
+    started_at = datetime.now(timezone.utc).isoformat()
+
+    previous_state = get_reindex_state(db)
+    if (
+        resume
+        and not recreate
+        and previous_state
+        and previous_state.get("index") == index_name
+        and previous_state.get("status") in {"running", "partial", "failed"}
+    ):
+        last_unp = int(previous_state.get("last_unp", -1))
+        indexed_total = int(previous_state.get("indexed_total", 0))
+        started_at = previous_state.get("started_at") or started_at
+
+    resumed_from_unp = last_unp
+    exhausted_database = False
 
     try:
         if not client.ping():
@@ -570,14 +647,29 @@ def reindex_companies(
             client.indices.delete(index=index_name)
         ensure_company_index(client)
 
+        _save_reindex_state(
+            db,
+            {
+                "index": index_name,
+                "status": "running",
+                "synced": False,
+                "last_unp": last_unp,
+                "indexed_total": indexed_total,
+                "started_at": started_at,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        db.commit()
+
         while True:
-            remaining = None if limit is None else max(limit - indexed, 0)
+            remaining = None if limit is None else max(limit - indexed_this_run, 0)
             if remaining == 0:
                 break
 
             page_size = min(batch_size, remaining) if remaining else batch_size
             rows = _company_rows(db, last_unp=last_unp, limit=page_size)
             if not rows:
+                exhausted_database = True
                 break
 
             actions = (
@@ -596,13 +688,83 @@ def reindex_companies(
                 request_timeout=max(settings.ELASTICSEARCH_REQUEST_TIMEOUT_SECONDS, 60),
             )
             _mark_unps_indexed(db, [int(row["unp"]) for row in rows])
-            db.commit()
-            indexed += success
+            indexed_this_run += success
+            indexed_total += success
             last_unp = int(rows[-1]["unp"])
-            logger.info("Indexed %s companies into %s", indexed, index_name)
+            _save_reindex_state(
+                db,
+                {
+                    "index": index_name,
+                    "status": "running",
+                    "synced": False,
+                    "last_unp": last_unp,
+                    "indexed_total": indexed_total,
+                    "started_at": started_at,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            db.commit()
+            logger.info(
+                "Indexed %s companies into %s (cursor=%s, this_run=%s)",
+                indexed_total,
+                index_name,
+                last_unp,
+                indexed_this_run,
+            )
 
         client.indices.refresh(index=index_name)
-        return {"index": index_name, "indexed": indexed, "recreated": recreate}
+        database_count = get_company_count(db)
+        document_count = int(client.count(index=index_name).get("count") or 0)
+        synced = bool(exhausted_database and document_count == database_count)
+        final_status = "complete" if synced else "partial"
+        final_state = {
+            "index": index_name,
+            "status": final_status,
+            "synced": synced,
+            "last_unp": last_unp,
+            "indexed_total": indexed_total,
+            "database_companies": database_count,
+            "documents": document_count,
+            "started_at": started_at,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if synced:
+            final_state["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _save_reindex_state(db, final_state)
+        db.commit()
+        return {
+            "index": index_name,
+            "indexed": indexed_this_run,
+            "indexed_total": indexed_total,
+            "last_unp": last_unp,
+            "resumed_from_unp": resumed_from_unp,
+            "recreated": recreate,
+            "status": final_status,
+            "synced": synced,
+            "database_companies": database_count,
+            "documents": document_count,
+        }
+    except Exception as exc:
+        db.rollback()
+        try:
+            _save_reindex_state(
+                db,
+                {
+                    "index": index_name,
+                    "status": "failed",
+                    "synced": False,
+                    "last_unp": last_unp,
+                    "indexed_total": indexed_total,
+                    "started_at": started_at,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "error": str(exc)[:1000],
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to persist Elasticsearch reindex failure state")
+        raise
     finally:
         client.close()
 
