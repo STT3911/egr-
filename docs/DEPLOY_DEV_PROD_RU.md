@@ -81,29 +81,34 @@ git status --short --branch
 Скрипт принимает только чистую ветку `main`, выполняет `git pull --ff-only`,
 миграции, пересборку API/frontend/workers и health-check production-домена.
 
+## Локальный production Compose
+
+Корневой `docker-compose.yml` содержит конфигурацию конкретного production-
+сервера, поэтому Git его не отслеживает. Файл должен оставаться локально в
+`/home/user/egr/docker-compose.yml`.
+
+Перед первым `git pull`, который удаляет файл из отслеживаемых, временно
+сохраните его вне репозитория, а после обновления верните на место:
+
+```bash
+backup_dir=/home/user/egr-config-backups/untrack-compose
+mkdir -p "$backup_dir"
+cd /home/user/egr
+cp docker-compose.yml "$backup_dir/docker-compose.yml"
+git pull --ff-only origin main
+cp "$backup_dir/docker-compose.yml" docker-compose.yml
+docker compose config --quiet
+```
+
+Резервная копия останется в
+`/home/user/egr-config-backups/untrack-compose/docker-compose.yml`. Docker
+volumes и работающая БД этими командами не затрагиваются. Не добавляйте
+корневой Compose обратно через `git add -f`.
+
 ## Первый запуск двух окружений
 
 Этот раздел нужен один раз. Сначала должен быть успешно поднят dev-стек из
 `develop`. Затем инфраструктурный коммит переносится в `main`.
-
-На текущем сервере `docker-compose.yml` и
-`nginx/conf.d/company.tenders.by.conf` появились раньше, чем стали tracked в
-Git. Перед первым `git pull` сохраните их вне репозитория, иначе Git остановит
-обновление из-за untracked-файлов:
-
-```bash
-backup_dir=/home/user/egr-config-backups/first-dev-prod
-mkdir -p "$backup_dir/nginx"
-cd /home/user/egr
-mv docker-compose.yml "$backup_dir/docker-compose.yml"
-mv nginx/conf.d/company.tenders.by.conf \
-  "$backup_dir/nginx/company.tenders.by.conf"
-git pull --ff-only origin main
-```
-
-Это не удаляет старые конфиги: они остаются в
-`/home/user/egr-config-backups/first-dev-prod`. Docker volumes и работающая БД
-этими командами не затрагиваются.
 
 Дальше подключите ACME webroot, примените новый Nginx-конфиг и выпустите один
 сертификат сразу на оба домена:

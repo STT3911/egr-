@@ -72,6 +72,7 @@ yarn-error.log*
 frontend/dist/
 
 # Local server/deploy secrets and overrides
+/docker-compose.yml
 docker-compose.override.yml
 compose.yml
 compose.override.yml
