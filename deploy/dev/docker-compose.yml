@@ -1,0 +1,123 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: egr_dev_db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-egr_dev}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env.dev}
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+    networks:
+      - dev_internal
+    mem_limit: 256m
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c work_mem=2MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=30
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-egr_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: egr_dev_redis
+    networks:
+      - dev_internal
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: egr_dev_api
+    env_file:
+      - ../../.env.dev
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@db:5432/${DB_NAME:-egr_dev}?client_encoding=utf8
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-egr_dev}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/4
+      CELERY_RESULT_BACKEND: redis://redis:6379/5
+      APP_ENV: development
+      DEBUG: "false"
+      APP_URL: https://test.tendex.by
+      ALLOWED_HOSTS: test.tendex.by,localhost,127.0.0.1,egr-dev-api,egr_dev_api
+      CORS_ORIGINS: https://test.tendex.by
+      ELASTICSEARCH_ENABLED: "false"
+      GIAS_SYNC_ENABLED: "false"
+      GIAS_CONTRACT_SYNC_ENABLED: "false"
+      BANKROT_SCHEDULE_ENABLED: "false"
+      GRP_SCHEDULE_ENABLED: "false"
+      PVT_SCHEDULE_ENABLED: "false"
+      LICENSE_SCHEDULE_ENABLED: "false"
+      NALOG_DEBT_SCHEDULE_ENABLED: "false"
+      SEZ_SCHEDULE_ENABLED: "false"
+      MINSK_LEADERSHIP_SCHEDULE_ENABLED: "false"
+      BITRIX_KEEPALIVE_ENABLED: "false"
+      PARSER_ALERTS_ENABLED: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      dev_internal: {}
+      prod_proxy:
+        aliases:
+          - egr-dev-api
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""
+        VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
+    container_name: egr_dev_frontend
+    networks:
+      prod_proxy:
+        aliases:
+          - egr-dev-frontend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  dev_postgres_data:
+    name: egr_dev_postgres_data
+
+networks:
+  dev_internal:
+    name: egr_dev_internal
+  prod_proxy:
+    external: true
+    name: ${PROD_PROXY_NETWORK:-egr_egr_default}

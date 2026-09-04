@@ -72,7 +72,6 @@ yarn-error.log*
 frontend/dist/
 
 # Local server/deploy secrets and overrides
-docker-compose.yml
 docker-compose.override.yml
 compose.yml
 compose.override.yml
@@ -103,10 +102,12 @@ ngrn_list.csv
 *.tmp
 *.temp
 .claude/settings.local.json
-/nginx/conf.d/
+/nginx/conf.d/*
+!/nginx/conf.d/company.tenders.by.conf
 /test.tendex.by.conf.disabled
 data/
 /exports/
+/acme-webroot/
 
 # Server-only one-off exports and credentials (never commit)
 /cookie*.txt

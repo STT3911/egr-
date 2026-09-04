@@ -1,9 +1,15 @@
 # Development and production workflow
 
-The repository uses two long-lived branches:
+The service has two environments and two long-lived branches:
 
-- `develop` is the integration branch for development and testing.
-- `main` is the production branch. Production servers deploy only this branch.
+- `develop` is deployed to `https://test.tendex.by`.
+- `main` is deployed to `https://company.tenders.by`.
+
+The environments use different API/frontend containers, PostgreSQL databases,
+Redis instances, networks, and volumes. The lightweight dev stack deliberately
+does not run Celery Beat, background synchronizers, Telegram, Grafana, or a
+second Elasticsearch JVM. This prevents test code from triggering production
+jobs and keeps the server within its memory limit.
 
 ## Make a change
 
@@ -38,7 +44,17 @@ npm run build
 ```
 
 The same checks run in GitHub Actions for pushes and pull requests targeting
-`develop` or `main`.
+`develop` or `main`. After they pass, deploy `develop` from the dedicated
+`~/egr-dev` worktree:
+
+```bash
+cd ~/egr-dev
+./scripts/deploy-dev.sh
+```
+
+The file `~/egr-dev/.env.dev` is server-local and ignored by Git. Start from
+`deploy/dev/.env.example`, replace both placeholder secrets, and never reuse the
+production database volume.
 
 ## Promote to production
 
@@ -51,19 +67,28 @@ The production checkout must have no tracked local changes before deployment:
 
 ```bash
 cd ~/egr
-git fetch origin
-git switch main
-git status --short
-git pull --ff-only origin main
-docker compose build egr-api frontend
-docker compose run --rm egr-api alembic upgrade head
-docker compose up -d egr-api frontend
+./scripts/deploy-prod.sh
 ```
 
 Rebuild or restart any worker whose code or environment changed. After the
 deployment, verify container health, the relevant API endpoint, and application
 logs. Never use `git add .` on production; server-only exports and credentials
 must remain outside commits.
+
+## TLS certificates
+
+The Nginx certificate must contain both public names. HTTP ACME challenges are
+served from `acme-webroot/`, which is mounted read-only into Nginx. Issue or
+expand the certificate with:
+
+```bash
+cd ~/egr
+./scripts/issue-certificates.sh
+```
+
+Renew it from the server user's cron with `scripts/renew-certificates.sh`.
+Certificate files are copied into the ignored `ssl/` directory and Nginx is
+validated before it is reloaded.
 
 ## Emergency production fix
 

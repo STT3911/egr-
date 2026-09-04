@@ -80,17 +80,20 @@ npm --prefix frontend run build
 
 ## Deployment
 
-Typical server deploy:
+The service uses two deployed environments:
+
+- `develop` -> `https://test.tendex.by`
+- `main` -> `https://company.tenders.by`
+
+Deploy the current tested branch with the environment-specific helper:
 
 ```bash
-cd ~/egr
-git pull
-docker compose build egr-api frontend
-docker compose up -d egr-api frontend
-docker compose run --rm egr-api alembic upgrade head
+cd ~/egr-dev && ./scripts/deploy-dev.sh
+cd ~/egr && ./scripts/deploy-prod.sh
 ```
 
-If only migrations changed, running `alembic upgrade head` is enough after the backend image/code is updated.
+See [`docs/DEVELOPMENT_AND_PRODUCTION.md`](docs/DEVELOPMENT_AND_PRODUCTION.md)
+for branch promotion, isolation, TLS, and rollback rules.
 
 ## Autonomous UNP Pipeline
 
