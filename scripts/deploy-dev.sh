@@ -31,4 +31,4 @@ COMPOSE=(docker compose --project-name egr-dev --env-file .env.dev -f deploy/dev
 docker exec egr_nginx wget -q -O /dev/null http://egr-dev-api:8000/api/v1/health/ready
 docker exec egr_nginx wget -q -O /dev/null http://egr-dev-frontend/
 
-echo "Dev deployment is healthy: https://test.tendex.by"
+echo "Dev containers are healthy. Verify https://test.tendex.by after the proxy and TLS changes are promoted to main."

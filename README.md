@@ -93,7 +93,8 @@ cd ~/egr && ./scripts/deploy-prod.sh
 ```
 
 See [`docs/DEVELOPMENT_AND_PRODUCTION.md`](docs/DEVELOPMENT_AND_PRODUCTION.md)
-for branch promotion, isolation, TLS, and rollback rules.
+for branch promotion, isolation, TLS, and rollback rules. Russian deployment
+commands are in [`docs/DEPLOY_DEV_PROD_RU.md`](docs/DEPLOY_DEV_PROD_RU.md).
 
 ## Autonomous UNP Pipeline
 
