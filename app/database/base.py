@@ -3,6 +3,9 @@ from app.core.database import Base
 
 # Import all models here for Alembic to detect them
 from app.database.models import (
+    Court,
+    CourtCase,
+    CourtJudgmentRecord,
     SystemState,
     SearchIndexQueue,
     RawCompanyData,
@@ -36,6 +39,9 @@ from app.database.models import (
 
 __all__ = [
     "Base",
+    "Court",
+    "CourtCase",
+    "CourtJudgmentRecord",
     "SystemState",
     "SearchIndexQueue",
     "RawCompanyData",

@@ -109,6 +109,8 @@ ngrn_list.csv
 data/
 /exports/
 /acme-webroot/
+/court-exports/
+/.court-request-rate.txt
 
 # Server-only one-off exports and credentials (never commit)
 /cookie*.txt

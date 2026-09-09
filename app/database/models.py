@@ -7,6 +7,62 @@ from app.core.database import Base
 import uuid as uuid_pkg
 
 
+class Court(Base):
+    """Court identifier from service.court.gov.by (not an EGR company)."""
+
+    __tablename__ = "courts"
+
+    id = Column(Integer, primary_key=True, autoincrement=False)
+    name = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class CourtCase(Base):
+    """One source process; case numbers alone are not unique identifiers."""
+
+    __tablename__ = "court_cases"
+    __table_args__ = (
+        UniqueConstraint("court_id", "source_process_id", name="uq_court_cases_source"),
+        CheckConstraint("source_process_id > 0", name="ck_court_cases_process_positive"),
+        Index("ix_court_cases_court_number", "court_id", "case_number"),
+        Index("ix_court_cases_case_number", "case_number"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    court_id = Column(Integer, ForeignKey("courts.id", ondelete="RESTRICT"), nullable=False)
+    source_process_id = Column(BigInteger, nullable=False)
+    case_number = Column(Text, nullable=False)
+    # Search context only: do not infer a category or UNP from the query.
+    raw_data = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class CourtJudgmentRecord(Base):
+    """A decision/document belonging to a case, separate from its process."""
+
+    __tablename__ = "court_judgments"
+    __table_args__ = (
+        UniqueConstraint("case_id", "source_document_id", name="uq_court_judgments_source"),
+        CheckConstraint("source_document_id > 0", name="ck_court_judgments_document_positive"),
+        Index("ix_court_judgments_judgment_date", "judgment_date"),
+        Index("ix_court_judgments_case_date", "case_id", "judgment_date"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    case_id = Column(BigInteger, ForeignKey("court_cases.id", ondelete="RESTRICT"), nullable=False)
+    source_document_id = Column(BigInteger, nullable=False)
+    document_type = Column(Text, nullable=True)
+    judgment_date = Column(Date, nullable=True)
+    resolution = Column(Text, nullable=True)
+    download_url = Column(Text, nullable=True)
+    raw_data = Column(JSONB, nullable=False, server_default="{}")
+    fetched_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class SystemState(Base):
     """System state for storing sync cursors"""
     __tablename__ = "egr_system_state"
