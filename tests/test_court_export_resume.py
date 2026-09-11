@@ -6,6 +6,14 @@ from app.services.court_judgments import CourtAuthenticationError, CourtJudgment
 from scripts import export_court_judgments as exporter
 
 
+def test_cli_defaults_match_five_minute_client_delay(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["export_court_judgments.py", "--cookie-stdin"])
+    args = exporter.parse_args()
+    with exporter.CourtJudgmentClient("a=b") as client:
+        assert args.delay == client.min_interval_seconds == 300
+        assert args.delay_jitter == client.delay_jitter_seconds == 0
+
+
 def record(page):
     return CourtJudgment(
         key=f"document:{page}", court_id=151, court="Test court",

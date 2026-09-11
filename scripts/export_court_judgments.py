@@ -53,14 +53,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--delay",
         type=float,
-        default=600.0,
-        help="Minimum seconds between every HTTP request (minimum/default: 600)",
+        default=300.0,
+        help="Minimum seconds between every HTTP request (minimum/default: 300)",
     )
     parser.add_argument(
         "--delay-jitter",
         type=float,
-        default=120.0,
-        help="Additional random delay in seconds (default: 0-120)",
+        default=0.0,
+        help="Additional random delay in seconds (default: 0)",
     )
     parser.add_argument("--max-pages", type=int)
     parser.add_argument(
@@ -161,8 +161,8 @@ def main() -> int:
     date_to = _validate_date(args.date_to)
     if datetime.strptime(date_from, "%d.%m.%Y") > datetime.strptime(date_to, "%d.%m.%Y"):
         raise ValueError("--date-from must not be after --date-to")
-    if args.delay < 600:
-        raise ValueError("--delay must be at least 600 seconds")
+    if args.delay < 300:
+        raise ValueError("--delay must be at least 300 seconds")
     if args.delay_jitter < 0:
         raise ValueError("--delay-jitter must not be negative")
     if args.max_pages is not None and args.max_pages < 1:

@@ -262,14 +262,14 @@ class CourtJudgmentClient:
         timeout: Tuple[float, float] = (10.0, 60.0),
         cookie_file: Optional[Path] = None,
         rate_limit_state_file: Optional[Path] = None,
-        min_interval_seconds: float = 600.0,
-        delay_jitter_seconds: float = 120.0,
+        min_interval_seconds: float = 300.0,
+        delay_jitter_seconds: float = 0.0,
     ) -> None:
         cookie_header = normalize_cookie_header(cookie_header)
         if not cookie_header:
             raise ValueError("Court cookie header is empty")
-        if not math.isfinite(min_interval_seconds) or min_interval_seconds < 600:
-            raise ValueError("min_interval_seconds must be at least 600")
+        if not math.isfinite(min_interval_seconds) or min_interval_seconds < 300:
+            raise ValueError("min_interval_seconds must be at least 300")
         if not math.isfinite(delay_jitter_seconds) or delay_jitter_seconds < 0:
             raise ValueError("delay_jitter_seconds must be finite and nonnegative")
 

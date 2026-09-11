@@ -134,10 +134,11 @@ def test_client_loads_persisted_request_timestamp(tmp_path) -> None:
         client.close()
 
 
-def test_client_waits_for_persisted_minimum_interval(monkeypatch) -> None:
+@pytest.mark.parametrize("interval, expected_wait", [(300, 250.0), (600, 550.0)])
+def test_client_waits_for_persisted_minimum_interval(monkeypatch, interval, expected_wait) -> None:
     client = CourtJudgmentClient(
         "ASP.NET_SessionId=session; .ASPXAUTH=auth",
-        min_interval_seconds=600,
+        min_interval_seconds=interval,
         delay_jitter_seconds=120,
     )
     waited = []
@@ -150,7 +151,7 @@ def test_client_waits_for_persisted_minimum_interval(monkeypatch) -> None:
     finally:
         client.close()
 
-    assert waited == [550.0]
+    assert waited == [expected_wait]
 
 
 @pytest.mark.parametrize("value", [
@@ -162,7 +163,7 @@ def test_copied_cookie_label(value):
         assert client.session.cookies.get(".ASPXAUTH") == "auth"
 
 
-@pytest.mark.parametrize("interval", [0, 0.5, 599, float("nan"), float("inf")])
+@pytest.mark.parametrize("interval", [0, 0.5, 299.9, float("nan"), float("inf")])
 def test_short_or_invalid_intervals_rejected(interval):
     with pytest.raises(ValueError):
         CourtJudgmentClient("a=b", min_interval_seconds=interval)
