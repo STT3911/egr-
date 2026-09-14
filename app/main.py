@@ -4,6 +4,7 @@ from time import perf_counter
 from app.bitrix.admin import router as bitrix_admin_router
 from app.bitrix.install import router as bitrix_install_router
 from app.bitrix.webhook import router as bitrix_webhook_router
+from app.bitrix.security import BITRIX_FRAME_POLICY
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -57,8 +58,15 @@ async def security_headers_middleware(request: Request, call_next):
     """Add baseline browser/security headers to every response."""
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.url.path == "/bitrix" or request.url.path.startswith("/bitrix/"):
+        if "X-Frame-Options" in response.headers:
+            del response.headers["X-Frame-Options"]
+        response.headers.setdefault("Content-Security-Policy", BITRIX_FRAME_POLICY)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    else:
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     return response
 
