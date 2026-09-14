@@ -16,6 +16,7 @@ from app.bitrix.database import get_db
 from app.bitrix.models import AppSettings
 from app.bitrix.tenancy import find_settings, next_settings_id
 from app.bitrix.bitrix_client import BitrixClient, BitrixAPIError
+from app.bitrix.security import portal_domain
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,12 +29,14 @@ async def _check_is_admin_on_the_fly(domain: str, auth_id: str) -> bool:
     if not domain or not auth_id:
         return False
     try:
+        domain = portal_domain(domain)
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 f"https://{domain}/rest/user.admin.json",
                 json={"auth": auth_id}
             )
-            return resp.json().get("result", False)
+            resp.raise_for_status()
+            return resp.json().get("result") is True
     except Exception as e:
         logger.error(f"Error checking admin status: {e}")
         return False
@@ -69,6 +72,11 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
             status_code=400
         )
 
+    try:
+        domain = portal_domain(domain)
+    except ValueError as exc:
+        return templates.TemplateResponse("error.html", {"request": request, "message": str(exc)}, status_code=400)
+
     # 3. Проверка прав администратора
     is_admin = await _check_is_admin_on_the_fly(domain, auth_id)
     if not is_admin:
@@ -85,6 +93,7 @@ async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):
         app_cfg = AppSettings(id=await next_settings_id(db))
         db.add(app_cfg)
 
+    app_cfg.bitrix_domain = domain
     if member_id:
         app_cfg.bitrix_member_id = member_id
     app_cfg.access_token = auth_id
@@ -217,7 +226,11 @@ async def save_settings(request: Request, db: AsyncSession = Depends(get_db)):
         from app.bitrix.install import _bind_company_events
         await _bind_company_events(domain, auth_id)
     except Exception as e:
-        logger.error(f"Failed to ensure event subscription on save: {e}")
+        logger.error("Failed to ensure Bitrix event subscription on save: %s", type(e).__name__)
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "message": "Настройки сохранены, но обработчики Б24 не подключены. Проверьте права CRM и повторите сохранение.",
+        }, status_code=502)
 
     # Загружаем списки заново для отображения успешной страницы
     presets, userfields = [], []

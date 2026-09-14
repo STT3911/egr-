@@ -195,9 +195,8 @@
         {% block content %}{% endblock %}
     </div>
 
-    {% block extra_js %}{% endblock %}
-
     <script src="https://api.bitrix24.com/api/v1/"></script>
+    {% block extra_js %}{% endblock %}
     <script>
         if (typeof BX24 !== 'undefined') {
             BX24.init(function () {

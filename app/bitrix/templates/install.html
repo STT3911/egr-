@@ -10,17 +10,18 @@
 <h1 class="ui-page__title">Приложение установлено</h1>
 <div class="ui-alert ui-alert-success">Приложение успешно подключено к порталу {{ domain }}.</div>
 <div class="ui-section">
-    <p class="ui-meta">Сейчас откроются настройки автозаполнения реквизитов…</p>
+    <p class="ui-meta">Битрикс24 откроет основной адрес приложения, указанный в его карточке.</p>
+    <p class="ui-meta">Если открывается другой домен, исправьте в карточке приложения оба пути: установочный — <code>{{ request.url.scheme }}://{{ request.url.netloc }}/bitrix/install</code>, основной — <code>{{ request.url.scheme }}://{{ request.url.netloc }}/bitrix/admin/</code>.</p>
 </div>
-
-<script src="//api.bitrix24.com/api/v1/"></script>
+{% endif %}
+{% endblock %}
+{% block extra_js %}
+{% if not error %}
 <script>
     BX24.init(function () {
-        // Сообщаем Битриксу о завершении установки.
+        // Bitrix reopens its configured application handler with fresh auth.
+        // A plain redirect to /admin/ loses AUTH_ID and fails authorization.
         BX24.installFinish();
-        setTimeout(function () {
-            window.location.href = "/bitrix/admin/";
-        }, 2000);
     });
 </script>
 {% endif %}
