@@ -211,3 +211,53 @@ def test_blank_page_is_not_marked_success(monkeypatch):
         monkeypatch.setattr(client, "_request", lambda *args, **kwargs: response)
         with pytest.raises(RuntimeError):
             client.fetch_page(CourtSearchFilters("01.01.2025", "31.01.2025", 151), 2)
+
+
+# Text observed in the site's HTTP 200 response for Brest + TypeProc=368.
+EMPTY_NOTICE = "По Вашему запросу ничего не найдено. Попробуйте изменить параметры поиска."
+
+
+def stub_html_response(monkeypatch, client, body, status=200):
+    response = requests.Response()
+    response.status_code = status
+    response.url = court_module.BASE_URL + court_module.SEARCH_PATH
+    response.encoding = "utf-8"
+    response.headers["Content-Type"] = "text/html; charset=utf-8"
+    response._content = body.encode("utf-8")
+    monkeypatch.setattr(client.session, "request", lambda *args, **kwargs: response)
+    return response
+
+
+@pytest.mark.parametrize("body", [EMPTY_NOTICE, f"<div>{EMPTY_NOTICE}</div>",
+    "<p>По Вашему запросу ничего не найдено.\n Попробуйте изменить параметры поиска.</p>"])
+def test_explicit_empty_notice_completes_first_search_page(monkeypatch, body):
+    with CourtJudgmentClient("a=b") as client:
+        stub_html_response(monkeypatch, client, body)
+        rows, pages = client.fetch_page(CourtSearchFilters("01.01.1900", "15.09.2026", 151, 368), 1)
+        assert rows == []
+        # One completed search page, not one page containing court records.
+        assert pages == 1
+
+
+def test_empty_notice_on_later_page_is_not_silently_skipped(monkeypatch):
+    with CourtJudgmentClient("a=b") as client:
+        stub_html_response(monkeypatch, client, EMPTY_NOTICE)
+        with pytest.raises(RuntimeError):
+            client.fetch_page(CourtSearchFilters("01.01.1900", "15.09.2026", 151, 368), 2)
+
+
+@pytest.mark.parametrize("body", ["", "\r\n", "<p>Ошибка сервера</p>",
+    "<p>Проверьте даты</p>" + EMPTY_NOTICE, "<p>Войдите в систему</p>" + EMPTY_NOTICE])
+def test_unknown_first_page_is_not_treated_as_zero_results(monkeypatch, body):
+    with CourtJudgmentClient("a=b") as client:
+        stub_html_response(monkeypatch, client, body)
+        with pytest.raises(RuntimeError):
+            client.fetch_page(CourtSearchFilters("01.01.1900", "15.09.2026", 151, 368), 1)
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 500])
+def test_empty_notice_does_not_override_http_failure(monkeypatch, status):
+    with CourtJudgmentClient("a=b") as client:
+        stub_html_response(monkeypatch, client, EMPTY_NOTICE, status=status)
+        with pytest.raises((court_module.CourtAuthenticationError, requests.HTTPError)):
+            client.fetch_page(CourtSearchFilters("01.01.1900", "15.09.2026", 151, 368), 1)

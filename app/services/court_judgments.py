@@ -438,8 +438,17 @@ class CourtJudgmentClient:
             court_id=filters.court,
             source_page=page,
         )
-        if not records and (page > 1 or "searchResultPage" not in response.text):
-            raise RuntimeError("Empty or unrecognized court response; page was not completed")
+        if not records:
+            # A valid zero-result search uses a short notice without the usual
+            # results container. Accept only the observed full notice, on the
+            # first page; a vanished later page must not silently lose records.
+            empty_notice = (
+                response.status_code == 200
+                and " ".join(_clean_text(response.text).split())
+                == "По Вашему запросу ничего не найдено. Попробуйте изменить параметры поиска."
+            )
+            if page > 1 or ("searchResultPage" not in response.text and not empty_notice):
+                raise RuntimeError("Empty or unrecognized court response; page was not completed")
         return records, pages
 
     def download_document(self, url: str, destination: Path) -> Path:

@@ -73,3 +73,31 @@ def test_expired_cookie_keeps_completed_page(monkeypatch, tmp_path):
     client.fail = None
     assert exporter.main() == 0
     assert client.calls == [1, 2, 2, 3]
+
+
+def test_empty_court_is_checkpointed_and_skipped_after_resume(monkeypatch, tmp_path):
+    client, args = setup_run(monkeypatch, tmp_path)
+    client.fail = True
+
+    def fetch_page(self, filters, page):
+        self.calls.append((filters.court, page))
+        if filters.court == 151:
+            return [], 1
+        if self.fail:
+            raise CourtAuthenticationError("Expired")
+        return [record(page)], 3
+
+    monkeypatch.setattr(client, "fetch_page", fetch_page)
+    monkeypatch.setattr(sys, "argv", args + ["--court", "152", "--max-pages", "1"])
+    assert exporter.main() == 2
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert state["completed_pages"]["151"] == [1]
+    assert state["total_pages"]["151"] == 1
+    assert next(tmp_path.glob("*.partial")).read_text() == ""
+
+    client.fail = False
+    assert exporter.main() == 0
+    assert client.calls == [(151, 1), (152, 1), (152, 1)]
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert state["completed_pages"] == {"151": [1], "152": [1]}
+    assert len(next(tmp_path.glob("*.partial")).read_text().splitlines()) == 1

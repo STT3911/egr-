@@ -235,6 +235,14 @@ def main() -> int:
                         completed.add(1)
                         state["completed_pages"][str(filters.court)] = sorted(completed)
                         _save_state(state_path, state)
+                        print(json.dumps({
+                            "court": filters.court,
+                            "type_proc": filters.type_proc,
+                            "page": 1,
+                            "pages": total_pages,
+                            "records": len(first_records),
+                            "unique_total": len(seen),
+                        }, ensure_ascii=False), flush=True)
                 if args.max_pages is not None:
                     total_pages = min(total_pages, args.max_pages)
                 for page in range(1, total_pages + 1):
