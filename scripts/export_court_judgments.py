@@ -23,6 +23,10 @@ from app.services.court_judgments import (  # noqa: E402
     CourtJudgmentClient,
     iter_court_filters,
 )
+from app.services.court_export_alerts import (  # noqa: E402
+    notify_auth_failure,
+    telegram_configured,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,6 +67,11 @@ def parse_args() -> argparse.Namespace:
         help="Additional random delay in seconds (default: 0)",
     )
     parser.add_argument("--max-pages", type=int)
+    parser.add_argument(
+        "--notify-telegram",
+        action="store_true",
+        help="Alert on rejected court authentication; requires ALERT_TELEGRAM_BOT_TOKEN and ALERT_TELEGRAM_CHAT_ID",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -167,6 +176,10 @@ def main() -> int:
         raise ValueError("--delay-jitter must not be negative")
     if args.max_pages is not None and args.max_pages < 1:
         raise ValueError("--max-pages must be at least 1")
+    if args.notify_telegram and not telegram_configured():
+        raise ValueError(
+            "--notify-telegram requires ALERT_TELEGRAM_BOT_TOKEN and ALERT_TELEGRAM_CHAT_ID"
+        )
 
     court_ids: List[int] = args.courts or list(COURTS)
     cookie_header = _read_cookie(args)
@@ -279,6 +292,16 @@ def main() -> int:
     except CourtAuthenticationError as exc:
         print(str(exc), file=sys.stderr)
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
+        if args.notify_telegram:
+            delivered = notify_auth_failure(
+                court_id=filters.court,
+                type_proc=args.type_proc,
+                unique_total=len(seen),
+            )
+            print(
+                "Court Telegram notification: " + ("sent" if delivered else "NOT delivered"),
+                file=sys.stderr,
+            )
         return 2
 
     complete = all(

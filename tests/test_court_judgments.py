@@ -261,3 +261,34 @@ def test_empty_notice_does_not_override_http_failure(monkeypatch, status):
         stub_html_response(monkeypatch, client, EMPTY_NOTICE, status=status)
         with pytest.raises((court_module.CourtAuthenticationError, requests.HTTPError)):
             client.fetch_page(CourtSearchFilters("01.01.1900", "15.09.2026", 151, 368), 1)
+
+
+@pytest.mark.parametrize("location", [
+    "/Account/Login", "/ru/account/login", "/RU/ACCOUNT/LOGIN/?ReturnUrl=secret",
+    "https://service.court.gov.by/ru/account/login?ReturnUrl=/search",
+])
+def test_localized_login_redirect_is_auth_failure(monkeypatch, location):
+    with CourtJudgmentClient("a=b") as client:
+        response = stub_html_response(monkeypatch, client, "", status=302)
+        response.headers["Location"] = location
+        with pytest.raises(court_module.CourtAuthenticationError):
+            client.fetch_page(CourtSearchFilters("01.01.2025", "31.01.2025", 151), 1)
+
+
+@pytest.mark.parametrize("body", [
+    '<form action="/Account/Login">',
+    "<FORM method='post' ACTION = '/ru/account/login?ReturnUrl=%2F'>",
+])
+def test_login_form_is_auth_failure(monkeypatch, body):
+    with CourtJudgmentClient("a=b") as client:
+        stub_html_response(monkeypatch, client, body)
+        with pytest.raises(court_module.CourtAuthenticationError):
+            client.fetch_page(CourtSearchFilters("01.01.2025", "31.01.2025", 151), 1)
+
+
+def test_redirect_with_login_only_in_query_is_not_auth_failure(monkeypatch):
+    with CourtJudgmentClient("a=b") as client:
+        response = stub_html_response(monkeypatch, client, "", status=302)
+        response.headers["Location"] = "/maintenance?next=/Account/Login"
+        with pytest.raises(RuntimeError, match="Unexpected court redirect"):
+            client.fetch_page(CourtSearchFilters("01.01.2025", "31.01.2025", 151), 1)

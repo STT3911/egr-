@@ -2,6 +2,8 @@
 import json
 import sys
 
+import pytest
+
 from app.services.court_judgments import CourtAuthenticationError, CourtJudgment
 from scripts import export_court_judgments as exporter
 
@@ -101,3 +103,42 @@ def test_empty_court_is_checkpointed_and_skipped_after_resume(monkeypatch, tmp_p
     state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
     assert state["completed_pages"] == {"151": [1], "152": [1]}
     assert len(next(tmp_path.glob("*.partial")).read_text().splitlines()) == 1
+
+
+@pytest.mark.parametrize("delivered", [True, False])
+def test_auth_alert_preserves_exit_code_and_checkpoint(monkeypatch, tmp_path, delivered, capsys):
+    client, args = setup_run(monkeypatch, tmp_path)
+    client.fail = 2
+    alerts = []
+    monkeypatch.setattr(exporter, "telegram_configured", lambda: True)
+    def notify(**kwargs):
+        alerts.append(kwargs)
+        return delivered
+    monkeypatch.setattr(exporter, "notify_auth_failure", notify)
+    monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
+    assert exporter.main() == 2
+    assert alerts == [{"court_id": 151, "type_proc": 14, "unique_total": 1}]
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert state["completed_pages"] == {"151": [1]}
+    assert ("notification: sent" if delivered else "notification: NOT delivered") in capsys.readouterr().err
+    client.fail = None
+    assert exporter.main() == 0
+    assert len(alerts) == 1
+
+
+def test_alerts_are_opt_in(monkeypatch, tmp_path):
+    client, _ = setup_run(monkeypatch, tmp_path)
+    client.fail = 1
+    def unexpected(**kwargs):
+        pytest.fail("Alerts must not be sent without --notify-telegram")
+    monkeypatch.setattr(exporter, "notify_auth_failure", unexpected)
+    assert exporter.main() == 2
+
+
+def test_missing_alert_config_fails_before_court_request(monkeypatch, tmp_path):
+    client, args = setup_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(exporter, "telegram_configured", lambda: False)
+    monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
+    with pytest.raises(ValueError, match="ALERT_TELEGRAM_BOT_TOKEN"):
+        exporter.main()
+    assert client.calls == []

@@ -390,7 +390,7 @@ class CourtJudgmentClient:
         requires_auth = response.headers.get("REQUIRES_AUTH") == "1"
         if (
             response.status_code in (301, 302, 303, 307, 308)
-            and "/Account/Login" in location
+            and urlparse(location).path.lower().rstrip("/").endswith("/account/login")
         ) or requires_auth:
             raise CourtAuthenticationError(
                 "Court session expired; refresh the local cookie file and resume"
@@ -403,8 +403,12 @@ class CourtJudgmentClient:
         content_type = response.headers.get("Content-Type", "").lower()
         login_page = False
         if "text/html" in content_type:
-            login_page = "action=\"/Account/Login" in response.text
-        if "/Account/Login" in response.url or login_page:
+            actions = re.findall(r"<form\b[^>]*\baction\s*=\s*['\"]([^'\"]+)", response.text, re.I)
+            login_page = any(
+                urlparse(html.unescape(action)).path.lower().rstrip("/").endswith("/account/login")
+                for action in actions
+            )
+        if urlparse(response.url or "").path.lower().rstrip("/").endswith("/account/login") or login_page:
             raise CourtAuthenticationError(
                 "Court session expired; refresh the local cookie file and resume"
             )
