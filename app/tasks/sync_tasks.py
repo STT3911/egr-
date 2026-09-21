@@ -8,6 +8,7 @@ from datetime import date, timedelta, datetime
 from pathlib import Path
 
 import httpx
+import requests
 
 # Порог размера файла (байт): выше — парсим потоково через ijson, чтобы не грузить весь файл в память
 _LARGE_JSON_BYTES = 3 * 1024 * 1024  # 3 MB — почти все файлы дампа читаем стримингом (ijson), экономим память воркера
@@ -25,6 +26,7 @@ from app.services.egr_event_notifications import emit_egr_source_events
 from app.services.grp_client import GRPClient
 from app.services.gias_directory import GiasDirectoryService
 from app.services.gias_contracts import GiasContractService
+from app.services.source_fetch_state import select_due_unps, record_attempt
 from app.database.models import SystemState, RawCompanyData, GrpRawData, GrpTaxpayerData, Company, CompanyPlaceLocation
 from app.crud.grp import GrpCRUD
 from app.core.database import SessionLocal
@@ -896,45 +898,17 @@ def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
     max_retries = max(1, int(settings.GRP_FETCH_MAX_RETRIES))
     success_delay = max(0.0, float(settings.GRP_FETCH_SUCCESS_DELAY_SECONDS))
     retry_base_delay = max(0.5, float(settings.GRP_FETCH_RETRY_BASE_DELAY_SECONDS))
-    retry_before = datetime.now() - timedelta(minutes=max(1, int(settings.GRP_FETCH_RETRY_COOLDOWN_MINUTES)))
 
     db = SessionLocal()
     crud = GrpCRUD(db)
     try:
-        base_query = (
-            db.query(Company.unp)
-            .outerjoin(GrpTaxpayerData, Company.unp == GrpTaxpayerData.unp)
-            .outerjoin(GrpRawData, Company.unp == GrpRawData.unp)
-            .filter(GrpTaxpayerData.unp == None)
-            .filter(
-                or_(
-                    GrpRawData.unp == None,
-                    and_(
-                        or_(
-                            GrpRawData.http_status.in_([408, 425, 429]),
-                            and_(GrpRawData.http_status >= 500, GrpRawData.http_status < 600),
-                            and_(
-                                GrpRawData.http_status.is_(None),
-                                or_(
-                                    GrpRawData.last_error.ilike("%rate limit%"),
-                                    GrpRawData.last_error.ilike("%timeout%"),
-                                    GrpRawData.last_error.ilike("%server disconnected%"),
-                                    GrpRawData.last_error.ilike("%temporarily unavailable%"),
-                                ),
-                            ),
-                        ),
-                        or_(GrpRawData.updated_at == None, GrpRawData.updated_at <= retry_before),
-                    ),
-                )
-            )
-        )
-        unps = [r[0] for r in base_query.order_by(Company.unp.asc()).limit(limit).all()]
+        unps = select_due_unps(db, "grp", limit, settings.GRP_REFRESH_DAYS)
         if not unps:
             logger.info("grp_fetch_raw: nothing to do")
             return 0
 
         logger.info(
-            "grp_fetch_raw: fetching %s missing GRP rows (batch_size=%s, concurrency=%s)",
+            "grp_fetch_raw: fetching %s due GRP rows (batch_size=%s, concurrency=%s)",
             len(unps),
             batch_size,
             concurrency,
@@ -943,9 +917,10 @@ def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
         fetched = 0
         success_rows = 0
         error_rows = 0
+        empty_rows = 0
 
         async def _run():
-            nonlocal fetched, success_rows, error_rows
+            nonlocal fetched, success_rows, error_rows, empty_rows
             client = GRPClient()
             sem = asyncio.Semaphore(concurrency)
             try:
@@ -962,9 +937,17 @@ def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
                             http_status=status,
                             error=err,
                         )
+                        record_attempt(
+                            db, "grp", u, "success" if payload else "empty" if status == 404 else "error",
+                            refresh_days=settings.GRP_REFRESH_DAYS,
+                            empty_days=settings.GRP_EMPTY_RETRY_DAYS,
+                            error_minutes=settings.GRP_FETCH_RETRY_COOLDOWN_MINUTES,
+                        )
                         fetched += 1
                         if payload:
                             success_rows += 1
+                        elif status == 404:
+                            empty_rows += 1
                         else:
                             error_rows += 1
                     db.commit()
@@ -973,11 +956,14 @@ def grp_fetch_raw(limit: int | None = None, batch_size: int | None = None):
 
         asyncio.run(_run())
         logger.info(
-            "grp_fetch_raw: processed=%s success=%s errors=%s",
+            "grp_fetch_raw: processed=%s success=%s errors=%s empty=%s",
             fetched,
             success_rows,
             error_rows,
+            empty_rows,
         )
+        if fetched and error_rows == fetched:
+            raise RuntimeError("All GRP requests failed; good records and retry state preserved")
         return fetched
     finally:
         db.close()
@@ -1573,65 +1559,56 @@ def update_last_sync_date(db, new_date):
 
 @celery_app.task(time_limit=3600, soft_time_limit=3540)  # 1 ч
 def sync_daily_changes():
-    """Sync daily changes"""
+    """All official ByPeriod feeds, durable progress, immediate card processing."""
+    from app.core.database import engine
+    from app.services.egr_period_sync import PeriodSyncStore, run_period_sync
+    from datetime import timezone
+
     async def _run():
         db = SessionLocal()
         client = EGRClient(settings.EGR_API_URL)
+        aggregator = AggregatorService()
         try:
-            target_date = date.today() - timedelta(days=1)
-            current_cursor = get_last_sync_date(db)
+            async def refresh(unp):
+                payload = await client.get_full_company_history_strict(
+                    unp, delay=settings.EGR_PERIOD_REQUEST_DELAY,
+                )
+                raw = aggregator.save_raw_payload(unp, payload)
+                aggregator.process_raw_data(unp, raw_entry=raw, authoritative_addresses=True)
+                if aggregator.redis is not None:
+                    # A failed invalidation leaves this UNP pending for retry.
+                    aggregator.redis.delete(f"company_profile_v2:{unp}")
 
-            if current_cursor >= target_date:
-                logger.info(f"Already synced up to {current_cursor}")
-                return
-
-            process_date = current_cursor + timedelta(days=1)
-            total_fetched = 0
-            while process_date <= target_date:
-                d_str = process_date.strftime("%d.%m.%Y")
-                unps = set()
-
-                # Rate limit delay
-                await asyncio.sleep(0.5)
-                base = await client.get_base_info_by_period(d_str, d_str)
-                for i in base:
-                    unp = i.get("ngrn") or i.get("vunp")
-                    if unp:
-                        unps.add(int(unp))
-
-                await asyncio.sleep(0.5)
-                events = await client.get_events_by_period(d_str, d_str)
-                for e in events:
-                    unp = e.get("ngrn") or e.get("vunp")
-                    if unp:
-                        unp_int = int(unp)
-                        unps.add(unp_int)
-                        emit_egr_source_events(
-                            db,
-                            unp_int,
-                            [e],
-                            fallback_date=process_date,
-                        )
-
-                logger.info(f"Found {len(unps)} companies for {d_str} (fetch raw)")
-                fetched = 0
-                for unp in sorted(unps):
-                    egr_fetch_raw_one.delay(unp)
-                    fetched += 1
-
-                update_last_sync_date(db, process_date)
-                total_fetched += fetched
-                logger.info(f"Synced EGR daily changes for {d_str}: fetched {fetched} raw cards")
-                process_date += timedelta(days=1)
-
-            if total_fetched:
-                egr_process_raw.delay(1000)
-
+            result = await run_period_sync(
+                PeriodSyncStore(db), client, refresh,
+                target=datetime.now(timezone(timedelta(hours=3))).date() - timedelta(days=1),
+                bootstrap_days=settings.EGR_PERIOD_BOOTSTRAP_DAYS,
+                overlap_days=settings.EGR_PERIOD_OVERLAP_DAYS,
+                max_companies=settings.EGR_PERIOD_BATCH_SIZE,
+                max_seconds=settings.EGR_PERIOD_MAX_SECONDS,
+                delay=settings.EGR_PERIOD_REQUEST_DELAY,
+                row_limit=settings.EGR_PERIOD_ROW_LIMIT,
+            )
+            logger.info("EGR ByPeriod sync result: %s", result)
+            return result
         finally:
             await client.close()
+            await aggregator.egr_client.close()
+            if aggregator.mobile_client:
+                await aggregator.mobile_client.close()
+            aggregator.close()
             db.close()
 
-    asyncio.run(_run())
+    # Dedicated connection + transaction-scoped lock: processing commits in
+    # other sessions cannot release it or leak a session lock into the pool.
+    with engine.begin() as lock_connection:
+        acquired = lock_connection.execute(
+            text("SELECT pg_try_advisory_xact_lock(hashtext(:name))"),
+            {"name": "egr:period_sync_v2"},
+        ).scalar()
+        if not acquired:
+            return {"status": "already_running"}
+        return asyncio.run(_run())
 
 
 @celery_app.task
@@ -1696,7 +1673,7 @@ def update_reference_tables():
 def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
     """
     Фоновая синхронизация адреса placeLocation (Mobile API) для компаний.
-    Берём UNP, по которым нет записи в egr_company_place_locations, тянем
+    Берём новые, устаревшие и доступные для повторной проверки UNP, тянем
     https://egr.gov.by/egrmobile/api/v1/extracts/placeLocation?pan={unp}
     и сохраняем raw_json + address.
     """
@@ -1704,25 +1681,17 @@ def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
         db = SessionLocal()
         mobile = MobileEGRClient(settings.EGR_MOBILE_API_URL)
         try:
-            rows = db.execute(text("""
-                SELECT c.unp
-                FROM egr_companies c
-                LEFT JOIN egr_company_place_locations pl ON pl.unp = c.unp
-                WHERE pl.unp IS NULL
-                ORDER BY c.unp
-                LIMIT :limit
-            """), {"limit": batch_size}).fetchall()
-            unps = [int(r[0]) for r in rows if r and r[0] is not None]
+            unps = select_due_unps(db, "place_locations", batch_size, settings.PLACE_LOCATION_REFRESH_DAYS)
             if not unps:
                 logger.info("egr_sync_place_locations: nothing to fetch")
                 return 0
 
             sem = asyncio.Semaphore(max(1, int(parallel)))
-            now = datetime.now()
+            now = datetime.utcnow()
 
             async def _fetch_one(unp: int):
                 async with sem:
-                    payload = await mobile.get_place_location(str(unp))
+                    payload = await mobile.get_place_location(str(unp), strict=True)
                     addr = _extract_place_location_address(payload)
                     if isinstance(payload, str):
                         payload_json = {"address": payload}
@@ -1732,13 +1701,24 @@ def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
 
             results = await asyncio.gather(*[_fetch_one(u) for u in unps], return_exceptions=True)
 
-            saved = 0
-            for res in results:
+            saved = empty = errors = 0
+            for requested_unp, res in zip(unps, results):
+                status = "error" if isinstance(res, Exception) else "empty" if res[1] is None else "success"
+                record_attempt(
+                    db, "place_locations", requested_unp, status,
+                    refresh_days=settings.PLACE_LOCATION_REFRESH_DAYS,
+                    empty_days=settings.PLACE_LOCATION_EMPTY_RETRY_DAYS,
+                    error_minutes=settings.PLACE_LOCATION_ERROR_RETRY_MINUTES,
+                    now=now,
+                )
                 if isinstance(res, Exception):
+                    errors += 1
                     continue
                 unp, payload, addr = res
-                # Если API временно падает и вернул None — просто пропускаем (попробуем позже)
+                # 204/404 are negative observations, not business records.
+                # Keep any previously known good address on empty/error responses.
                 if payload is None:
+                    empty += 1
                     continue
                 # Upsert
                 db.execute(text("""
@@ -1765,7 +1745,9 @@ def egr_sync_place_locations(self, batch_size: int = 500, parallel: int = 20):
                 saved += 1
 
             db.commit()
-            logger.info("egr_sync_place_locations: saved %s/%s", saved, len(unps))
+            logger.info("egr_sync_place_locations: saved=%s empty=%s errors=%s requested=%s", saved, empty, errors, len(unps))
+            if errors == len(unps):
+                raise RuntimeError("All Mobile EGR address requests failed; retry state preserved")
             return saved
         finally:
             try:
@@ -1861,7 +1843,7 @@ _LOAD_JSON_SOFT_TIME_LIMIT = _LOAD_JSON_TASK_TIME_LIMIT - 600  # минус 10 �
 
 
 @celery_app.task(bind=True, time_limit=_LOAD_JSON_TASK_TIME_LIMIT, soft_time_limit=_LOAD_JSON_SOFT_TIME_LIMIT)
-def load_companies_from_json(self, auto_process: bool = True):
+def load_companies_from_json(self, auto_process: bool = True, only_file: str | None = None):
     """
     Load companies from JSON files into DB with automatic processing.
     
@@ -1893,6 +1875,13 @@ def load_companies_from_json(self, auto_process: bool = True):
             for name in os.listdir(data_dir)
             if name.lower().endswith(".json")
         ]
+        if only_file is not None:
+            target = Path(only_file).resolve()
+            if target.parent != Path(data_dir).resolve() or target.suffix.lower() != ".json":
+                raise ValueError("Single-file import must stay inside data/egr_json_full")
+            if not target.is_file():
+                raise FileNotFoundError(target)
+            json_files = [str(target)]
 
         logger.info(f"📁 Found {len(json_files)} JSON files to process")
 
@@ -2109,6 +2098,8 @@ def load_companies_from_json(self, auto_process: bool = True):
             logger.warning(f"   ❌ Failed files ({len(failed_files)}):")
             for name, err in failed_files:
                 logger.warning(f"      - {name}: {err}")
+            if only_file:
+                raise RuntimeError("EGR snapshot import incomplete; history cursor not advanced")
         
         if needs_enrich_count > 0:
             logger.info(f"")
@@ -2123,99 +2114,17 @@ def load_companies_from_json(self, auto_process: bool = True):
 
 @celery_app.task
 def fetch_period_to_json(start_date: str, end_date: str, output_dir: str = "data/egr_json_full"):
-    """
-    Fetch companies for period from API and save to JSON with FULL data.
-    
-    This task:
-    1. Gets list of UNPs from getBaseInfoByPeriod
-    2. Fetches full company history for each UNP (names, addresses, ved)
-    3. Saves to JSON file with complete data
-    4. JSON can then be quickly loaded without API calls
-    
-    Args:
-        start_date: Start date in DD.MM.YYYY format
-        end_date: End date in DD.MM.YYYY format
-        output_dir: Directory to save JSON files
-    
-    Returns:
-        Number of companies saved to JSON
-    """
-    async def _fetch():
+    """Stream bounded daily batches to an atomic snapshot; fail before HTTP if unwritable."""
+    from app.services.egr_snapshot import export_snapshot
+
+    async def run():
         client = EGRClient(settings.EGR_API_URL)
-        companies_data = []
-        
         try:
-            # Step 1: Get list of companies for period
-            logger.info(f"📥 Fetching companies for period {start_date} - {end_date}")
-            base_items = await client.get_base_info_by_period(start_date, end_date)
-            logger.info(f"✅ Found {len(base_items)} companies")
-            
-            # Get unique UNPs
-            unps = set()
-            for item in base_items:
-                unp = item.get("ngrn") or item.get("vunp")
-                if unp:
-                    unps.add(unp)
-            
-            logger.info(f"📋 Total unique UNPs: {len(unps)}")
-            
-            # Step 2: Fetch full data for each company
-            logger.info(f"📥 Fetching full data for {len(unps)} companies...")
-            
-            batch_size = 100
-            unp_list = list(unps)
-            
-            for batch_start in range(0, len(unp_list), batch_size):
-                batch = unp_list[batch_start:batch_start + batch_size]
-                batch_num = batch_start // batch_size + 1
-                total_batches = (len(unp_list) + batch_size - 1) // batch_size
-                
-                logger.info(f"   Batch {batch_num}/{total_batches}: {len(batch)} companies...")
-                
-                # Parallel fetch
-                tasks = [client.get_full_company_history(unp) for unp in batch]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                for unp, result in zip(batch, results):
-                    if isinstance(result, Exception):
-                        logger.warning(f"Failed to fetch UNP {unp}: {result}")
-                        continue
-                    
-                    if result:
-                        companies_data.append({
-                            "unp": unp,
-                            "base_info": result.get("base_info", {}),
-                            "names": result.get("names", []),
-                            "addresses": result.get("addresses", []),
-                            "ved": result.get("ved", [])
-                        })
-                
-                # Rate limiting
-                if batch_start + batch_size < len(unp_list):
-                    await asyncio.sleep(1)
-            
-            logger.info(f"✅ Fetched full data for {len(companies_data)} companies")
-            
-            # Step 3: Save to JSON file
-            os.makedirs(output_dir, exist_ok=True)
-            filename = f"{start_date.replace('.', '-')}_to_{end_date.replace('.', '-')}.json"
-            filepath = os.path.join(output_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(companies_data, f, ensure_ascii=False)
-            
-            logger.info(f"✅ Saved to {filepath}")
-            logger.info(f"   File size: {os.path.getsize(filepath) / 1024 / 1024:.2f} MB")
-            
-            return len(companies_data)
-            
-        except Exception as e:
-            logger.error(f"❌ Error fetching period: {e}")
-            raise
+            return await export_snapshot(client, start_date, end_date, output_dir,
+                                         min_free_mb=settings.EGR_EXPORT_MIN_FREE_MB)
         finally:
             await client.close()
-    
-    return asyncio.run(_fetch())
+    return asyncio.run(run())
 
 
 @celery_app.task
@@ -2238,7 +2147,8 @@ def auto_fetch_and_load(start_date: str, end_date: str):
     
     # Step 2: Load from JSON
     logger.info(f"📂 Step 2/2: Loading from JSON to DB...")
-    processed = load_companies_from_json(auto_process=True)
+    filename = f"{start_date.replace('.', '-')}_to_{end_date.replace('.', '-')}.json"
+    processed = load_companies_from_json(auto_process=True, only_file=str(Path("data/egr_json_full") / filename))
     logger.info(f"✅ Processed {processed} companies")
     
     logger.info(f"🎉 AUTO FETCH AND LOAD COMPLETE!")
@@ -2286,76 +2196,40 @@ def auto_fetch_recent_to_json_and_db(days_back: int = 3):
 
 
 @celery_app.task(time_limit=43200, soft_time_limit=42900)  # 12 ч
-def auto_fetch_historical_data(start_year: int = 1900, period_months: int = 12):
+def auto_fetch_historical_data(start_year: int = 1900, period_months: int = 12, max_days: int = 1):
+    """Resume a bounded historical import, one day per atomic file.
+
+    period_months is retained for old queued messages, but never controls an
+    in-memory multi-year batch. The automatic schedule is opt-in.
     """
-    Automatically fetch ALL historical data from start_year to today.
-    
-    Loads data in periods (default: 1 year at a time) to avoid overwhelming the system.
-    
-    Args:
-        start_year: Year to start from (default: 1900)
-        period_months: Number of months per period (default: 12 = 1 year)
-    
-    Returns:
-        Total number of companies processed
-    """
-    from dateutil.relativedelta import relativedelta
-    
-    logger.info("")
-    logger.info("╔═════════════════════════════════════════════════════════════╗")
-    logger.info(f"║  HISTORICAL LOAD: {start_year} → {date.today().year}                    ║")
-    logger.info("╚═════════════════════════════════════════════════════════════╝")
-    logger.info("")
-    
-    start_date = date(start_year, 1, 1)
-    end_date = date.today()
-    
-    current_date = start_date
-    total_processed = 0
-    period_count = 0
-    
-    try:
-        while current_date < end_date:
-            # Calculate period end
-            period_end = current_date + relativedelta(months=period_months)
-            if period_end > end_date:
-                period_end = end_date
-            
-            period_count += 1
-            start_str = current_date.strftime("%d.%m.%Y")
-            end_str = period_end.strftime("%d.%m.%Y")
-            
-            logger.info(f"")
-            logger.info(f"📅 Period {period_count}: {start_str} - {end_str}")
-            logger.info(f"")
-            
-            try:
-                # Fetch and load this period
-                result = auto_fetch_and_load(start_str, end_str)
-                total_processed += result
-                
-                logger.info(f"✅ Period {period_count} complete: {result} companies")
-                
-            except Exception as e:
-                logger.error(f"❌ Period {period_count} failed: {e}")
-                # Continue with next period even if this one failed
-            
-            # Move to next period
-            current_date = period_end + timedelta(days=1)
-        
-        logger.info("")
-        logger.info("╔═════════════════════════════════════════════════════════════╗")
-        logger.info(f"║  HISTORICAL LOAD COMPLETE                                   ║")
-        logger.info(f"║  Total: {total_processed} companies processed                      ║")
-        logger.info(f"║  Periods: {period_count}                                           ║")
-        logger.info("╚═════════════════════════════════════════════════════════════╝")
-        logger.info("")
-        
-        return total_processed
-        
-    except Exception as e:
-        logger.error(f"❌ HISTORICAL LOAD FAILED: {e}")
-        raise
+    from app.core.database import engine
+    if not 1900 <= start_year <= date.today().year or max_days < 1 or period_months < 1:
+        raise ValueError("Invalid historical EGR bounds")
+    key = f"egr_history_next_date:{start_year}"
+    with engine.begin() as lock:
+        if not lock.execute(text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                            {"key": "egr:historical"}).scalar():
+            return {"status": "already_running"}
+        with SessionLocal() as db:
+            state = db.query(SystemState).filter(SystemState.key == key).first()
+            current = date.fromisoformat(state.value) if state else date(start_year, 1, 1)
+            processed = 0
+            days = 0
+            while current < date.today() and days < max_days:
+                day = current.strftime("%d.%m.%Y")
+                # No swallowing permission/network/import failures and no
+                # progress commit before this day's complete import.
+                processed += auto_fetch_and_load(day, day)
+                current += timedelta(days=1)
+                days += 1
+                if state is None:
+                    state = SystemState(key=key, value=current.isoformat())
+                    db.add(state)
+                else:
+                    state.value = current.isoformat()
+                db.commit()
+            return {"status": "complete" if current >= date.today() else "pending",
+                    "processed": processed, "days": days, "next_date": current.isoformat()}
 
 
 @celery_app.task
@@ -2668,8 +2542,9 @@ def sync_gias_directory_registries():
         db.close()
 
 
-@celery_app.task(time_limit=14400, soft_time_limit=14100)
+@celery_app.task(bind=True, max_retries=3, time_limit=14400, soft_time_limit=14100)
 def sync_gias_contract_index(
+    self,
     full: bool = False,
     max_pages: int | None = None,
 ):
@@ -2685,6 +2560,15 @@ def sync_gias_contract_index(
         result = service.sync_index(full=full, max_pages=max_pages)
         logger.info("✅ GIAS contract index sync completed: %s", result)
         return result
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        # The service commits only successful pages. Preserve its cursor and
+        # yield the worker slot between bounded retries (5, 10, 20 minutes).
+        db.rollback()
+        delay = min(1200, 300 * 2 ** self.request.retries)
+        # Beat jobs expire after 110 seconds. Do not inherit that deadline:
+        # the deferred retry would otherwise expire before it can run.
+        raise self.retry(exc=exc, countdown=delay, expires=delay + 600, args=(),
+                         kwargs={"full": False, "max_pages": max_pages})
     finally:
         service.close()
         db.close()

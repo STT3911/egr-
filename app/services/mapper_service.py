@@ -2,6 +2,7 @@
 from typing import Dict, Any
 from datetime import datetime
 from app.core.logger import get_logger
+from app.services.egr_contract import egr_date, lower_keys, period_fields, map_event
 
 logger = get_logger("mapper")
 
@@ -12,11 +13,18 @@ class CompanyMapper:
     # Mapping text statuses from Mobile API to codes (nsi00219)
     STATUS_MAPPING = {
         "Действующий": 1,
-        "Ликвидация": 2,
-        "В процессе ликвидации": 2,
-        "Прекращение деятельности": 3,
+        "Ликвидация": 3,
+        "В процессе ликвидации": 3,
+        "Находится в процессе ликвидации": 3,
         "Банкротство": 4,
-        "Исключен": 5
+        "Процедура банкротства": 4,
+        "Исключен": 2,
+        "Исключен из ЕГР": 2,
+        "Прекращение деятельности в результате реорганизации": 5,
+        "Приостановлена деятельность": 10,
+        "Государственная регистрация признана недействительной": 11,
+        "Регистрация аннулирована": 12,
+        "Двойная регистрация": 13,
     }
 
     def map_to_db_structure(self, unp: int, raw_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -165,7 +173,13 @@ class CompanyMapper:
 
     def _map_legacy_api(self, unp: int, egr_data: Dict[str, Any]) -> Dict[str, Any]:
         """Parse response from Legacy API (nested JSON)"""
-        base_info = egr_data.get("base_info", {})
+        egr_data = lower_keys(egr_data)
+        base_info = egr_data.get("base_info") or {}
+        # Optional references may be JSON null rather than absent.
+        for obj in [base_info, *egr_data.get("addresses", []), *egr_data.get("ved", [])]:
+            for key in list(obj):
+                if key.startswith("nsi") and obj[key] is None:
+                    obj[key] = {}
         
         company_data = {
             "unp": unp,
@@ -174,10 +188,10 @@ class CompanyMapper:
             "liquidation_date": self._parse_iso_date(base_info.get("dto")),  # FIXED: Use ISO parser
             "liquidation_reason_id": base_info.get("nsi00228", {}).get("nkslkv"),
             "liquidation_decision_no": base_info.get("vnrlkv"),
-            "liquidation_authority_id": base_info.get("nsi00212LKV", {}).get("nkuz"),
+            "liquidation_authority_id": (base_info.get("nsi00212lkv") or {}).get("nkuz"),
             "creation_method_id": base_info.get("nsi00208", {}).get("nkscrt"),  # ADDED
             "creation_decision_no": base_info.get("vnrcrt"),  # ADDED
-            "creation_authority_id": base_info.get("nsi00212CRT", {}).get("nkuz"),  # ADDED
+            "creation_authority_id": (base_info.get("nsi00212crt") or {}).get("nkuz"),
             "current_authority_id": base_info.get("nsi00212", {}).get("nkuz"),  # ADDED
             "entity_type_id": base_info.get("nsi00211", {}).get("nkvob"),  # ADDED: Critical fix!
         }
@@ -198,6 +212,10 @@ class CompanyMapper:
             if region:
                 address_parts.append(region)
 
+            district = addr.get("vdistrict")
+            if district and (not addr.get("vnp") or str(addr.get("vnp")).casefold() not in ("минск", "г.минск")):
+                address_parts.append(district)
+
             # City/District
             city = addr.get("vnp")
             if city:
@@ -217,15 +235,21 @@ class CompanyMapper:
             if house:
                 address_parts.append(f"д. {house}")
 
+            building = addr.get("vkorp")
+            if building:
+                address_parts.append(f"корп. {building}")
+
             # Apartment/Office
             apartment = addr.get("vpom")
             if apartment:
-                # Check if it's residential or office
-                room_type = addr.get("nsi00234", {}).get("vnvpom")
-                if room_type and "нежилое" in room_type.lower():
-                    address_parts.append(f"оф. {apartment}")
-                else:
-                    address_parts.append(f"кв. {apartment}")
+                # TSI00227 is the actual type (пом./оф./кв.), not TSI00234's
+                # residential/non-residential category. Unknown is simply пом.
+                room_type = (addr.get("nsi00227") or {}).get("vntpomk") or "пом."
+                address_parts.append(f"{room_type} {apartment}")
+
+            remarks = addr.get("vadrprim")
+            if remarks and str(remarks).strip():
+                address_parts.append(str(remarks).strip())
 
             full_address = ", ".join(address_parts) if address_parts else None
 
@@ -233,9 +257,8 @@ class CompanyMapper:
                 "full_address": full_address,
                 "postal_code": addr.get("nindex"),
                 "region": addr.get("vregion"),
-                "district": addr.get("nsi00202", {}).get("vnsfull"),  # More detailed district info
-                "valid_from": self._parse_iso_date(addr.get("dfrom")),  # FIXED: Use ISO parser
-                "valid_to": self._parse_iso_date(addr.get("dto")),  # FIXED: Use ISO parser
+                "district": addr.get("vdistrict") or (addr.get("nsi00202") or {}).get("vnsfull"),
+                **period_fields(addr),
             })
         
         # Parse names
@@ -248,8 +271,7 @@ class CompanyMapper:
                     "full_name_ru": name.get("vnaim"),
                     "short_name_ru": name.get("vn"),  # Corrected from vnaimk
                     "full_name_by": name.get("vnaimb"),  # Corrected from vnbel
-                    "valid_from": self._parse_iso_date(name.get("dfrom")),  # FIXED: Use ISO parser
-                    "valid_to": self._parse_iso_date(name.get("dto")),  # FIXED: Use ISO parser
+                    **period_fields(name),
                 })
             else:
                 # IP FIO - EGR API provides full name in 'vfio' field
@@ -261,9 +283,8 @@ class CompanyMapper:
                 names_data.append({
                     "full_name_ru": full_name,
                     "short_name_ru": full_name,
-                    "full_name_by": None,
-                    "valid_from": self._parse_iso_date(name.get("dfrom")),  # FIXED: Use ISO parser
-                    "valid_to": self._parse_iso_date(name.get("dto")),  # FIXED: Use ISO parser
+                    "full_name_by": name.get("vfiob"),
+                    **period_fields(name),
                 })
 
         if not names_data:
@@ -290,8 +311,7 @@ class CompanyMapper:
                     "full_name_ru": fallback_full,
                     "short_name_ru": fallback_short or fallback_full,
                     "full_name_by": fallback_by,
-                    "valid_from": self._parse_iso_date(base_info.get("dfrom")),  # FIXED: Use ISO parser
-                    "valid_to": self._parse_iso_date(base_info.get("dto")),  # FIXED: Use ISO parser
+                    **period_fields(base_info),
                 })
         
         # Parse VED
@@ -306,8 +326,7 @@ class CompanyMapper:
                 ved_data.append({
                     "ved_code": ved_code,
                     "ved_name": ved_name,
-                    "valid_from": self._parse_iso_date(ved.get("dfrom")),  # FIXED: Use ISO parser
-                    "valid_to": self._parse_iso_date(ved.get("dto")),  # FIXED: Use ISO parser
+                    **period_fields(ved),
                 })
 
         # Parse contacts from addresses (Legacy API stores contacts in address records)
@@ -330,13 +349,13 @@ class CompanyMapper:
                 if email:  # Filter out empty emails
                     contact_info["email"] = email
 
+            for source, target in (("vsite", "website"), ("vfax", "fax")):
+                if addr.get(source) and str(addr[source]).strip():
+                    contact_info[target] = str(addr[source]).strip()
             # Only add contact if we have at least one field
             if contact_info:  # This checks if dict has any items
                 contact_info.update({
-                    "website": None,  # Legacy API doesn't have website
-                    "fax": None,      # Legacy API doesn't have fax
-                    "valid_from": self._parse_iso_date(addr.get("dfrom")),  # FIXED: Use ISO parser
-                    "valid_to": self._parse_iso_date(addr.get("dto")),  # FIXED: Use ISO parser
+                    **period_fields(addr),
                 })
                 contacts_data.append(contact_info)
 
@@ -346,7 +365,8 @@ class CompanyMapper:
             "addresses": addresses_data,
             "names": names_data,
             "ved": ved_data,
-            "contacts": contacts_data
+            "contacts": contacts_data,
+            "events": [map_event(row) for row in egr_data.get("events", [])],
         }
 
     def _get_empty_structure(self, unp: int) -> Dict:
@@ -370,11 +390,4 @@ class CompanyMapper:
 
     def _parse_iso_date(self, date_str: str) -> Any:
         """Parse ISO 8601: 2011-10-12T00:00:00.000+03:00"""
-        if not date_str:
-            return None
-        try:
-            # Take only date part YYYY-MM-DD
-            return datetime.strptime(date_str[:10], "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            return None
-
+        return egr_date(date_str)

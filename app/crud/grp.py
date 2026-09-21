@@ -155,6 +155,7 @@ class GrpCRUD:
             "status_code": g("CKODSOST", "ckodsost"),
             "status_date": _parse_date(g("DLIKV", "dlikv")),
             "address": format_grp_address(g("VPADRES", "vpadres")),
+            "fetched_at": raw_record.updated_at,
             "updated_at": datetime.now(),
         }
         stmt = pg_insert(GrpTaxpayerData).values(**values)

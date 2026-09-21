@@ -10,7 +10,7 @@ import random
 import re
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -41,7 +41,8 @@ except ImportError:
         handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         logger.addHandler(handler)
 
-BASE = "https://www.portal.nalog.gov.by"
+# Current public debtor frontend (the former www host redirects here).
+BASE = "https://lkfl.portal.nalog.gov.by"
 REFERER = f"{BASE}/debtor/"
 MODULE_BASE = f"{BASE}/debtor/debtoa/"
 DISPATCH_URL = f"{BASE}/debtor/dispatch/SearchDataAction"
@@ -70,6 +71,10 @@ RGN_LIST = ["100", "200", "300", "400", "500", "600", "700"]
 # --- GWT-RPC parser ---
 class GwtRpcParseError(RuntimeError):
     pass
+
+
+class EmptyDebtSliceError(ValueError):
+    """The source returned no records; never replace a good file or DB slice."""
 
 
 @dataclass
@@ -214,12 +219,16 @@ def extract_items(resp_text: str) -> list[dict[str, Any]]:
     if t.startswith("{") or t.startswith("["):
         obj = json.loads(t)
         if isinstance(obj, list):
-            return [x for x in obj if isinstance(x, dict)]
+            if any(not isinstance(x, dict) for x in obj):
+                raise GwtRpcParseError("Debt rows must be objects")
+            return obj
         for k in ("items", "data", "result", "rows"):
             v = obj.get(k)
             if isinstance(v, list):
-                return [x for x in v if isinstance(x, dict)]
-        return []
+                if any(not isinstance(x, dict) for x in v):
+                    raise GwtRpcParseError("Debt rows must be objects")
+                return v
+        raise GwtRpcParseError("JSON response has no recognized items list")
     outer = parse_gwt_rpc(t)
     if not isinstance(outer, list) or len(outer) < 3:
         raise GwtRpcParseError("Unexpected outer format")
@@ -230,7 +239,9 @@ def extract_items(resp_text: str) -> list[dict[str, Any]]:
     if not isinstance(data_str, str):
         raise GwtRpcParseError("Data is not a string")
     items = json.loads(data_str)
-    return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
+    if not isinstance(items, list) or any(not isinstance(x, dict) for x in items):
+        raise GwtRpcParseError("Debt data must be a list of objects")
+    return items
 
 
 def get_permutation(session: requests.Session, timeout: int = 30) -> str:
@@ -355,6 +366,11 @@ def _post_with_redirect_handling(
             return response
         redirected = requests.compat.urljoin(url, location)
         target = requests.utils.urlparse(redirected)
+        if (target.scheme != "https" or target.hostname not in {
+            "www.portal.nalog.gov.by", "lkfl.portal.nalog.gov.by", "portal.nalog.gov.by",
+        } or target.path != "/debtor/dispatch/SearchDataAction" or target.username or target.password
+                or target.port not in (None, 443)):
+            raise GwtRpcParseError("Unexpected debtor redirect; request stopped")
         target_base = f"{target.scheme}://{target.netloc}"
         redirected_response = session.post(
             redirected,
@@ -364,6 +380,8 @@ def _post_with_redirect_handling(
             headers=_headers_for_base(target_base),
         )
         redirected_response.raise_for_status()
+        if redirected_response.is_redirect or redirected_response.is_permanent_redirect:
+            raise GwtRpcParseError("Repeated debtor redirect; request stopped")
         return redirected_response
     response.raise_for_status()
     return response
@@ -472,7 +490,9 @@ def process_one_date(
 ) -> None:
     out_path = out_dir / f"{d.isoformat()}.json"
     if skip_existing and out_path.exists():
-        return
+        existing = json.loads(out_path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict) and existing.get("items"):
+            return
     session = make_session(
         perm=perm,
         jsessionid=jsessionid,
@@ -481,35 +501,36 @@ def process_one_date(
     dt_str = ddmmyyyy(d)
     out_items: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
-    for rgn in RGN_LIST:
-        rows = fetch_all_for_date_one_region(
-            session=session,
-            perm=perm,
-            dt_str=dt_str,
-            rgn=rgn,
-            timeout=timeout,
-            retries=retries,
-            errors_dir=errors_dir,
-        )
-        for row in rows:
-            unp = str(row.get("unp") or "").strip()
-            imns_code = extract_imns_code(row)
-            imns_name = extract_imns_name(row)
-            dt_val = str((row.get("dt") or dt_str)).strip()
-            dgash_val = normalize_dgash(row.get("dgash"))
-            key = (unp, imns_code, dt_val, dgash_val)
-            if key in seen:
-                continue
-            seen.add(key)
-            out_items.append({
-                "unp": unp,
-                "imns_code": imns_code,
-                "imns_name": imns_name,
-                "debt_date": dt_val,
-                "repayment_date": dgash_val,
-            })
-        time.sleep(random.uniform(sleep_min, sleep_max))
+    region_counts = {}
+    with session:
+        for rgn in RGN_LIST:
+            rows = fetch_all_for_date_one_region(
+                session=session, perm=perm, dt_str=dt_str, rgn=rgn,
+                timeout=timeout, retries=retries, errors_dir=errors_dir,
+            )
+            region_counts[rgn] = len(rows)
+            logger.info("Nalog debt: slice=%s region=%s rows=%s", d, rgn, len(rows))
+            for row in rows:
+                unp = str(row.get("unp") or "").strip()
+                if not re.fullmatch(r"[0-9]{9}", unp):
+                    raise GwtRpcParseError("Debt row has an invalid UNP; snapshot not replaced")
+                imns_code = extract_imns_code(row)
+                imns_name = extract_imns_name(row)
+                dt_val = str((row.get("dt") or dt_str)).strip()
+                dgash_val = normalize_dgash(row.get("dgash"))
+                key = (unp, imns_code, dt_val, dgash_val)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out_items.append({
+                    "unp": unp, "imns_code": imns_code, "imns_name": imns_name,
+                    "debt_date": dt_val, "repayment_date": dgash_val,
+                })
+            time.sleep(random.uniform(sleep_min, sleep_max))
+    if not out_items:
+        raise EmptyDebtSliceError(f"Debt slice {d.isoformat()} is empty; existing files and data preserved")
     payload = build_date_json(d, out_items)
+    payload.update(fetched_at=datetime.utcnow().isoformat(), region_counts=region_counts)
     if overwrite or (not out_path.exists()):
         atomic_write_json(out_path, payload)
 
@@ -529,6 +550,7 @@ def run_fetcher(
     sleep_min: float = 0.10,
     sleep_max: float = 0.30,
     mode: str = "range",
+    allow_empty_slices: bool = True,
 ) -> Path:
     """Р вЂ”Р В°Р С—РЎС“РЎРѓР С” РЎРѓР В±Р С•РЎР‚Р В° Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦: Р Р†РЎвЂ№Р С–РЎР‚РЎС“Р В·Р С”Р В° Р Р† JSON Р С—Р С• Р Т‘Р В°РЎвЂљР В°Р С."""
     out_dir = out_dir or Path(settings.NALOG_DEBT_OUT_DIR)
@@ -547,12 +569,12 @@ def run_fetcher(
 
     perm = (perm or "").strip().upper()
     if not perm:
-        s = requests.Session()
-        s.headers.update({
-            "User-Agent": DEFAULT_HEADERS["User-Agent"],
-            "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
-        })
-        perm = get_permutation(s, timeout=int(timeout))
+        with requests.Session() as s:
+            s.headers.update({
+                "User-Agent": DEFAULT_HEADERS["User-Agent"],
+                "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
+            })
+            perm = get_permutation(s, timeout=int(timeout))
     if not re.fullmatch(r"[0-9A-F]{32}", perm):
         raise ValueError("perm Р Т‘Р С•Р В»Р В¶Р ВµР Р… Р В±РЎвЂ№РЎвЂљРЎРЉ 32-РЎРѓР С‘Р СР Р†Р С•Р В»РЎРЉР Р…РЎвЂ№Р С hex")
 
@@ -577,9 +599,41 @@ def run_fetcher(
             for d in dates
         ]
         for f in concurrent.futures.as_completed(futs):
-            f.result()
+            try:
+                f.result()
+            except EmptyDebtSliceError as exc:
+                if mode == "monthly" or not allow_empty_slices:
+                    raise
+                logger.warning("Skipping empty historical slice: %s", exc)
     logger.info("Р РЋР В±Р С•РЎР‚ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦ Р В·Р В°Р Р†Р ВµРЎР‚РЎв‚¬РЎвЂР Р…: %s", out_dir)
     return out_dir
+
+
+def refresh_latest_debt_slice(session, out_dir: Path, *, today: date | None = None) -> dict[str, Any]:
+    """Refresh the current or immediately preceding slice, without relabelling it.
+
+    An empty current slice is a degraded source state, not proof of no debt.
+    Never import an old file merely because a new download failed.
+    """
+    today = today or date.today()
+    requested = today.replace(day=1)
+    previous = (requested - timedelta(days=1)).replace(day=1)
+    empty_slices = []
+    for candidate in (requested, previous):
+        try:
+            run_fetcher(start_date=candidate.isoformat(), end_date=candidate.isoformat(),
+                        mode="range", out_dir=out_dir, overwrite=True, allow_empty_slices=False)
+        except EmptyDebtSliceError:
+            empty_slices.append(candidate.isoformat())
+            logger.warning("Nalog debt source has an empty slice: %s", candidate)
+            continue
+        imported = load_json_file_to_db(out_dir / f"{candidate.isoformat()}.json", session,
+                                        replace_existing_slice=True)
+        return {"status": "success" if candidate == requested else "source_empty",
+                "requested_slice": requested.isoformat(), "refreshed_slice": candidate.isoformat(),
+                "empty_slices": empty_slices, "imported": imported}
+    return {"status": "source_empty", "requested_slice": requested.isoformat(),
+            "refreshed_slice": None, "empty_slices": empty_slices, "imported": 0}
 
 
 def load_json_file_to_db(
@@ -603,7 +657,9 @@ def load_json_file_to_db(
 
     text = json_path.read_text(encoding="utf-8")
     data = json.loads(text)
-    items = data.get("items") if isinstance(data, dict) else []
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list) or any(not isinstance(it, dict) for it in items):
+        raise ValueError("Invalid debt snapshot format; existing data preserved")
     if not items:
         if replace_existing_slice:
             raise ValueError(
@@ -615,8 +671,8 @@ def load_json_file_to_db(
     to_insert = []
     for it in items:
         unp_s = str(first_present(it, "unp", "\u0423\u041d\u041f") or "").strip()
-        if not unp_s or not unp_s.isdigit():
-            continue
+        if not re.fullmatch(r"[0-9]{9}", unp_s):
+            raise ValueError("Invalid UNP in debt snapshot; existing data preserved")
         debtor_unp = int(unp_s)
         imns_code = (it.get("imns_code") or "").strip()[:10]
         imns_name = (it.get("imns_name") or "")[:500] if it.get("imns_name") else None
@@ -685,19 +741,18 @@ def load_json_file_to_db(
             .delete(synchronize_session=False)
         )
 
-    stmt = insert(NalogDebtRecord).values(to_insert)
-    stmt = stmt.on_conflict_do_nothing(
-        index_elements=[
-            NalogDebtRecord.debtor_unp,
-            NalogDebtRecord.imns_code,
-            NalogDebtRecord.debt_date,
-            NalogDebtRecord.repayment_date,
-            NalogDebtRecord.slice_date,
-        ]
-    )
-    result = session.execute(stmt)
+    written = 0
+    for offset in range(0, len(to_insert), 1000):
+        stmt = insert(NalogDebtRecord).values(to_insert[offset:offset + 1000])
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=[NalogDebtRecord.debtor_unp, NalogDebtRecord.imns_code,
+                           NalogDebtRecord.debt_date, NalogDebtRecord.repayment_date,
+                           NalogDebtRecord.slice_date],
+        )
+        result = session.execute(stmt)
+        written += result.rowcount
     session.commit()
-    return result.rowcount if hasattr(result, "rowcount") else len(to_insert)
+    return written
 
 
 def run_import_to_db(

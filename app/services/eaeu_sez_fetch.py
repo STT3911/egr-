@@ -243,6 +243,8 @@ def fetch_page(
             response.raise_for_status()
             parser = RegistryTableParser()
             parser.feed(extract_html_fragment(response.text))
+            if not parser.rows and parser.overall_count != 0:
+                raise RuntimeError("Unrecognized or empty SEZ table response")
             return ParsedPage(parser.rows, parser.next_params, parser.overall_count)
         except (requests.RequestException, ET.ParseError, RuntimeError) as exc:
             last_error = exc
@@ -255,7 +257,7 @@ def fetch_page(
             if attempt > retries:
                 break
             time.sleep(min(2 * attempt, 10))
-    raise RuntimeError(f"Failed to fetch page after {retries + 1} attempts: {last_error}")
+    raise RuntimeError(f"Failed to fetch page after {attempt} attempts: {last_error}")
 
 
 def fetch_rows(
@@ -273,6 +275,7 @@ def fetch_rows(
     overall_count: int | None = None
     seen_page_keys: set[tuple[tuple[str, str], ...]] = set()
     scanned_rows = 0
+    seen_item_ids: set[int] = set()
     base_params: dict[str, str] = {}
     query = ""
     if on_date is not None:
@@ -295,6 +298,10 @@ def fetch_rows(
             scanned_rows += len(page.rows)
 
             for row in page.rows:
+                item_id = row.get("item_id")
+                if item_id is None or item_id in seen_item_ids:
+                    raise RuntimeError("Missing or repeated SEZ item ID; incomplete snapshot rejected")
+                seen_item_ids.add(item_id)
                 if row.get("country") == country:
                     matched.append({field: row.get(field) for field in OUTPUT_FIELDS})
 
@@ -323,12 +330,16 @@ def fetch_rows(
             if delay > 0:
                 time.sleep(delay)
 
+    limited = limit_pages is not None and seen_pages >= limit_pages
+    if not limited and overall_count is not None and scanned_rows != overall_count:
+        raise RuntimeError(f"Incomplete SEZ registry: fetched {scanned_rows}, expected {overall_count}")
     stats = {
         "country": country,
         "matched": len(matched),
         "pages": seen_pages,
         "scanned_rows": scanned_rows,
         "registry_total": overall_count,
+        "limited": limited,
         "on_date": on_date.isoformat() if on_date else None,
     }
     return matched, stats

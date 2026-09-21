@@ -76,6 +76,7 @@ async def _bind_company_events(domain: str, access_token: str) -> None:
                         raise RuntimeError(f"Bitrix24 event.unbind did not confirm {event}")
 
 
+@router.api_route("/install/", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
 @router.get("/install", response_class=HTMLResponse)
 @router.post("/install", response_class=HTMLResponse)
 async def install_app(request: Request, db: AsyncSession = Depends(get_db)):

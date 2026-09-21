@@ -72,6 +72,20 @@ class SystemState(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class SourceFetchAttempt(Base):
+    """Retry state, separate from real source records (204 is not an address)."""
+    __tablename__ = "source_fetch_attempts"
+    __table_args__ = (
+        Index("ix_source_fetch_attempts_due", "source", "next_check_at", "unp"),
+    )
+
+    source = Column(String(32), primary_key=True)
+    unp = Column(BigInteger, primary_key=True)
+    status = Column(String(16), nullable=False)
+    checked_at = Column(DateTime, nullable=False)
+    next_check_at = Column(DateTime, nullable=False)
+
+
 class SearchIndexQueue(Base):
     """Outbox queue for keeping Elasticsearch in sync with PostgreSQL."""
     __tablename__ = "search_index_queue"
@@ -896,7 +910,7 @@ class CompanyEvent(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False)
     
     # Event identification
-    event_record_id = Column(Integer, nullable=True)  # NGR04004 - PK записи в ЕГР
+    event_record_id = Column(BigInteger, nullable=True)  # Swagger: NGR04004 int64
     event_type_id = Column(Integer, ForeignKey('ref_events.id'), nullable=True)  # nsi00223
     
     # Event dates
@@ -928,6 +942,21 @@ class CompanyEvent(Base):
     decision_authority = relationship("ReferenceAuthority", foreign_keys=[decision_authority_id])
     document_authority = relationship("ReferenceAuthority", foreign_keys=[document_authority_id])
     foundation = relationship("ReferenceFoundation", foreign_keys=[foundation_id])
+
+    __table_args__ = (
+        Index("uq_egr_event_source", "company_id", "event_record_id", unique=True,
+              postgresql_where=event_record_id.isnot(None)),
+    )
+
+
+class EGRIPToJur(Base):
+    """Official IP -> legal entity relationship, independently of card presence."""
+    __tablename__ = "egr_ip_to_jur"
+    ip_unp = Column(BigInteger, primary_key=True)
+    jur_unp = Column(BigInteger, primary_key=True)
+    registration_date = Column(Date, nullable=True)
+    raw = Column(JSONB, nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class ApiLog(Base):

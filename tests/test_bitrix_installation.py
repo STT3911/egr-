@@ -118,9 +118,11 @@ def installation_params():
     return {"DOMAIN": PORTAL, "AUTH_ID": "test-access", "REFRESH_ID": "test-refresh", "member_id": "test-member"}
 
 
-def test_install_finishes_only_after_confirmed_events(local_app):
+@pytest.mark.parametrize("path", ["/bitrix/install", "/bitrix/install/"])
+def test_install_finishes_only_after_confirmed_events(local_app, path):
     client, db = local_app
-    response = client.post("/bitrix/install", data=installation_params())
+    response = client.post(path, data=installation_params(), follow_redirects=False)
+    assert "location" not in response.headers
     assert response.status_code == 200
     assert response.text.count('src="https://api.bitrix24.com/api/v1/"') == 1
     assert response.text.index('src="https://api.bitrix24.com/api/v1/"') < response.text.index("BX24.installFinish()")
@@ -161,16 +163,29 @@ def test_missing_params_are_not_logged_with_tokens(local_app, caplog):
     db.commit.assert_not_awaited()
 
 
-def test_admin_initialization_sets_portal_domain(local_app, monkeypatch):
+@pytest.mark.parametrize("path", ["/bitrix/admin", "/bitrix/admin/"])
+def test_admin_initialization_sets_portal_domain(local_app, monkeypatch, path):
     client, db = local_app
     monkeypatch.setattr(admin, "find_settings", AsyncMock(return_value=None))
     monkeypatch.setattr(admin, "next_settings_id", AsyncMock(return_value=11))
     bitrix = Mock(get_requisite_presets=AsyncMock(return_value=[]), get_company_userfields=AsyncMock(return_value=[]))
     monkeypatch.setattr(admin, "BitrixClient", Mock(return_value=bitrix))
-    response = client.post("/bitrix/admin/", data=installation_params())
+    response = client.post(path, data=installation_params(), follow_redirects=False)
+    assert "location" not in response.headers
     assert response.status_code == 200
     assert db.add.call_args.args[0].bitrix_domain == PORTAL
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize("path", ["/bitrix/admin", "/bitrix/admin/", "/bitrix/install", "/bitrix/install/"])
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_landing_aliases_still_require_auth_without_redirect(local_app, path, method):
+    client, db = local_app
+    response = client.request(method, path, follow_redirects=False)
+    assert response.status_code == 400
+    assert "location" not in response.headers
+    db.commit.assert_not_awaited()
+    admin._check_is_admin_on_the_fly.assert_not_awaited()
 
 
 def test_save_failure_is_not_reported_as_success(local_app):

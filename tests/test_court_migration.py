@@ -27,7 +27,9 @@ def test_single_head_after_existing_revision():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "migrations"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["court1schema"]
+    assert scripts.get_heads() == ["egrapi2"]
+    assert scripts.get_revision("egrapi2").down_revision == "sourcefetch1"
+    assert scripts.get_revision("sourcefetch1").down_revision == "court1schema"
     assert scripts.get_revision("court1schema").down_revision == "addrunit1"
 
 

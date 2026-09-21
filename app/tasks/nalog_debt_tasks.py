@@ -1,11 +1,8 @@
 """Celery-задача синхронизации налоговой задолженности (portal.nalog.gov.by).
 
-Портал отдаёт данные через GWT-RPC, поэтому задача повторяет то, что раньше
-запускалось руками через scripts/run_nalog_debt.py:
-  1. run_fetcher(mode="monthly") — тянет текущий месяц в JSON (permutation
-     резолвится автоматически);
-  2. run_import_to_db — грузит JSON в nalog_debt_records; там же эмитятся
-     события EVENT_TAX_DEBT для новых должников (см. nalog_debt.load_json_file_to_db).
+Портал отдаёт данные через GWT-RPC. Задача обновляет текущий срез либо
+непосредственно предыдущий месяц, если текущий пуст. Пустые ответы и ошибки
+не перезаписывают хорошие файлы/данные; состояние источника сохраняется отдельно.
 
 Включается флагом NALOG_DEBT_SCHEDULE_ENABLED, идёт в очередь heavy.
 """
@@ -17,7 +14,8 @@ from typing import Any, Dict, Optional
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
-from app.services.nalog_debt import run_fetcher, run_import_to_db
+from app.services.nalog_debt import refresh_latest_debt_slice
+from app.services.source_fetch_state import record_source_health
 from app.tasks.celery_app import celery_app
 
 logger = get_logger("tasks.nalog_debt")
@@ -30,27 +28,21 @@ logger = get_logger("tasks.nalog_debt")
     soft_time_limit=7080,
 )
 def sync_nalog_debt_task(self, out_dir: Optional[str] = None) -> Dict[str, Any]:
-    """Скачать задолженность за текущий месяц и загрузить в БД.
-
-    Returns:
-        dict: {"imported": <кол-во записей>, "out_dir": <путь>}.
-    """
+    """Обновить доступный срез и вернуть его дату, объём и статус источника."""
     target_dir = Path(out_dir or settings.NALOG_DEBT_OUT_DIR)
     logger.info("Nalog debt sync started (monthly), out_dir=%s", target_dir)
 
-    run_fetcher(mode="monthly", out_dir=target_dir, perm=None, overwrite=True)
-
     db = SessionLocal()
     try:
-        imported = run_import_to_db(
-            target_dir,
-            db,
-            latest_only=True,
-            replace_existing_slice=True,
-            raise_on_error=True,
-        )
+        result = refresh_latest_debt_slice(db, target_dir)
+        record_source_health(db, "nalog_debt", result)
+    except Exception as exc:
+        db.rollback()
+        record_source_health(db, "nalog_debt", {"status": "failed", "error_type": type(exc).__name__})
+        raise
     finally:
         db.close()
 
-    logger.info("Nalog debt sync finished: imported=%s", imported)
-    return {"imported": imported, "out_dir": str(target_dir)}
+    log = logger.info if result["status"] == "success" else logger.warning
+    log("Nalog debt sync finished: %s", result)
+    return {**result, "out_dir": str(target_dir)}

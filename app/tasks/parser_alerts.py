@@ -122,7 +122,19 @@ def parser_task_finished(
     if not is_parser_task(task_name):
         return
     elapsed = _duration(str(task_id) if task_id else None)
-    if state != "SUCCESS" or not settings.PARSER_ALERTS_NOTIFY_SUCCESS:
+    if state != "SUCCESS":
+        return
+    if isinstance(retval, dict) and retval.get("status") in {
+        "source_empty", "source_unavailable", "snapshot_fallback",
+    }:
+        send_telegram_alert(
+            "⚠️ Свежие данные источника не получены\n"
+            f"Задача: {_display_name(task_name)}\n"
+            f"Время: {_format_duration(elapsed)}\n"
+            f"Результат: {_format_result(retval)}"
+        )
+        return
+    if not settings.PARSER_ALERTS_NOTIFY_SUCCESS:
         return
     send_telegram_alert(
         "✅ Парсер завершён\n"
