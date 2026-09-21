@@ -22,15 +22,22 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    openssl \
     libpq-dev \
     postgresql-client \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# egr.gov.by отдаёт только leaf-сертификат; intermediate (GlobalSign GCC R6 AlphaSSL CA 2023)
-# не приходит в цепочке — без него TLS валится (unknown CA). URL из AIA сертификата.
-RUN curl -fsSL http://secure.globalsign.com/cacert/gsgccr6alphasslca2023.crt \
-    -o /usr/local/share/ca-certificates/globalsign-gcc-r6-alphassl-ca-2023.crt \
+# EGR omits its intermediate. The live leaf uses AlphaSSL CA 2025 (AIA).
+# GlobalSign publishes DER; update-ca-certificates requires PEM. Validate the
+# intermediate against the distribution roots before adding it to the bundle.
+RUN curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+    https://secure.globalsign.com/cacert/gsgccr6alphasslca2025.crt \
+    -o /tmp/egr-intermediate.der \
+    && openssl x509 -inform DER -in /tmp/egr-intermediate.der \
+       -out /usr/local/share/ca-certificates/globalsign-gcc-r6-alphassl-ca-2025.crt \
+    && openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
+       /usr/local/share/ca-certificates/globalsign-gcc-r6-alphassl-ca-2025.crt \
     && update-ca-certificates
 
 # Create non-root user for security
