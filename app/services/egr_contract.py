@@ -35,12 +35,13 @@ def period_fields(row):
     """Keep evidence of the former UTC-truncation key for an in-place repair."""
     start = egr_date(row.get("dfrom"))
     fields = {"valid_from": start, "valid_to": egr_date(row.get("dto"))}
-    try:
-        old = date.fromisoformat(str(row.get("dfrom"))[:10])
-    except ValueError:
-        old = None
-    if old and old != start:
-        fields["_legacy_valid_from"] = old
+    for source, target in (("dfrom", "valid_from"), ("dto", "valid_to")):
+        try:
+            old = date.fromisoformat(str(row.get(source))[:10])
+        except ValueError:
+            old = None
+        if old and old != fields[target]:
+            fields[f"_legacy_{target}"] = old
     return fields
 
 

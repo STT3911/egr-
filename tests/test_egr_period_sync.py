@@ -86,6 +86,71 @@ def test_strict_valid_empty_response(status, body):
     asyncio.run(check())
 
 
+@pytest.mark.parametrize("error_type", [httpx.ReadTimeout, httpx.ConnectTimeout,
+                                       httpx.ReadError, httpx.RemoteProtocolError])
+def test_transient_strict_read_retries_same_endpoint_without_empty_success(monkeypatch, error_type):
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.services.egr_client.asyncio.sleep", sleep)
+    requests = []
+    def respond(request):
+        requests.append(str(request.url))
+        if len(requests) < 3:
+            raise error_type("temporary", request=request)
+        return httpx.Response(200, json=[{"ngrn": 193879557}])
+    async def check():
+        client = EGRClient()
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            assert await client.get_period_rows("getAddressByPeriod", "25.08.2026") == [{"ngrn": 193879557}]
+        finally:
+            await client.close()
+    asyncio.run(check())
+    assert len(requests) == 3 and len(set(requests)) == 1
+    assert [call.args[0] for call in sleep.await_args_list] == [2, 5]
+
+
+def test_exhausted_strict_timeout_keeps_unp_checkpoint_and_reports_endpoint(store, monkeypatch):
+    monkeypatch.setattr("app.services.egr_client.asyncio.sleep", AsyncMock())
+    feeds = feed_client({"getAddressByPeriod": [{"ngrn": 193879557}]})
+    requests = []
+    def respond(request):
+        requests.append(request)
+        raise httpx.ReadTimeout("", request=request)
+    async def refresh(unp):
+        client = EGRClient()
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            await client.get_full_company_history_strict(unp, delay=0)
+        finally:
+            await client.close()
+    with pytest.raises(httpx.ReadTimeout, match="getBaseInfoByRegNum/193879557.*after 3 attempts"):
+        run(store, feeds, refresh)
+    assert len(requests) == 3
+    assert store.load()["pending"]["next_index"] == 0
+    assert store.db.get(SystemState, "egr_last_sync_date") is None
+
+
+@pytest.mark.parametrize("status,body", [(429, '{}'), (403, '{}'), (500, '{}'), (200, 'not json')])
+def test_strict_http_or_schema_errors_do_not_use_transport_retries(monkeypatch, status, body):
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.services.egr_client.asyncio.sleep", sleep)
+    requests = []
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(status, text=body)
+    async def check():
+        client = EGRClient()
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            with pytest.raises((httpx.HTTPStatusError, ValueError)):
+                await client.get_period_rows("getAddressByPeriod", "25.08.2026")
+        finally:
+            await client.close()
+    asyncio.run(check())
+    assert len(requests) == 1
+    sleep.assert_not_awaited()
+
+
 def test_feed_failure_keeps_cursor_and_does_not_start_refresh(store):
     client = feed_client()
     async def fetch(source, day):
