@@ -262,39 +262,80 @@ class CompanyCRUD:
                 continue
             setattr(entry, field, value)
 
+    @staticmethod
+    def _match_address_history(existing, addresses):
+        """Plan one-to-one repairs before mutating any row.
+
+        Start dates alone are not unique: EGR can publish multiple changes on
+        one day, including a zero-length period. Match complete periods first
+        (using evidence of BOTH former UTC-truncated dates), then allow an end
+        date update/format enrichment only for mutually unique remaining rows.
+        Never collapse duplicate DB rows or decide a tie by input order.
+        """
+        def same_start(row, addr):
+            starts = {addr.get("valid_from"), addr.get("_legacy_valid_from")} - {None}
+            return row.valid_from in starts
+
+        def same_period(row, addr):
+            start, end = addr.get("valid_from"), addr.get("valid_to")
+            periods = {(start, end), (addr.get("_legacy_valid_from", start),
+                                      addr.get("_legacy_valid_to", end))}
+            return (row.valid_from, row.valid_to) in periods
+
+        def same_address(row, addr):
+            return row.full_address == addr.get("full_address")
+
+        matches = {}
+        remaining_rows = set(range(len(existing)))
+        remaining_addresses = set(range(len(addresses)))
+        for predicate in (
+            lambda r, a: same_address(r, a) and same_period(r, a),
+            lambda r, a: same_start(r, a) and same_period(r, a),
+            lambda r, a: same_address(r, a) and same_start(r, a),
+            same_start,
+        ):
+            while remaining_rows and remaining_addresses:
+                candidates = {i: [j for j in remaining_rows if predicate(existing[j], addresses[i])]
+                              for i in remaining_addresses}
+                uses = {}
+                for options in candidates.values():
+                    for j in options:
+                        uses[j] = uses.get(j, 0) + 1
+                certain = [(i, options[0]) for i, options in candidates.items()
+                           if len(options) == 1 and uses[options[0]] == 1]
+                if not certain:
+                    break
+                for i, j in certain:
+                    matches[i] = existing[j]
+                    remaining_addresses.remove(i)
+                    remaining_rows.remove(j)
+
+        if any(same_start(existing[j], addresses[i]) or
+               (same_address(existing[j], addresses[i]) and same_period(existing[j], addresses[i]))
+               for i in remaining_addresses for j in remaining_rows):
+            raise ValueError("Ambiguous EGR address periods; manual reconciliation required")
+        return matches
+
     def _save_addresses_history(self, company: Company, addresses: List[Dict], *, authoritative=False):
         """Retain history, update period ends, invalidate an obsolete Mobile cache."""
         existing = self.db.query(CompanyAddressHistory).filter(CompanyAddressHistory.company_id == company.id).all()
-        existing_keys = {(r.full_address, r.valid_from): r for r in existing}
+        # Identical source rows are repeated observations, not extra periods.
+        addresses = [a for i, a in enumerate(addresses) if a not in addresses[:i]]
+        matches = self._match_address_history(existing, addresses)
         active = [r for r in existing if r.valid_to is None and r.full_address]
         old_current = max(active, key=lambda r: r.valid_from or datetime.min.date(), default=None)
         old_address = old_current.full_address if old_current else None
         added: List[Dict] = []
-        for addr_data in addresses:
-            legacy_start = addr_data.get("_legacy_valid_from")
+        for i, addr_data in enumerate(addresses):
             addr_data = {k: v for k, v in addr_data.items() if not k.startswith("_")}
-            key = (addr_data.get("full_address"), addr_data.get("valid_from"))
-            self._recover_history_key(existing_keys, key, legacy_start)
-            if key in existing_keys:
-                self._update_history_entry(existing_keys[key], addr_data)
-                continue
-            # A fuller rendering (building/remarks) is not another historical
-            # period. Match by date only when BOTH snapshots are unambiguous.
-            dates = {key[1], legacy_start} - {None}
-            same_date = [r for r in existing if r.valid_from in dates]
-            if legacy_start and len(same_date) > 1:
-                raise ValueError("Ambiguous EGR address date correction; manual reconciliation required")
-            if (len(same_date) == 1
-                    and sum(a.get("valid_from") == key[1] for a in addresses) == 1):
-                self._update_history_entry(same_date[0], addr_data)
-                existing_keys[key] = same_date[0]
+            if i in matches:
+                self._update_history_entry(matches[i], addr_data)
                 continue
             addr_entry = CompanyAddressHistory(
                 company_id=company.id,
                 **addr_data
             )
             self.db.add(addr_entry)
-            existing_keys[key] = addr_entry
             added.append(addr_data)
         current = [a for a in addresses if a.get("valid_to") is None and a.get("full_address")]
         new_current = max(current, key=lambda a: a.get("valid_from") or datetime.min.date(), default=None)

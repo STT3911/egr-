@@ -175,7 +175,21 @@ class EGRClient(BaseClient):
     async def _request_strict(self, endpoint: str) -> Any:
         """For checkpointed syncs: transport/schema failures must never mean no changes."""
         client = await self._get_client()
-        response = await client.get(f"{self.base_url}/{endpoint}")
+        for attempt in range(3):
+            try:
+                response = await client.get(f"{self.base_url}/{endpoint}")
+                break
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ReadError,
+                    httpx.RemoteProtocolError) as exc:
+                # Only idempotent reads, bounded backoff. HTTP errors (including
+                # throttling/auth) and invalid JSON are not blindly retried.
+                logger.warning("EGR %s: %s (attempt %s/3)", endpoint, type(exc).__name__, attempt + 1)
+                if attempt == 2:
+                    raise type(exc)(
+                        f"EGR {endpoint}: {type(exc).__name__} after 3 attempts",
+                        request=httpx.Request("GET", f"{self.base_url}/{endpoint}"),
+                    ) from exc
+                await asyncio.sleep((2, 5)[attempt])
         response.raise_for_status()
         if response.status_code == 204:
             return []
