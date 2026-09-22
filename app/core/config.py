@@ -57,6 +57,16 @@ class Settings(BaseSettings):
 
     # EGR API (все запросы через HTTPS для безопасности и скорости)
     EGR_API_URL: str = "https://egr.gov.by/api/v2/egr"
+    # All eight official ByPeriod feeds; initial replay also catches older missed addresses.
+    EGR_PERIOD_BOOTSTRAP_DAYS: int = 30
+    EGR_PERIOD_OVERLAP_DAYS: int = 3
+    EGR_PERIOD_BATCH_SIZE: int = 500
+    EGR_PERIOD_MAX_SECONDS: int = 1200
+    EGR_PERIOD_REQUEST_DELAY: float = 0.5
+    EGR_PERIOD_ROW_LIMIT: int = 2500
+    EGR_HISTORICAL_SCHEDULE_ENABLED: bool = False
+    EGR_JSON_IMPORT_SCHEDULE_ENABLED: bool = False
+    EGR_EXPORT_MIN_FREE_MB: int = 2048
     EGR_MOBILE_API_URL: str = "https://egr.gov.by/egrmobile/api/v1"
     GIAS_DIRECTORY_API_URL: str = "https://gias.by/directory/api/v1"
     GIAS_DIRECTORY_TIMEOUT_SECONDS: float = 30.0
@@ -140,6 +150,11 @@ class Settings(BaseSettings):
     GRP_FETCH_SUCCESS_DELAY_SECONDS: float = 2.0
     GRP_FETCH_RETRY_BASE_DELAY_SECONDS: float = 5.0
     GRP_FETCH_RETRY_COOLDOWN_MINUTES: int = 30
+    GRP_REFRESH_DAYS: int = 30
+    GRP_EMPTY_RETRY_DAYS: int = 7
+    PLACE_LOCATION_REFRESH_DAYS: int = 90
+    PLACE_LOCATION_EMPTY_RETRY_DAYS: int = 7
+    PLACE_LOCATION_ERROR_RETRY_MINUTES: int = 60
     UNP_EGR_PROBE_TIMEOUT_SECONDS: float = 10.0
     UNP_EGR_PROBE_MAX_RETRIES: int = 1
     GRP_FETCH_SCHEDULE_SECONDS: int = 300
@@ -249,6 +264,7 @@ class Settings(BaseSettings):
     LICENSE_VERIFY_TLS: bool = True
     LICENSE_SCHEDULE_ENABLED: bool = False
     LICENSE_SCHEDULE_SECONDS: int = 86400
+    LICENSE_CHECK_PAGES: int = 10
 
     # Геокодинг адресов через OSM/Nominatim (координаты можно хранить, в отличие
     # от Яндекса). Nominatim требует валидный User-Agent с контактом и лимит 1 req/sec.

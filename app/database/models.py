@@ -7,6 +7,62 @@ from app.core.database import Base
 import uuid as uuid_pkg
 
 
+class Court(Base):
+    """Court identifier from service.court.gov.by (not an EGR company)."""
+
+    __tablename__ = "courts"
+
+    id = Column(Integer, primary_key=True, autoincrement=False)
+    name = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class CourtCase(Base):
+    """One source process; case numbers alone are not unique identifiers."""
+
+    __tablename__ = "court_cases"
+    __table_args__ = (
+        UniqueConstraint("court_id", "source_process_id", name="uq_court_cases_source"),
+        CheckConstraint("source_process_id > 0", name="ck_court_cases_process_positive"),
+        Index("ix_court_cases_court_number", "court_id", "case_number"),
+        Index("ix_court_cases_case_number", "case_number"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    court_id = Column(Integer, ForeignKey("courts.id", ondelete="RESTRICT"), nullable=False)
+    source_process_id = Column(BigInteger, nullable=False)
+    case_number = Column(Text, nullable=False)
+    # Search context only: do not infer a category or UNP from the query.
+    raw_data = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class CourtJudgmentRecord(Base):
+    """A decision/document belonging to a case, separate from its process."""
+
+    __tablename__ = "court_judgments"
+    __table_args__ = (
+        UniqueConstraint("case_id", "source_document_id", name="uq_court_judgments_source"),
+        CheckConstraint("source_document_id > 0", name="ck_court_judgments_document_positive"),
+        Index("ix_court_judgments_judgment_date", "judgment_date"),
+        Index("ix_court_judgments_case_date", "case_id", "judgment_date"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    case_id = Column(BigInteger, ForeignKey("court_cases.id", ondelete="RESTRICT"), nullable=False)
+    source_document_id = Column(BigInteger, nullable=False)
+    document_type = Column(Text, nullable=True)
+    judgment_date = Column(Date, nullable=True)
+    resolution = Column(Text, nullable=True)
+    download_url = Column(Text, nullable=True)
+    raw_data = Column(JSONB, nullable=False, server_default="{}")
+    fetched_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class SystemState(Base):
     """System state for storing sync cursors"""
     __tablename__ = "egr_system_state"
@@ -14,6 +70,20 @@ class SystemState(Base):
     key = Column(String, primary_key=True)
     value = Column(String, nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class SourceFetchAttempt(Base):
+    """Retry state, separate from real source records (204 is not an address)."""
+    __tablename__ = "source_fetch_attempts"
+    __table_args__ = (
+        Index("ix_source_fetch_attempts_due", "source", "next_check_at", "unp"),
+    )
+
+    source = Column(String(32), primary_key=True)
+    unp = Column(BigInteger, primary_key=True)
+    status = Column(String(16), nullable=False)
+    checked_at = Column(DateTime, nullable=False)
+    next_check_at = Column(DateTime, nullable=False)
 
 
 class SearchIndexQueue(Base):
@@ -840,7 +910,7 @@ class CompanyEvent(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey('egr_companies.id', ondelete='CASCADE'), nullable=False)
     
     # Event identification
-    event_record_id = Column(Integer, nullable=True)  # NGR04004 - PK записи в ЕГР
+    event_record_id = Column(BigInteger, nullable=True)  # Swagger: NGR04004 int64
     event_type_id = Column(Integer, ForeignKey('ref_events.id'), nullable=True)  # nsi00223
     
     # Event dates
@@ -872,6 +942,21 @@ class CompanyEvent(Base):
     decision_authority = relationship("ReferenceAuthority", foreign_keys=[decision_authority_id])
     document_authority = relationship("ReferenceAuthority", foreign_keys=[document_authority_id])
     foundation = relationship("ReferenceFoundation", foreign_keys=[foundation_id])
+
+    __table_args__ = (
+        Index("uq_egr_event_source", "company_id", "event_record_id", unique=True,
+              postgresql_where=event_record_id.isnot(None)),
+    )
+
+
+class EGRIPToJur(Base):
+    """Official IP -> legal entity relationship, independently of card presence."""
+    __tablename__ = "egr_ip_to_jur"
+    ip_unp = Column(BigInteger, primary_key=True)
+    jur_unp = Column(BigInteger, primary_key=True)
+    registration_date = Column(Date, nullable=True)
+    raw = Column(JSONB, nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class ApiLog(Base):

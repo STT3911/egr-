@@ -251,7 +251,57 @@ class RequisiteService:
                 )
         return created
 
-    async def process_company_update(self, company_id: int):
+    async def process_company_update(self, company_id: int, *, recovery_mode=False, dry_run=False):
+        lock = getattr(self.bitrix, "company_lock", None)
+        if lock:
+            async with lock(company_id):
+                return await self._process_company_update(company_id, recovery_mode=recovery_mode, dry_run=dry_run)
+        return await self._process_company_update(company_id, recovery_mode=recovery_mode, dry_run=dry_run)
+
+    async def _recover_requisite(self, company_id, unp, cfg, requisite, fields, address, *, dry_run):
+        """Fill blank fields only; never update the company, contacts or banks."""
+        from app.bitrix.bitrix_client import BitrixAPIError
+        blank = lambda value: value is None or (isinstance(value, str) and not value.strip())
+        missing = {key: value for key, value in fields.items()
+                   if not blank(value) and (requisite is None or blank(requisite.get(key)))}
+        req_id = int(requisite["ID"]) if requisite else None
+        address_base, missing_address, existing_address = None, {}, None
+        if address:
+            type_id = await self.bitrix.get_address_type_id()
+            if type_id != 6:
+                raise BitrixAPIError("Recovery requires verified legal address type 6")
+            address_base = {"TYPE_ID": type_id, "ENTITY_TYPE_ID": 8, "ENTITY_ID": req_id}
+            if req_id:
+                entries = await self.bitrix.call("crm.address.list", {"filter": address_base, "select": ["*"]})
+                if not isinstance(entries, list) or len(entries) > 1:
+                    raise BitrixAPIError("Ambiguous requisite address; no changes applied")
+                existing_address = entries[0] if entries else None
+            # A manually supplied address is kept as a whole: do not append a
+            # postal code from a potentially different registered address.
+            if existing_address is None or all(blank(existing_address.get(k)) for k in
+                    ("ADDRESS_1", "ADDRESS_2", "CITY", "REGION", "PROVINCE", "POSTAL_CODE")):
+                missing_address = {k: v for k, v in address.items() if not blank(v)}
+        result = {"company_id": company_id, "status": "unchanged", "requisite_id": req_id,
+                  "fields": sorted(missing), "address_fields": sorted(missing_address)}
+        if not missing and not missing_address:
+            return result
+        if dry_run:
+            return {**result, "status": "would_create" if requisite is None else "would_fill"}
+        if requisite is None:
+            req_id = await self.bitrix.create_requisite(company_id, cfg.requisite_preset_id or 1, unp, missing)
+            result["requisite_id"] = req_id
+        elif missing:
+            # The general update helper also writes RQ_INN. Recovery must not
+            # touch existing values, including a manually formatted INN.
+            if not await self.bitrix.call("crm.requisite.update", {"id": req_id, "fields": missing}):
+                raise BitrixAPIError("Requisite update failed; recovery checkpoint not advanced")
+        if missing_address:
+            address_base["ENTITY_ID"] = req_id
+            method = "crm.address.update" if existing_address is not None else "crm.address.add"
+            await self.bitrix.call(method, {"fields": {**address_base, **missing_address}})
+        return {**result, "status": "created" if requisite is None else "filled"}
+
+    async def _process_company_update(self, company_id: int, *, recovery_mode=False, dry_run=False):
         """Main processing logic for OnCrmCompanyUpdate."""
         logger.info(f"[Company {company_id}] Starting processing")
 
@@ -275,13 +325,15 @@ class RequisiteService:
                     f"[Company {company_id}] No valid 9-digit UNP in field {unp_field_code} "
                     f"(raw={unp_raw!r}), skipping"
                 )
-                return
+                return {"company_id": company_id, "status": "skipped_no_unp"}
 
             # Шаг 4: Идем в ЕГР
             egr_info = await self.egr.get_company_info(unp)
             
             if egr_info.is_empty:
                 logger.info(f"[Company {company_id}] No data from EGR to write")
+                if recovery_mode:
+                    raise RuntimeError("No EGR data; recovery checkpoint not advanced")
                 return
 
             # --- Шаг 5: ОПРЕДЕЛЕНИЕ ИП И ФОРМИРОВАНИЕ ПОЛЕЙ ---
@@ -381,14 +433,28 @@ class RequisiteService:
                     "filter": {
                         "ENTITY_ID": company_id, 
                         "ENTITY_TYPE_ID": 4,  
-                        "RQ_INN": unp  # Ищем именно реквизит с таким же УНП!
+                        **({} if recovery_mode else {"RQ_INN": unp}),
                     },
-                    "select": ["ID", "PRESET_ID", "RQ_INN"],
+                    "select": ["*"] if recovery_mode else ["ID", "PRESET_ID", "RQ_INN"],
                 })
+                if recovery_mode:
+                    if not isinstance(req_list, list) or len(req_list) >= 50:
+                        raise RuntimeError("Cannot prove a complete requisite list; manual review required")
+                    if any(not _normalize_unp(r.get("RQ_INN")) for r in req_list):
+                        raise RuntimeError("Existing requisite has no reliable UNP; preserve it for manual review")
+                    req_list = [r for r in req_list if _normalize_unp(r.get("RQ_INN")) == unp]
+                if recovery_mode and (not isinstance(req_list, list) or len(req_list) > 1):
+                    raise RuntimeError("Ambiguous requisites for UNP; no changes applied")
                 requisite = req_list[0] if req_list else None
             except Exception as e:
                 logger.error(f"[Company {company_id}] Error finding requisite: {e}")
+                if recovery_mode:
+                    raise
                 return
+
+            if recovery_mode:
+                return await self._recover_requisite(company_id, unp, cfg, requisite,
+                    fields_to_write, address_fields, dry_run=dry_run)
                 
             # Существующий реквизит и карточку не меняем, чтобы не перезаписывать
             # ручные правки. Банковские записи независимы: добавляем только счета,
@@ -500,3 +566,5 @@ class RequisiteService:
 
         except Exception as e:
             logger.error(f"[Company {company_id}] Critical error in process_company_update: {e}")
+            if recovery_mode:
+                raise

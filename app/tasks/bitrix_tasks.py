@@ -30,16 +30,18 @@ async def _keepalive_all() -> list[dict]:
 
     results: list[dict] = []
     async with AsyncSessionLocal() as db:
-        portals = (await db.execute(select(AppSettings))).scalars().all()
-        # По каждому установленному порталу — отдельно (мультитенант): у каждого свой токен.
-        for cfg in portals:
-            client = BitrixClient(db, domain=cfg.bitrix_domain, member_id=cfg.bitrix_member_id)
+        portals = (await db.execute(select(AppSettings.bitrix_domain, AppSettings.bitrix_member_id))).all()
+    # Separate sessions: a failed refresh rolls back/expires ORM objects. It
+    # must not poison later portals or trigger implicit async lazy loads.
+    for domain, member_id in portals:
+        async with AsyncSessionLocal() as db:
+            client = BitrixClient(db, domain=domain, member_id=member_id)
             try:
                 await client.call("app.info")
-                results.append({"member_id": cfg.bitrix_member_id, "domain": cfg.bitrix_domain, "ok": True})
+                results.append({"member_id": member_id, "domain": domain, "ok": True})
             except Exception as ex:
-                logger.error("keepalive failed for portal %s (%s): %s", cfg.bitrix_domain, cfg.bitrix_member_id, ex)
-                results.append({"member_id": cfg.bitrix_member_id, "domain": cfg.bitrix_domain,
+                logger.error("keepalive failed for portal %s (%s): %s", domain, member_id, ex)
+                results.append({"member_id": member_id, "domain": domain,
                                 "ok": False, "error": str(ex)})
     return results
 

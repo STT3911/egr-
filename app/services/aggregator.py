@@ -125,7 +125,7 @@ class AggregatorService:
             logger.error(f"Raw save error {unp}: {e}")
             raise
 
-    def process_raw_data(self, unp: int, raw_entry=None):
+    def process_raw_data(self, unp: int, raw_entry=None, *, authoritative_addresses: bool = False):
         """Parse JSON from DB into clean tables.
 
         raw_entry можно передать заранее загруженным (из egr_process_raw),
@@ -145,7 +145,7 @@ class AggregatorService:
             db_structure = self.mapper.map_to_db_structure(unp, raw_data)
             
             company_crud = CompanyCRUD(self.db)
-            company_crud.save_full_company_data(db_structure)
+            company_crud.save_full_company_data(db_structure, authoritative_addresses=authoritative_addresses)
             
             raw_entry.processed_at = datetime.now()
             raw_entry.last_error = None

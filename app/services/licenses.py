@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
@@ -345,13 +345,55 @@ def import_license_snapshot_json(db: Any, snapshot_path: Path, batch_size: int |
 def check_license_api_changes(
     db: Any,
     *,
-    pages: int = 1,
+    pages: int | None = None,
     page_size: int | None = None,
     verify_tls: bool | None = None,
-) -> dict[str, int]:
-    rows: list[dict[str, Any]] = []
+) -> dict[str, Any]:
+    """Scheduled runs walk the registry; explicit pages retain the manual mode.
+
+    Only one page lives in memory. Cursor advances after the page import commits,
+    so a failure replays at most that page, never skips unsaved rows.
+    """
+    from app.database.models import SystemState
+
+    cursor_key = "license_check_next_page"
+    scheduled = pages is None
+    budget = max(1, pages if pages is not None else settings.LICENSE_CHECK_PAGES)
     resolved_page_size = page_size or settings.LICENSE_PAGE_SIZE
-    for page in range(1, max(1, pages) + 1):
+    cursor = db.execute(select(SystemState.value).where(SystemState.key == cursor_key)).scalar() if scheduled else None
+    page = max(1, int(cursor or 1))
+    stats: dict[str, Any] = {"start_page": page, "pages_checked": 0, "cycle_complete": False}
+    for _ in range(budget):
         payload = fetch_license_page(page, resolved_page_size, verify_tls=verify_tls)
-        rows.extend(payload.get("items") or [])
-    return import_license_rows(db, rows)
+        rows = payload["items"]
+        page_count = payload.get("pageCount")
+        if page_count is None and payload.get("count") is not None:
+            page_count = (int(payload["count"]) + resolved_page_size - 1) // resolved_page_size
+        if page_count is not None:
+            page_count = int(page_count)
+        if not rows and (page_count is None or 0 < page <= page_count):
+            raise ValueError(f"Unexpected empty license page {page}; cursor preserved")
+        if page == 1 and not rows:
+            raise ValueError("Empty license registry; existing records preserved")
+        if page_count is not None and page < page_count and len(rows) < resolved_page_size:
+            raise ValueError(f"Incomplete license page {page}; cursor preserved")
+        page_stats = import_license_rows(db, rows)
+        for key, value in page_stats.items():
+            stats[key] = int(stats.get(key, 0)) + value
+        complete = (page_count is not None and page >= page_count) or len(rows) < resolved_page_size
+        next_page = 1 if complete else page + 1
+        if scheduled:
+            stmt = pg_insert(SystemState).values(key=cursor_key, value=str(next_page))
+            db.execute(stmt.on_conflict_do_update(
+                index_elements=[SystemState.key], set_={"value": stmt.excluded.value, "updated_at": func.now()},
+            ))
+            db.commit()
+        stats.update(last_page=page, next_page=next_page, cycle_complete=complete,
+                     page_count=page_count, pages_checked=stats["pages_checked"] + 1)
+        logger.info("License check: page=%s total_pages=%s saved=%s next_page=%s", page, page_count, page_stats["saved"], next_page)
+        if complete:
+            break
+        page = next_page
+        if stats["pages_checked"] < budget and settings.LICENSE_PAGE_DELAY_SECONDS > 0:
+            time.sleep(settings.LICENSE_PAGE_DELAY_SECONDS)
+    return stats

@@ -234,6 +234,8 @@ def sync_eaeu_sez_residents(
             quiet=True,
             on_date=None,
         )
+        if not rows:
+            raise RuntimeError("EAEU SEZ returned no matching residents; existing data preserved")
         fetch_stats["status"] = "remote"
         fetch_stats["source"] = "portal.eaeunion.org"
         if rows and limit_pages is None:
@@ -241,38 +243,15 @@ def sync_eaeu_sez_residents(
             fetch_stats["snapshot"] = str(snapshot_path)
     except RuntimeError as exc:
         logger.warning("EAEU SEZ source is unavailable: %s", exc)
-        if snapshot_path.is_file():
-            rows = load_snapshot(snapshot_path)
-            observed_at = datetime.utcfromtimestamp(snapshot_path.stat().st_mtime)
-            fetch_stats = {
-                "status": "snapshot_fallback",
-                "source": str(snapshot_path),
-                "source_error": str(exc),
-                "matched": len(rows),
-                "snapshot_created_at": observed_at.isoformat(),
-            }
-        else:
-            from app.database.models import EAEUSEZResidentRecord
-
-            preserved_records = db.query(EAEUSEZResidentRecord.id).count()
-            return {
-                "status": "source_unavailable",
-                "source_error": str(exc),
-                "snapshot": str(snapshot_path),
-                "preserved_records": preserved_records,
-                "fetch": {
-                    "status": "unavailable",
-                    "source": "portal.eaeunion.org",
-                },
-                "import": {
-                    "total": 0,
-                    "invalid_item_id": 0,
-                    "invalid_unp": 0,
-                    "found_company": 0,
-                    "missing_company": 0,
-                    "saved": 0,
-                },
-            }
+        # Old local snapshots are for EXPLICIT recovery/import only. Replaying
+        # one here overwrote newer DB fields with May data on every failed run.
+        from app.database.models import EAEUSEZResidentRecord
+        return {
+            "status": "source_unavailable", "source_error": str(exc),
+            "snapshot": str(snapshot_path), "snapshot_available": snapshot_path.is_file(),
+            "preserved_records": db.query(EAEUSEZResidentRecord.id).count(),
+            "import": {"total": 0, "saved": 0},
+        }
 
     import_stats = import_sez_snapshot_rows(
         db,

@@ -4,11 +4,12 @@ Refactored version.
 """
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bitrix.models import AppSettings
@@ -61,6 +62,27 @@ class BitrixClient:
         return self.app_settings
     
     async def _refresh_token_if_needed(self, cfg: AppSettings) -> str:
+        """Serialize refresh-token rotation across workers and replay processes."""
+        expiry = cfg.token_expires_at
+        if expiry and expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if not expiry or datetime.now(timezone.utc) + timedelta(minutes=5) <= expiry:
+            if not cfg.access_token:
+                raise BitrixAPIError("Access token not available")
+            return cfg.access_token
+        try:
+            result = await self.db.execute(select(AppSettings).where(AppSettings.id == cfg.id)
+                .with_for_update().execution_options(populate_existing=True))
+            fresh = result.scalar_one()
+            self.app_settings = fresh
+            token = await self._refresh_token_locked(fresh)
+            await self.db.commit()
+            return token
+        except Exception:
+            await self.db.rollback()
+            raise
+
+    async def _refresh_token_locked(self, cfg: AppSettings) -> str:
         """Refresh access token if expired or missing."""
         if not cfg.access_token:
             raise BitrixAPIError("Access token not available")
@@ -102,10 +124,15 @@ class BitrixClient:
                 try:
                     resp.raise_for_status()
                 except httpx.HTTPStatusError as e:
-                    logger.error(f"Token refresh HTTP error: {resp.status_code} {resp.text[:200]}")
+                    logger.error("Token refresh HTTP error: %s", resp.status_code)
                     raise BitrixAPIError(f"Token refresh failed: HTTP {resp.status_code}") from e
 
                 data = resp.json()
+                if data.get("error"):
+                    import re
+                    value = str(data["error"])
+                    code = value if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", value) else "unknown"
+                    raise BitrixAPIError(f"Token refresh rejected: {code}; check this app's OAuth credentials")
 
                 # Сохраняем только если сервер реально вернул непустые токены.
                 # .get(key, default) спасает лишь от отсутствия ключа, но не от "" / null —
@@ -140,23 +167,41 @@ class BitrixClient:
         token = await self._refresh_token_if_needed(cfg)
         url = f"https://{cfg.bitrix_domain}/rest/{method}.json"
         
-        payload = params or {}
+        payload = dict(params or {})
         payload["auth"] = token
         
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, json=payload)
             
             if resp.status_code != 200:
-                raise BitrixAPIError(f"HTTP {resp.status_code}: {resp.text}")
+                raise BitrixAPIError(f"Bitrix HTTP {resp.status_code}")
             
             data = resp.json()
             
             if data.get("error"):
                 error = data["error"]
-                error_description = data.get("error_description", error)
-                raise BitrixAPIError(f"Bitrix API error: {error} - {error_description}")
+                # Do not copy arbitrary upstream text (possibly credentials)
+                # into worker logs or recovery reports.
+                import re
+                code = str(error) if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", str(error)) else "unknown"
+                raise BitrixAPIError(f"Bitrix API error: {code}")
             
             return data.get("result")
+
+    @asynccontextmanager
+    async def company_lock(self, company_id: int):
+        """Shared by webhooks and recovery; token commits cannot release it."""
+        from app.bitrix.database import async_engine
+        cfg = await self._load_settings()
+        identity = cfg.bitrix_member_id or cfg.bitrix_domain
+        async with async_engine.begin() as connection:
+            acquired = (await connection.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"bitrix:requisite:{identity}:{int(company_id)}"},
+            )).scalar()
+            if not acquired:
+                raise BitrixAPIError("Company requisite processing already in progress; retry later")
+            yield
     
     async def get_company(self, company_id: int) -> Optional[dict]:
         try:

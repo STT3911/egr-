@@ -148,7 +148,7 @@ class MobileEGRClient(BaseClient):
         params = {"pan": identifier} if identifier.isdigit() and len(identifier) == 9 else {"unn": identifier}
         return await self._make_request("GET", "extracts/commonInfo", params=params)
 
-    async def get_place_location(self, identifier: str) -> Optional[str]:
+    async def get_place_location(self, identifier: str, *, strict: bool = False) -> Optional[str]:
         """Get company location (returns plain text address)"""
         params = {"pan": identifier} if identifier.isdigit() and len(identifier) == 9 else {"unn": identifier}
         url = f"{self.base_url}/extracts/placeLocation"
@@ -162,6 +162,8 @@ class MobileEGRClient(BaseClient):
             return text if text else None
         except Exception as e:
             logger.error("get_place_location error (%s): %s", identifier, repr(e))
+            if strict:
+                raise
             return None
 
 class EGRClient(BaseClient):
@@ -169,6 +171,52 @@ class EGRClient(BaseClient):
     
     def __init__(self, base_url: str = "https://egr.gov.by/api/v2/egr"):
         super().__init__(base_url)
+
+    async def _request_strict(self, endpoint: str) -> Any:
+        """For checkpointed syncs: transport/schema failures must never mean no changes."""
+        client = await self._get_client()
+        response = await client.get(f"{self.base_url}/{endpoint}")
+        response.raise_for_status()
+        if response.status_code == 204:
+            return []
+        return response.json()
+
+    async def get_period_rows(self, source: str, day: str) -> List[Dict]:
+        from app.services.egr_period_sync import PERIOD_SOURCES, validate_period_rows
+
+        if source not in PERIOD_SOURCES:
+            raise ValueError("Unknown EGR period source")
+        datetime.strptime(day, "%d.%m.%Y")
+        rows = await self._request_strict(f"{source}/{day}/{day}")
+        validate_period_rows(source, rows)
+        return rows
+
+    async def get_full_company_history_strict(self, unp: int, *, delay: float = 0.5) -> Dict[str, Any]:
+        """Fetch a complete snapshot; never replace a failed history request with []."""
+        base = await self._request_strict(f"getBaseInfoByRegNum/{unp}")
+        if isinstance(base, list) and len(base) == 1:
+            base = base[0]
+        if not isinstance(base, dict) or str(base.get("ngrn")) != str(unp):
+            raise ValueError(f"Invalid EGR base info for UNP {unp}")
+        entity_type = (base.get("nsi00211") or {}).get("nkvob")
+        if entity_type not in (1, 2):
+            raise ValueError(f"Unknown EGR entity type for UNP {unp}")
+        result = {"base_info": base}
+        endpoints = {
+            "addresses": "getAllAddressByRegNum",
+            "ved": "getAllVEDByRegNum",
+            "names": "getAllJurNamesByRegNum" if entity_type == 1 else "getAllIPFIOByRegNum",
+            "events": "getEventByRegNum",
+        }
+        for field, endpoint in endpoints.items():
+            await asyncio.sleep(delay)
+            rows = await self._request_strict(f"{endpoint}/{unp}")
+            if not isinstance(rows, list) or any(not isinstance(row, dict) or not row for row in rows):
+                raise ValueError(f"Invalid EGR {field} history for UNP {unp}")
+            if any("ngrn" in row and str(row["ngrn"]) != str(unp) for row in rows):
+                raise ValueError(f"EGR {field} history belongs to another UNP")
+            result[field] = rows
+        return result
 
     async def get_base_info_by_period_raw(self, start_date: str, end_date: str) -> List[Dict]:
         """
@@ -427,4 +475,3 @@ class EGRClient(BaseClient):
         """Get short info for period"""
         res = await self._make_request("GET", f"getShortInfoByPeriod/{start_date}/{end_date}")
         return res if isinstance(res, list) else []
-

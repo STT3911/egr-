@@ -3,6 +3,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.services.eaeu_sez import sync_eaeu_sez_residents
+from app.services.source_fetch_state import record_source_health
 from app.tasks.celery_app import celery_app
 
 logger = get_logger("tasks.eaeu_sez")
@@ -23,6 +24,9 @@ def sync_eaeu_sez_residents_task(self, country: str | None = None, limit_pages: 
             country=country or settings.SEZ_COUNTRY,
             limit_pages=limit_pages,
         )
+        record_source_health(db, "eaeu_sez", stats)
+        if stats["status"] == "source_unavailable":
+            raise RuntimeError(f"EAEU SEZ source unavailable; database preserved: {stats['source_error']}")
         logger.info("EAEU SEZ sync finished: %s", stats)
         return stats
     finally:

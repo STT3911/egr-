@@ -56,23 +56,19 @@ _beat_schedule = {
         "options": {"expires": 12 * 3600},
     },
     # ----- Остальные задачи (периодические) -----
-    "auto-fetch-historical": {
-        "task": "app.tasks.sync_tasks.auto_fetch_historical_data",
-        "schedule": crontab(day_of_week=0, hour=1, minute=0),
-        "args": (1900, 60),
-        "options": {"expires": 7 * 24 * 3600},
-    },
-    "load-from-json": {
-        "task": "app.tasks.sync_tasks.load_companies_from_json",
-        "schedule": crontab(hour=2, minute=0),
-        "args": (True,),
-        "options": {"expires": 24 * 3600},
-    },
     "sync-daily-changes": {
         "task": "app.tasks.sync_tasks.sync_daily_changes",
         "schedule": crontab(hour=3, minute=0),
         "args": (),
         "options": {"expires": 24 * 3600},
+    },
+    # Resume durable batches after a timeout/restart/source failure. A finished
+    # daily window is a no-op, not another full registry scan.
+    "resume-egr-period-changes": {
+        "task": "app.tasks.sync_tasks.sync_daily_changes",
+        "schedule": crontab(minute=15),
+        "args": (),
+        "options": {"expires": 3600},
     },
     "update-reference-tables": {
         "task": "app.tasks.sync_tasks.update_reference_tables",
@@ -162,7 +158,24 @@ _beat_schedule = {
     },
 }
 
-# GRP в расписании только если включено (по умолчанию — ручной запуск)
+# Old snapshots must not overwrite fresh ByPeriod data every night. Import
+# remains available manually; auto_fetch_and_load imports only its new file.
+if settings.EGR_JSON_IMPORT_SCHEDULE_ENABLED:
+    _beat_schedule["load-from-json"] = {
+        "task": "app.tasks.sync_tasks.load_companies_from_json",
+        "schedule": crontab(hour=2, minute=0),
+        "args": (True,),
+        "options": {"expires": 24 * 3600},
+    }
+
+if settings.EGR_HISTORICAL_SCHEDULE_ENABLED:
+    _beat_schedule["auto-fetch-historical"] = {
+        "task": "app.tasks.sync_tasks.auto_fetch_historical_data",
+        "schedule": crontab(day_of_week=0, hour=1, minute=0),
+        "args": (1900, 1),
+        "options": {"expires": 7 * 24 * 3600},
+    }
+
 if settings.GRP_SCHEDULE_ENABLED:
     _beat_schedule["grp-fetch-raw"] = {
         "task": "app.tasks.sync_tasks.grp_fetch_raw",
@@ -310,6 +323,7 @@ celery_app.conf.update(
         "app.tasks.sync_tasks.fetch_gias_contract_details":    {"queue": "heavy"},
         "app.tasks.sync_tasks.resolve_gias_contract_companies": {"queue": "heavy"},
         # ── Heavy queue ────────────────────────────────────────────────
+        "app.tasks.sync_tasks.sync_daily_changes":            {"queue": "heavy"},
         "app.tasks.sync_tasks.auto_fetch_historical_data":    {"queue": "heavy"},
         "app.tasks.sync_tasks.sync_gias_directory_registries": {"queue": "heavy"},
         "app.tasks.sync_tasks.grp_fetch_raw":                 {"queue": "heavy"},
@@ -330,7 +344,7 @@ celery_app.conf.update(
         "app.tasks.minsk_leadership_tasks.sync_minsk_leadership": {"queue": "heavy"},
         # ── Default (celery) queue — всё остальное ────────────────────
         # process_search_index_queue, grp_process_raw, egr_process_raw,
-        # sync_daily_changes, load_companies_from_json,
+        # load_companies_from_json,
         # update_reference_tables, egr_sync_place_locations, ...
     },
 )

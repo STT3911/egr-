@@ -22,11 +22,11 @@ logger = get_logger("tasks.licenses")
 )
 def check_license_changes_task(
     self,
-    pages: int = 1,
+    pages: int | None = None,
     page_size: int | None = None,
     verify_tls: bool | None = None,
 ) -> dict[str, Any]:
-    """Check recent license.gov.by pages and upsert new or changed records."""
+    """Walk the registry with a durable cursor; explicit pages checks its head."""
     db = SessionLocal()
     run = LicenseSyncRun(status="running")
     db.add(run)
@@ -48,7 +48,7 @@ def check_license_changes_task(
         run.updated_count = int(stats.get("updated", 0))
         run.unchanged_count = int(stats.get("unchanged", 0))
         run.failed_count = int(stats.get("invalid", 0))
-        run.last_page = max(1, pages)
+        run.last_page = int(stats["last_page"])
         run.stats_json = stats
         db.add(run)
         db.commit()
