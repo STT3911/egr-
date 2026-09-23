@@ -6,7 +6,7 @@ import random
 import pytest
 
 from app.crud.company import CompanyCRUD
-from app.database.models import CompanyAddressHistory, CompanyNameHistory, CompanyVEDHistory, CompanyPlaceLocation
+from app.database.models import CompanyAddressHistory, CompanyNameHistory, CompanyVEDHistory, CompanyPlaceLocation, CompanyContactHistory
 from app.services.mapper_service import CompanyMapper
 from app.services.egr_contract import period_fields
 
@@ -180,3 +180,92 @@ def test_two_same_day_addresses_with_different_ends_are_not_collapsed():
     assert len(crud._save_addresses_history(company, data)) == 2
     assert crud._save_addresses_history(company, data) == []
     assert len(rows) == 2
+
+
+HISTORY_TYPES = [
+    (CompanyNameHistory, "_save_names_history", "full_name_ru"),
+    (CompanyVEDHistory, "_save_ved_history", "ved_code"),
+    (CompanyContactHistory, "_save_contacts_history", "phone"),
+]
+
+
+@pytest.mark.parametrize("model,method,field", HISTORY_TYPES)
+@pytest.mark.parametrize("seed", range(6))
+@pytest.mark.parametrize("partially_corrected", [False, True])
+def test_adjacent_period_date_correction_does_not_confuse_next_row(model, method, field, seed, partially_corrected):
+    # Production UNP 491388269, anonymized: the corrected start of one
+    # contact period is also the legacy start of the next one.
+    rows = [
+        model(**{field: "old", "valid_from": date(2024, 5, 21), "valid_to": None}),
+        model(**{field: "same", "valid_from": date(2026, 5, 31), "valid_to": date(2026, 6, 1)}),
+        model(**{field: "same", "valid_from": date(2026, 6, 1), "valid_to": None}),
+    ]
+    original = list(rows)
+    incoming = [{field: value, **period_fields({"dfrom": start + "T21:00:00Z",
+                 "dto": end + "T21:00:00Z" if end else None})}
+                for value, start, end in [("same", "2026-05-31", "2026-06-01"),
+                                         ("same", "2026-06-01", None),
+                                         ("old", "2024-05-21", "2026-05-31")]]
+    if partially_corrected:
+        CompanyCRUD._update_history_entry(rows[1], {k:v for k,v in incoming[0].items() if not k.startswith("_")})
+    random.Random(seed).shuffle(rows)
+    random.Random(seed + 1).shuffle(incoming)
+    db = history_db(model, rows)
+    db.add.side_effect = rows.append
+    save = getattr(CompanyCRUD(db), method)
+    save(SimpleNamespace(id=1), incoming)
+    assert [(r.valid_from, r.valid_to) for r in original] == [
+        (date(2024, 5, 22), date(2026, 6, 1)),
+        (date(2026, 6, 1), date(2026, 6, 2)),
+        (date(2026, 6, 2), None),
+    ]
+    save(SimpleNamespace(id=1), list(reversed(incoming)))
+    assert len(rows) == 3
+    db.add.assert_not_called()
+    db.delete.assert_not_called()
+    if model is CompanyNameHistory:
+        assert all(row.search_name for row in rows)
+
+
+@pytest.mark.parametrize("model,method,field", HISTORY_TYPES)
+def test_same_day_distinct_periods_and_source_duplicates_in_all_histories(model, method, field):
+    rows = []
+    db = history_db(model, rows)
+    db.add.side_effect = rows.append
+    save = getattr(CompanyCRUD(db), method)
+    incoming = [{field:"same", "valid_from":date(2026, 6, 1), "valid_to":end}
+                for end in [date(2026, 6, 1), None]]
+    save(SimpleNamespace(id=1), incoming + [dict(incoming[0])])
+    assert len(rows) == 2
+    save(SimpleNamespace(id=1), list(reversed(incoming)))
+    assert len(rows) == 2
+    assert {r.valid_to for r in rows} == {None, date(2026, 6, 1)}
+
+
+@pytest.mark.parametrize("model,method,field", HISTORY_TYPES)
+def test_truly_ambiguous_history_is_not_merged_or_deleted(model, method, field):
+    rows = [model(**{field:"same", "valid_from":date(2026, 6, 1), "valid_to":None}) for _ in range(2)]
+    db = history_db(model, rows)
+    incoming = [{field:"same", "valid_from":date(2026, 6, 1), "valid_to":date(2026, 6, 2)}]
+    with pytest.raises(ValueError, match="Ambiguous EGR"):
+        getattr(CompanyCRUD(db), method)(SimpleNamespace(id=1), incoming)
+    assert all(r.valid_to is None for r in rows)
+    db.add.assert_not_called()
+    db.delete.assert_not_called()
+
+
+def test_contact_enrichment_preserves_distinct_phones_and_nonempty_websites():
+    day = date(2026, 6, 1)
+    rows = [CompanyContactHistory(phone="one", valid_from=day),
+            CompanyContactHistory(phone="two", website="https://old.example", valid_from=day)]
+    db = history_db(CompanyContactHistory, rows)
+    db.add.side_effect = rows.append
+    data = [{"phone":"one", "website":"https://one.example", "valid_from":day, "valid_to":None},
+            {"phone":"two", "website":"https://new.example", "valid_from":day, "valid_to":None}]
+    crud = CompanyCRUD(db)
+    crud._save_contacts_history(SimpleNamespace(id=1), data)
+    assert len(rows) == 3
+    assert rows[0].website == "https://one.example"
+    assert rows[1].website == "https://old.example"
+    crud._save_contacts_history(SimpleNamespace(id=1), data)
+    assert len(rows) == 3
