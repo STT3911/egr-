@@ -211,22 +211,16 @@ class CompanyCRUD:
 
     def _save_names_history(self, company: Company, names: List[Dict]):
         """Save names history with automatic search_name generation"""
-        # Одним запросом тянем существующие ключи (company_id, full_name_ru, valid_from),
-        # чтобы не делать SELECT на каждую запись (N+1).
-        existing_keys = {
-            (r.full_name_ru, r.valid_from): r
-            for r in self.db.query(CompanyNameHistory).filter(CompanyNameHistory.company_id == company.id).all()
-        }
+        rows = self.db.query(CompanyNameHistory).filter(CompanyNameHistory.company_id == company.id).all()
+        names = self._unique_history_rows(names)
+        matches = self._match_history_periods(rows, names, identity_fields=("full_name_ru",), label="name")
         added: List[Dict] = []
-        for name_data in names:
-            legacy_start = name_data.get("_legacy_valid_from")
+        for i, name_data in enumerate(names):
             name_data = {k: v for k, v in name_data.items() if not k.startswith("_")}
-            key = (name_data.get("full_name_ru"), name_data.get("valid_from"))
-            self._recover_history_key(existing_keys, key, legacy_start)
-            if key in existing_keys:
-                self._update_history_entry(existing_keys[key], name_data)
+            if i in matches:
+                self._update_history_entry(matches[i], name_data)
                 full_name = name_data.get("full_name_ru") or name_data.get("short_name_ru") or name_data.get("full_name_by")
-                existing_keys[key].search_name = normalize_company_name(full_name) if full_name else None
+                matches[i].search_name = normalize_company_name(full_name) if full_name else None
                 continue
 
             # Автоматически генерируем search_name для умного поиска
@@ -239,20 +233,12 @@ class CompanyCRUD:
                 **name_data
             )
             self.db.add(name_entry)
-            existing_keys[key] = name_entry
             added.append(name_data)
         return added
 
     @staticmethod
-    def _recover_history_key(existing, key, legacy_start):
-        if legacy_start is None or legacy_start == key[1]:
-            return
-        previous = existing.get((key[0], legacy_start))
-        current = existing.get(key)
-        if previous is not None and current is not None and previous is not current:
-            raise ValueError("Ambiguous EGR history dates; refusing to merge or delete records")
-        if previous is not None:
-            existing[key] = previous
+    def _unique_history_rows(records):
+        return [r for i, r in enumerate(records) if r not in records[:i]]
 
     @staticmethod
     def _update_history_entry(entry, values):
@@ -263,7 +249,8 @@ class CompanyCRUD:
             setattr(entry, field, value)
 
     @staticmethod
-    def _match_address_history(existing, addresses):
+    def _match_history_periods(existing, records, *, identity_fields, label,
+                               allow_format_changes=False, enrichment_fields=()):
         """Plan one-to-one repairs before mutating any row.
 
         Start dates alone are not unique: EGR can publish multiple changes on
@@ -282,21 +269,33 @@ class CompanyCRUD:
                                       addr.get("_legacy_valid_to", end))}
             return (row.valid_from, row.valid_to) in periods
 
-        def same_address(row, addr):
-            return row.full_address == addr.get("full_address")
+        def same_identity(row, addr):
+            return all(getattr(row, field) == addr.get(field) for field in identity_fields)
+
+        def compatible(row, addr):
+            if allow_format_changes:
+                return True
+            # Contacts used to omit website/fax. Only enrich absent fields;
+            # conflicting nonempty values are distinct observations.
+            return all(
+                (getattr(row, field) is None or field not in addr
+                 or getattr(row, field) == addr.get(field)) if field in enrichment_fields
+                else getattr(row, field) == addr.get(field)
+                for field in identity_fields
+            )
 
         matches = {}
         remaining_rows = set(range(len(existing)))
-        remaining_addresses = set(range(len(addresses)))
+        remaining_records = set(range(len(records)))
         for predicate in (
-            lambda r, a: same_address(r, a) and same_period(r, a),
-            lambda r, a: same_start(r, a) and same_period(r, a),
-            lambda r, a: same_address(r, a) and same_start(r, a),
-            same_start,
+            lambda r, a: same_identity(r, a) and same_period(r, a),
+            lambda r, a: compatible(r, a) and same_start(r, a) and same_period(r, a),
+            lambda r, a: same_identity(r, a) and same_start(r, a),
+            lambda r, a: compatible(r, a) and same_start(r, a),
         ):
-            while remaining_rows and remaining_addresses:
-                candidates = {i: [j for j in remaining_rows if predicate(existing[j], addresses[i])]
-                              for i in remaining_addresses}
+            while remaining_rows and remaining_records:
+                candidates = {i: [j for j in remaining_rows if predicate(existing[j], records[i])]
+                              for i in remaining_records}
                 uses = {}
                 for options in candidates.values():
                     for j in options:
@@ -307,20 +306,26 @@ class CompanyCRUD:
                     break
                 for i, j in certain:
                     matches[i] = existing[j]
-                    remaining_addresses.remove(i)
+                    remaining_records.remove(i)
                     remaining_rows.remove(j)
 
-        if any(same_start(existing[j], addresses[i]) or
-               (same_address(existing[j], addresses[i]) and same_period(existing[j], addresses[i]))
-               for i in remaining_addresses for j in remaining_rows):
-            raise ValueError("Ambiguous EGR address periods; manual reconciliation required")
+        if any(compatible(existing[j], records[i]) and
+               (same_start(existing[j], records[i]) or same_period(existing[j], records[i]))
+               for i in remaining_records for j in remaining_rows):
+            raise ValueError(f"Ambiguous EGR {label} periods; manual reconciliation required")
         return matches
+
+    @staticmethod
+    def _match_address_history(existing, addresses):
+        return CompanyCRUD._match_history_periods(
+            existing, addresses, identity_fields=("full_address",), label="address", allow_format_changes=True,
+        )
 
     def _save_addresses_history(self, company: Company, addresses: List[Dict], *, authoritative=False):
         """Retain history, update period ends, invalidate an obsolete Mobile cache."""
         existing = self.db.query(CompanyAddressHistory).filter(CompanyAddressHistory.company_id == company.id).all()
         # Identical source rows are repeated observations, not extra periods.
-        addresses = [a for i, a in enumerate(addresses) if a not in addresses[:i]]
+        addresses = self._unique_history_rows(addresses)
         matches = self._match_address_history(existing, addresses)
         active = [r for r in existing if r.valid_to is None and r.full_address]
         old_current = max(active, key=lambda r: r.valid_from or datetime.min.date(), default=None)
@@ -352,56 +357,41 @@ class CompanyCRUD:
 
     def _save_ved_history(self, company: Company, ved_list: List[Dict]):
         """Save VED history"""
-        existing_keys = {
-            (r.ved_code, r.valid_from): r
-            for r in self.db.query(CompanyVEDHistory).filter(CompanyVEDHistory.company_id == company.id).all()
-        }
+        rows = self.db.query(CompanyVEDHistory).filter(CompanyVEDHistory.company_id == company.id).all()
+        ved_list = self._unique_history_rows(ved_list)
+        matches = self._match_history_periods(rows, ved_list, identity_fields=("ved_code",), label="VED")
         added: List[Dict] = []
-        for ved_data in ved_list:
-            legacy_start = ved_data.get("_legacy_valid_from")
+        for i, ved_data in enumerate(ved_list):
             ved_data = {k: v for k, v in ved_data.items() if not k.startswith("_")}
-            key = (ved_data.get("ved_code"), ved_data.get("valid_from"))
-            self._recover_history_key(existing_keys, key, legacy_start)
-            if key in existing_keys:
-                self._update_history_entry(existing_keys[key], ved_data)
+            if i in matches:
+                self._update_history_entry(matches[i], ved_data)
                 continue
             ved_entry = CompanyVEDHistory(
                 company_id=company.id,
                 **ved_data
             )
             self.db.add(ved_entry)
-            existing_keys[key] = ved_entry
             added.append(ved_data)
         return added
 
     def _save_contacts_history(self, company: Company, contacts: List[Dict]):
         """Save contacts history"""
         rows = self.db.query(CompanyContactHistory).filter(CompanyContactHistory.company_id == company.id).all()
-        def identity(item):
-            return tuple(getattr(item, name, None) for name in ("email", "phone", "website", "fax"))
-        existing_keys = {(identity(r), r.valid_from): r for r in rows}
-        for contact_data in contacts:
-            legacy_start = contact_data.get("_legacy_valid_from")
+        contacts = self._unique_history_rows(contacts)
+        matches = self._match_history_periods(
+            rows, contacts, identity_fields=("email", "phone", "website", "fax"),
+            enrichment_fields=("website", "fax"), label="contact",
+        )
+        for i, contact_data in enumerate(contacts):
             contact_data = {k: v for k, v in contact_data.items() if not k.startswith("_")}
-            key = (tuple(contact_data.get(n) for n in ("email", "phone", "website", "fax")), contact_data.get("valid_from"))
-            self._recover_history_key(existing_keys, key, legacy_start)
-            if key in existing_keys:
-                self._update_history_entry(existing_keys[key], contact_data)
-                continue
-            # Old mapper omitted website/fax. Enrich a uniquely matching row
-            # in place, but never conflate distinct phone-only records.
-            candidates = [r for r in rows if r.valid_from in {key[1], legacy_start} - {None}
-                          and r.email == contact_data.get("email") and r.phone == contact_data.get("phone")]
-            if len(candidates) == 1:
-                self._update_history_entry(candidates[0], contact_data)
-                existing_keys[key] = candidates[0]
+            if i in matches:
+                self._update_history_entry(matches[i], contact_data)
                 continue
             contact_entry = CompanyContactHistory(
                 company_id=company.id,
                 **contact_data
             )
             self.db.add(contact_entry)
-            existing_keys[key] = contact_entry
 
     def _save_egr_events(self, company, events):
         for entry in events:

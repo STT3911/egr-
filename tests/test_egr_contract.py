@@ -78,9 +78,10 @@ def test_date_correction_reuses_name_row_and_ambiguous_merge_stops():
     assert CompanyCRUD(db)._save_names_history(SimpleNamespace(id=1), [payload]) == []
     assert row.valid_from == date(2026, 8, 25)
     db.add.assert_not_called()
+    db.query.return_value.filter.return_value.all.return_value = [row,
+        CompanyNameHistory(full_name_ru="Name", valid_from=date(2026, 8, 24), valid_to=None)]
     with pytest.raises(ValueError, match="Ambiguous"):
-        CompanyCRUD._recover_history_key({("Name", date(2026, 8, 24)): object(),
-            ("Name", date(2026, 8, 25)): object()}, ("Name", date(2026, 8, 25)), date(2026, 8, 24))
+        CompanyCRUD(db)._save_names_history(SimpleNamespace(id=1), [payload])
 
 
 def test_events_keep_int64_id_cancellation_and_suspension_dates():
