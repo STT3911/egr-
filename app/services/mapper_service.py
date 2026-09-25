@@ -2,7 +2,7 @@
 from typing import Dict, Any
 from datetime import datetime
 from app.core.logger import get_logger
-from app.services.egr_contract import egr_date, lower_keys, period_fields, map_event
+from app.services.egr_contract import egr_date, lower_keys, period_fields, map_event, legacy_address_text
 
 logger = get_logger("mapper")
 
@@ -255,6 +255,7 @@ class CompanyMapper:
 
             addresses_data.append({
                 "full_address": full_address,
+                "_legacy_full_address": legacy_address_text(addr),
                 "postal_code": addr.get("nindex"),
                 "region": addr.get("vregion"),
                 "district": addr.get("vdistrict") or (addr.get("nsi00202") or {}).get("vnsfull"),

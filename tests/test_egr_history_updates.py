@@ -191,6 +191,64 @@ HISTORY_TYPES = [
 
 @pytest.mark.parametrize("model,method,field", HISTORY_TYPES)
 @pytest.mark.parametrize("seed", range(6))
+def test_unique_chain_of_one_day_periods_uses_global_assignment(model, method, field, seed):
+    # Production 600112236: canonical period N equals legacy period N+1.
+    rows = [model(**{field: "same", "valid_from": date(2003, 6, n),
+                     "valid_to": date(2003, 6, n + 1)}) for n in (3, 4)]
+    original = list(rows)
+    incoming = [{field: "same", **period_fields({"dfrom": f"2003-06-0{n}T21:00:00Z",
+                 "dto": f"2003-06-0{n+1}T21:00:00Z"})} for n in (3, 4)]
+    random.Random(seed).shuffle(rows)
+    random.Random(seed + 1).shuffle(incoming)
+    db = history_db(model, rows)
+    save = getattr(CompanyCRUD(db), method)
+    save(SimpleNamespace(id=1), incoming)
+    assert [(r.valid_from, r.valid_to) for r in original] == [
+        (date(2003, 6, 4), date(2003, 6, 5)), (date(2003, 6, 5), date(2003, 6, 6))]
+    save(SimpleNamespace(id=1), list(reversed(incoming)))
+    db.add.assert_not_called()
+    db.delete.assert_not_called()
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_legacy_address_renderer_disambiguates_village_and_agrotown(seed):
+    # Production 291210083: an earlier import kept two observations for
+    # the same open period. Adding the district must not merge both rows.
+    rows = [CompanyAddressHistory(full_address=value, valid_from=start, valid_to=end)
+            for value, start, end in [
+                ("Брестская, д. Рудники, д. 41", date(2014, 9, 17), date(2019, 1, 3)),
+                ("Брестская, д. Рудники, д. 41", date(2019, 1, 3), None),
+                ("Брестская, аг. Рудники, д. 41", date(2019, 1, 3), None),
+            ]]
+    old, retained, current = rows
+    raw = {"base_info": {"ngrn": 291210083}, "addresses": [
+        {"vregion": "Брестская", "vdistrict": "Пружанский", "vnp": "Рудники",
+         "nsi00239": {"vntnpk": kind}, "vdom": "41", "dfrom": start, "dto": end}
+        for kind, start, end in [
+            ("д.", "2014-09-17T21:00:00Z", "2019-01-03T21:00:00Z"),
+            ("аг.", "2019-01-03T21:00:00Z", None),
+        ]]}
+    incoming = CompanyMapper().map_to_db_structure(291210083, raw)["addresses"]
+    assert incoming[1]["_legacy_full_address"] == current.full_address
+    random.Random(seed).shuffle(rows)
+    random.Random(seed + 1).shuffle(incoming)
+    db = history_db(CompanyAddressHistory, rows)
+    db.add.side_effect = rows.append
+    save = CompanyCRUD(db)._save_addresses_history
+    assert save(SimpleNamespace(id=1), incoming) == []
+    assert old.valid_from == date(2014, 9, 18)
+    assert old.valid_to == date(2019, 1, 4)
+    assert current.valid_from == date(2019, 1, 4)
+    assert "Пружанский" in current.full_address
+    assert retained.full_address == "Брестская, д. Рудники, д. 41"
+    assert retained.valid_from == date(2019, 1, 3) and retained.valid_to is None
+    assert save(SimpleNamespace(id=1), list(reversed(incoming))) == []
+    db.add.assert_not_called()
+    db.delete.assert_not_called()
+
+
+@pytest.mark.parametrize("model,method,field", HISTORY_TYPES)
+@pytest.mark.parametrize("seed", range(6))
 @pytest.mark.parametrize("partially_corrected", [False, True])
 def test_adjacent_period_date_correction_does_not_confuse_next_row(model, method, field, seed, partially_corrected):
     # Production UNP 491388269, anonymized: the corrected start of one
@@ -269,3 +327,18 @@ def test_contact_enrichment_preserves_distinct_phones_and_nonempty_websites():
     assert rows[1].website == "https://old.example"
     crud._save_contacts_history(SimpleNamespace(id=1), data)
     assert len(rows) == 3
+
+
+def test_unique_assignment_matches_exhaustive_small_graphs():
+    from itertools import product, permutations
+    # All nonempty candidate sets for three records and three DB rows.
+    options = [[j for j in range(3) if mask & (1 << j)] for mask in range(1, 8)]
+    for graph in product(options, repeat=3):
+        candidates = dict(enumerate(graph))
+        solutions = [dict(enumerate(p)) for p in permutations(range(3))
+                     if all(p[i] in graph[i] for i in range(3))]
+        actual = CompanyCRUD._unique_period_assignment(candidates)
+        if len(solutions) == 1:
+            assert actual == solutions[0]
+        elif solutions:
+            assert all(all(solution[i] == j for solution in solutions) for i, j in actual.items())

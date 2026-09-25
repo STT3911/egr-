@@ -45,6 +45,30 @@ def period_fields(row):
     return fields
 
 
+def legacy_address_text(row):
+    """Exact pre-contract mapper rendering, not fuzzy address normalization.
+
+    Preserve settlement/street types: a village and an agrotown must not
+    become interchangeable merely because their period dates coincide.
+    """
+    parts = []
+    country = (row.get("nsi00201") or {}).get("vnstranp")
+    if country and country != "Республика Беларусь":
+        parts.append(country)
+    if row.get("vregion"):
+        parts.append(row["vregion"])
+    for value, ref, field in (("vnp", "nsi00239", "vntnpk"), ("vulitsa", "nsi00226", "vntulk")):
+        if row.get(value):
+            parts.append(f"{(row.get(ref) or {}).get(field, '')} {row[value]}".strip())
+    if row.get("vdom"):
+        parts.append(f"д. {row['vdom']}")
+    if row.get("vpom"):
+        room_type = (row.get("nsi00234") or {}).get("vnvpom") or ""
+        label = "оф." if "нежилое" in room_type.lower() else "кв."
+        parts.append(f"{label} {row['vpom']}")
+    return ", ".join(parts) if parts else None
+
+
 def map_event(row):
     row = lower_keys(row)
     source_id = row.get("ngr04004")

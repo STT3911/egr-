@@ -64,11 +64,14 @@ async def collect_day(client, day, *, delay=0.5, row_limit=2500):
 
 
 class PeriodSyncStore:
-    def __init__(self, db):
+    def __init__(self, db, *, state_key=STATE_KEY):
         self.db = db
+        if not state_key or (state_key != STATE_KEY and not state_key.startswith("egr_period_window:")):
+            raise ValueError("Invalid EGR checkpoint key")
+        self.state_key = state_key
 
     def load(self):
-        row = self.db.query(SystemState).filter(SystemState.key == STATE_KEY).first()
+        row = self.db.query(SystemState).filter(SystemState.key == self.state_key).first()
         if not row:
             return None
         state = json.loads(row.value)
@@ -92,13 +95,13 @@ class PeriodSyncStore:
                     ))
             if unp is not None and events:
                 emit_egr_source_events(self.db, unp, events, fallback_date=day)
-            row = self.db.query(SystemState).filter(SystemState.key == STATE_KEY).first()
+            row = self.db.query(SystemState).filter(SystemState.key == self.state_key).first()
             value = json.dumps(state, ensure_ascii=False)
             if row:
                 row.value = value
             else:
-                self.db.add(SystemState(key=STATE_KEY, value=value))
-            if completed_day is not None:
+                self.db.add(SystemState(key=self.state_key, value=value))
+            if completed_day is not None and self.state_key == STATE_KEY:
                 # Compatibility for existing monitoring; never move the old
                 # cursor backwards during bootstrap or overlap replay.
                 legacy = self.db.query(SystemState).filter(SystemState.key == "egr_last_sync_date").first()
