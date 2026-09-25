@@ -32,6 +32,33 @@ def feed_client(rows=None):
     return client
 
 
+def test_explicit_window_keeps_backlog_and_monitoring_cursor(store):
+    import json
+    backlog = {"version": 2, "target": "2026-09-21", "next_day": "2026-08-31", "pending": None}
+    store.save(backlog, completed_day=date(2026, 8, 30))
+    isolated = PeriodSyncStore(store.db, state_key="egr_period_window:2026-09-15:2026-09-17")
+    client = feed_client({"getBaseInfoByPeriod": [{"ngrn": 193879557}]})
+    refresh = AsyncMock()
+    result = run(isolated, client, refresh, bootstrap_days=3, max_companies=1)
+    assert result["status"] == "pending"
+    assert isolated.load()["last_completed_day"] == "2026-09-15"
+    result = run(isolated, client, refresh)
+    assert result["status"] == "complete" and refresh.await_count == 3
+    assert store.load() == backlog
+    assert store.db.get(SystemState, "egr_last_sync_date").value == "2026-08-30"
+    assert run(isolated, client, refresh)["status"] == "up_to_date"
+
+
+def test_failed_explicit_window_keeps_its_unp_pending(store):
+    isolated = PeriodSyncStore(store.db, state_key="egr_period_window:2026-09-17:2026-09-17")
+    client = feed_client({"getBaseInfoByPeriod": [{"ngrn": 193879557}]})
+    with pytest.raises(ValueError, match="ambiguous"):
+        run(isolated, client, AsyncMock(side_effect=ValueError("ambiguous")))
+    assert isolated.load()["pending"]["next_index"] == 0
+    assert store.load() is None
+    assert store.db.get(SystemState, "egr_last_sync_date") is None
+
+
 def run(store, client, refresh, **kwargs):
     opts = dict(target=DAY, bootstrap_days=1, delay=0)
     opts.update(kwargs)

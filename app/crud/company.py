@@ -249,6 +249,49 @@ class CompanyCRUD:
             setattr(entry, field, value)
 
     @staticmethod
+    def _unique_period_assignment(candidates):
+        """Return only forced complete assignments in connected components.
+
+        Adjacent one-day periods can each match the previous canonical period
+        and their own UTC-truncated period. A unique chain-wide assignment is
+        evidence; input order or choosing the first candidate is not.
+        """
+        result = {}
+        unseen = {i for i, options in candidates.items() if options}
+        while unseen:
+            component = {min(unseen)}
+            rows = set()
+            while True:
+                rows.update(j for i in component for j in candidates[i])
+                expanded = {i for i in unseen if rows.intersection(candidates[i])}
+                if expanded <= component:
+                    break
+                component.update(expanded)
+            unseen.difference_update(component)
+
+            def matching(forbidden=None):
+                owners = {}
+
+                def assign(i, visited):
+                    for j in candidates[i]:
+                        if (i, j) == forbidden or j in visited:
+                            continue
+                        visited.add(j)
+                        if j not in owners or assign(owners[j], visited):
+                            owners[j] = i
+                            return True
+                    return False
+
+                if not all(assign(i, set()) for i in sorted(component)):
+                    return None
+                return {i: j for j, i in owners.items()}
+
+            proposal = matching()
+            if proposal is not None and all(matching(pair) is None for pair in proposal.items()):
+                result.update(proposal)
+        return result
+
+    @staticmethod
     def _match_history_periods(existing, records, *, identity_fields, label,
                                allow_format_changes=False, enrichment_fields=()):
         """Plan one-to-one repairs before mutating any row.
@@ -272,6 +315,11 @@ class CompanyCRUD:
         def same_identity(row, addr):
             return all(getattr(row, field) == addr.get(field) for field in identity_fields)
 
+        def legacy_identity(row, addr):
+            return (allow_format_changes and identity_fields == ("full_address",)
+                    and bool(addr.get("_legacy_full_address"))
+                    and row.full_address == addr["_legacy_full_address"])
+
         def compatible(row, addr):
             if allow_format_changes:
                 return True
@@ -289,8 +337,10 @@ class CompanyCRUD:
         remaining_records = set(range(len(records)))
         for predicate in (
             lambda r, a: same_identity(r, a) and same_period(r, a),
+            lambda r, a: legacy_identity(r, a) and same_period(r, a),
             lambda r, a: compatible(r, a) and same_start(r, a) and same_period(r, a),
             lambda r, a: same_identity(r, a) and same_start(r, a),
+            lambda r, a: legacy_identity(r, a) and same_start(r, a),
             lambda r, a: compatible(r, a) and same_start(r, a),
         ):
             while remaining_rows and remaining_records:
@@ -303,7 +353,9 @@ class CompanyCRUD:
                 certain = [(i, options[0]) for i, options in candidates.items()
                            if len(options) == 1 and uses[options[0]] == 1]
                 if not certain:
-                    break
+                    certain = list(CompanyCRUD._unique_period_assignment(candidates).items())
+                    if not certain:
+                        break
                 for i, j in certain:
                     matches[i] = existing[j]
                     remaining_records.remove(i)
