@@ -342,3 +342,22 @@ def test_unique_assignment_matches_exhaustive_small_graphs():
             assert actual == solutions[0]
         elif solutions:
             assert all(all(solution[i] == j for solution in solutions) for i, j in actual.items())
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_name_complete_identity_disambiguates_mobile_and_legacy_observations(reverse):
+    # 592039130, anonymized. Neither observation may be deleted or collapsed.
+    mobile = CompanyNameHistory(full_name_ru="Name", valid_from=date(2026, 9, 8))
+    legacy = CompanyNameHistory(full_name_ru="Name", short_name_ru="Name", valid_from=date(2026, 9, 7))
+    rows = [mobile, legacy][::(-1 if reverse else 1)]
+    db = history_db(CompanyNameHistory, rows)
+    incoming = [{"full_name_ru": "Name", "short_name_ru": "Name", "full_name_by": None,
+                 **period_fields({"dfrom": "2026-09-07T21:00:00Z", "dto": None})}]
+    save = CompanyCRUD(db)._save_names_history
+    assert save(SimpleNamespace(id=1), incoming) == []
+    assert legacy.valid_from == date(2026, 9, 8)
+    assert mobile.short_name_ru is None
+    assert save(SimpleNamespace(id=1), incoming) == []
+    assert len(rows) == 2
+    db.add.assert_not_called()
+    db.delete.assert_not_called()
