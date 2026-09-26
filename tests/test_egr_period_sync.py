@@ -227,6 +227,84 @@ def test_batch_limit_has_durable_continuation(store):
     assert refresh.await_count == 2
 
 
+def test_history_conflict_does_not_block_other_days_or_claim_completion(store, monkeypatch):
+    from app.services.egr_contract import HistoryReconciliationError
+    event = {"ngrn": 193879557, "ngr04004": 12345}
+    client = feed_client({"getEventByPeriod": [event], "getAddressByPeriod": [{"ngrn": 300325070}]})
+    emit = Mock()
+    monkeypatch.setattr("app.services.egr_period_sync.emit_egr_source_events", emit)
+    async def broken(unp):
+        if unp == 193879557:
+            raise HistoryReconciliationError("ambiguous name")
+    result = run(store, client, broken, bootstrap_days=2)
+    assert result["status"] == "blocked" and result["processed"] == 2
+    state = store.load()
+    assert state["completed_target"] is None
+    assert state["last_completed_day"] is None
+    assert state["next_day"] is None
+    assert len(state["history_conflicts"]) == 2
+    assert store.db.get(SystemState, "egr_last_sync_date") is None
+    emit.assert_not_called()
+    # A restarted process reads the saved conflicts, including source events.
+    client.get_period_rows.reset_mock()
+    fresh_store = PeriodSyncStore(store.db)
+    result = run(fresh_store, client, AsyncMock())
+    assert result["status"] == "complete" and result["processed"] == 2
+    assert fresh_store.load()["history_conflicts"] == {}
+    assert fresh_store.load()["last_completed_day"] == DAY.isoformat()
+    assert fresh_store.load()["completed_target"] == DAY.isoformat()
+    assert emit.call_count == 2
+    client.get_period_rows.assert_not_called()
+
+
+def test_conflict_ack_is_atomic_and_source_errors_remain_fatal(store, monkeypatch):
+    from app.services.egr_contract import HistoryReconciliationError
+    client = feed_client({"getAddressByPeriod": [{"ngrn": 193879557}, {"ngrn": 300325070}]})
+    run(store, client, AsyncMock(side_effect=HistoryReconciliationError("ambiguous")), max_companies=1)
+    saved = store.load()
+    assert saved["pending"]["next_index"] == 1
+    assert len(saved["history_conflicts"]) == 1
+    with pytest.raises(httpx.ReadTimeout):
+        run(store, client, AsyncMock(side_effect=httpx.ReadTimeout("source down")))
+    assert store.load() == saved
+
+
+def test_conflict_retry_budget_does_not_spin(store):
+    from app.services.egr_contract import HistoryReconciliationError
+    client = feed_client({"getAddressByPeriod": [{"ngrn": 193879557}]})
+    bad = AsyncMock(side_effect=HistoryReconciliationError("ambiguous"))
+    assert run(store, client, bad)["status"] == "blocked"
+    assert bad.await_count == 1
+    assert run(store, client, bad)["status"] == "blocked"
+    assert bad.await_count == 2
+    assert next(iter(store.load()["history_conflicts"].values()))["attempts"] == 2
+
+
+def test_watermark_stops_before_gap_and_recovers_after_retry(store):
+    from app.services.egr_contract import HistoryReconciliationError
+    client = feed_client()
+    client.get_period_rows = AsyncMock(side_effect=lambda source, day:
+        [{"ngrn": 193879557}] if source == "getAddressByPeriod" and day == "16.09.2026" else [])
+    result = run(store, client, AsyncMock(side_effect=HistoryReconciliationError("ambiguous")), bootstrap_days=3)
+    assert result["status"] == "blocked"
+    assert store.load()["last_completed_day"] == "2026-09-15"
+    assert store.db.get(SystemState, "egr_last_sync_date").value == "2026-09-15"
+    assert run(store, client, AsyncMock())["status"] == "complete"
+    assert store.db.get(SystemState, "egr_last_sync_date").value == "2026-09-17"
+
+
+def test_retry_event_commit_failure_keeps_conflict_durable(store, monkeypatch):
+    from app.services.egr_contract import HistoryReconciliationError
+    client = feed_client({"getEventByPeriod": [{"ngrn": 193879557, "ngr04004": 12345}]})
+    run(store, client, AsyncMock(side_effect=HistoryReconciliationError("ambiguous")))
+    before = store.load()
+    monkeypatch.setattr("app.services.egr_period_sync.emit_egr_source_events",
+                        Mock(side_effect=RuntimeError("DB error")))
+    with pytest.raises(RuntimeError):
+        run(store, client, AsyncMock())
+    assert store.load() == before
+
+
 def test_new_day_replays_overlap_not_entire_registry(store):
     client = feed_client()
     run(store, client, AsyncMock())

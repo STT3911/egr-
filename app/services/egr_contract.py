@@ -5,6 +5,10 @@ import pytz
 MINSK = pytz.timezone("Europe/Minsk")
 
 
+class HistoryReconciliationError(ValueError):
+    """A valid source snapshot cannot be safely matched to existing history."""
+
+
 def egr_date(value):
     if not value:
         return None

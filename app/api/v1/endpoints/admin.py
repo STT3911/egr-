@@ -254,6 +254,18 @@ def _egr_source(db: Session) -> dict:
             """,
         )
         details["last_sync_date"] = state.get("last_sync_date")
+        checkpoint = _first_mapping(
+            db, "SELECT value FROM egr_system_state WHERE key = 'egr_period_sync_v2' LIMIT 1"
+        )
+        if checkpoint.get("value"):
+            progress = json.loads(checkpoint["value"])
+            pending = progress.get("pending") or {}
+            details["last_sync_date"] = progress.get("last_completed_day")
+            details["sync_target"] = progress.get("target")
+            details["sync_next_day"] = progress.get("next_day")
+            details["sync_processed_in_day"] = pending.get("next_index", 0)
+            details["sync_total_in_day"] = len(pending.get("unps", []))
+            details["sync_unresolved_histories"] = len(progress.get("history_conflicts", {}))
 
     return _serialize_source_status(
         key="egr",

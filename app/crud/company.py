@@ -34,6 +34,7 @@ import logging
 from app.utils.search_normalizer import normalize_company_name
 from app.services.contact_parser import parse_contacts
 from app.services.company_contacts import is_current_contact_period
+from app.services.egr_contract import HistoryReconciliationError
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,10 @@ class CompanyCRUD:
         """Save names history with automatic search_name generation"""
         rows = self.db.query(CompanyNameHistory).filter(CompanyNameHistory.company_id == company.id).all()
         names = self._unique_history_rows(names)
-        matches = self._match_history_periods(rows, names, identity_fields=("full_name_ru",), label="name")
+        matches = self._match_history_periods(
+            rows, names, identity_fields=("full_name_ru",), label="name",
+            disambiguation_fields=("short_name_ru", "full_name_by"),
+        )
         added: List[Dict] = []
         for i, name_data in enumerate(names):
             name_data = {k: v for k, v in name_data.items() if not k.startswith("_")}
@@ -293,7 +297,8 @@ class CompanyCRUD:
 
     @staticmethod
     def _match_history_periods(existing, records, *, identity_fields, label,
-                               allow_format_changes=False, enrichment_fields=()):
+                               allow_format_changes=False, enrichment_fields=(),
+                               disambiguation_fields=()):
         """Plan one-to-one repairs before mutating any row.
 
         Start dates alone are not unique: EGR can publish multiple changes on
@@ -336,6 +341,11 @@ class CompanyCRUD:
         remaining_rows = set(range(len(existing)))
         remaining_records = set(range(len(records)))
         for predicate in (
+            # Mobile and legacy API observations can have the same main name
+            # and shifted dates but different short/Belarusian names. Prefer
+            # the complete source identity; retain the other observation.
+            lambda r, a: bool(disambiguation_fields) and same_identity(r, a) and same_period(r, a)
+            and all(getattr(r, field) == a.get(field) for field in disambiguation_fields),
             lambda r, a: same_identity(r, a) and same_period(r, a),
             lambda r, a: legacy_identity(r, a) and same_period(r, a),
             lambda r, a: compatible(r, a) and same_start(r, a) and same_period(r, a),
@@ -364,7 +374,7 @@ class CompanyCRUD:
         if any(compatible(existing[j], records[i]) and
                (same_start(existing[j], records[i]) or same_period(existing[j], records[i]))
                for i in remaining_records for j in remaining_rows):
-            raise ValueError(f"Ambiguous EGR {label} periods; manual reconciliation required")
+            raise HistoryReconciliationError(f"Ambiguous EGR {label} periods; manual reconciliation required")
         return matches
 
     @staticmethod

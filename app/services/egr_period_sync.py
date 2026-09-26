@@ -13,7 +13,7 @@ from datetime import date, timedelta
 
 from app.database.models import SystemState
 from app.services.egr_event_notifications import emit_egr_source_events
-from app.services.egr_contract import egr_date
+from app.services.egr_contract import egr_date, HistoryReconciliationError
 
 logger = logging.getLogger(__name__)
 STATE_KEY = "egr_period_sync_v2"
@@ -127,20 +127,65 @@ async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
         raise ValueError("Invalid EGR period sync limits")
     started = time.monotonic()
     state = store.load()
-    if not state or state.get("next_day") is None:
+    if not state or (state.get("next_day") is None and not state.get("history_conflicts")):
         last = date.fromisoformat(state["completed_target"]) if state else None
         if last and last >= target:
             return {"status": "up_to_date", "target": target.isoformat()}
         start = (min(last + timedelta(days=1), target - timedelta(days=overlap_days - 1))
                  if last else target - timedelta(days=bootstrap_days - 1))
         state = {"version": 2, "target": target.isoformat(), "next_day": start.isoformat(),
-                 "pending": None, "completed_target": last.isoformat() if last else None}
+                 "pending": None, "completed_target": last.isoformat() if last else None,
+                 "last_completed_day": last.isoformat() if last else None}
         store.save(state)
     processed = 0
+    attempts = 0
+    conflicts = state.setdefault("history_conflicts", {})
+    finished = state.setdefault("scanned_days", [])
     end = date.fromisoformat(state["target"])
+
+    def budget_exhausted():
+        return attempts >= max_companies or time.monotonic() - started >= max_seconds
+
+    def progress(status):
+        return {"status": status, "processed": processed, "day": state.get("next_day"),
+                "unresolved": len(conflicts), "target": end.isoformat()}
+
+    def advance_watermark():
+        # A scanned day is NOT a completed day while any earlier UNP is
+        # unresolved. Retain events + dates for retry, never mask a gap.
+        first_gap = min((item["day"] for item in conflicts.values()), default=None)
+        eligible = [day for day in finished if first_gap is None or day < first_gap]
+        previous = state.get("last_completed_day")
+        if eligible:
+            newest = max(eligible)
+            if not previous or newest > previous:
+                state["last_completed_day"] = newest
+                return date.fromisoformat(newest)
+        return None
+
+    # Retry a bounded subset, least attempted first: one irreconcilable UNP
+    # cannot monopolize all future runs or starve other conflicts.
+    retry_keys = sorted(conflicts, key=lambda key: conflicts[key].get("attempts", 0))[:10]
+    for key in retry_keys:
+        if budget_exhausted():
+            return progress("pending")
+        item = conflicts[key]
+        await asyncio.sleep(delay)
+        attempts += 1
+        try:
+            await refresh(item["unp"])
+        except HistoryReconciliationError:
+            item["attempts"] = item.get("attempts", 1) + 1
+            store.save(state)
+        else:
+            del conflicts[key]
+            completed = advance_watermark()
+            store.save(state, unp=item["unp"], events=item["events"],
+                       day=date.fromisoformat(item["day"]), completed_day=completed)
+            processed += 1
     while state["next_day"] and date.fromisoformat(state["next_day"]) <= end:
-        if processed >= max_companies or time.monotonic() - started >= max_seconds:
-            return {"status": "pending", "processed": processed, "day": state["next_day"]}
+        if budget_exhausted():
+            return progress("pending")
         day = date.fromisoformat(state["next_day"])
         if state["pending"] is None:
             state["pending"] = await collect_day(client, day, delay=delay, row_limit=row_limit)
@@ -149,20 +194,36 @@ async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
                         state["pending"]["counts"], len(state["pending"]["unps"]))
         pending = state["pending"]
         while pending["next_index"] < len(pending["unps"]):
-            if processed >= max_companies or time.monotonic() - started >= max_seconds:
-                return {"status": "pending", "processed": processed, "day": day.isoformat()}
+            if budget_exhausted():
+                return progress("pending")
             unp = pending["unps"][pending["next_index"]]
             await asyncio.sleep(delay)
-            await refresh(unp)
+            attempts += 1
+            try:
+                await refresh(unp)
+            except HistoryReconciliationError as exc:
+                conflicts[f"{day}:{unp}"] = {
+                    "day": day.isoformat(), "unp": unp, "attempts": 1,
+                    "events": pending["events"].get(str(unp), []), "reason": str(exc),
+                }
+                pending["next_index"] += 1
+                store.save(state)
+                logger.error("EGR history conflict retained for retry: day=%s unp=%s", day, unp)
+                continue
             pending["next_index"] += 1
             store.save(state, unp=unp, events=pending["events"].get(str(unp), []), day=day)
             processed += 1
             logger.info("EGR ByPeriod %s: saved UNP %s (%s/%s)", day, unp,
                         pending["next_index"], len(pending["unps"]))
         state["pending"] = None
-        state["last_completed_day"] = day.isoformat()
+        if day.isoformat() not in finished:
+            finished.append(day.isoformat())
         state["next_day"] = (day + timedelta(days=1)).isoformat() if day < end else None
-        if day == end:
+        if day == end and not conflicts:
             state["completed_target"] = end.isoformat()
-        store.save(state, completed_day=day)
+        store.save(state, completed_day=advance_watermark())
+    if conflicts:
+        return progress("blocked")
+    state["completed_target"] = end.isoformat()
+    store.save(state, completed_day=advance_watermark())
     return {"status": "complete", "processed": processed, "target": end.isoformat()}
