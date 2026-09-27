@@ -10,6 +10,9 @@ engine = create_engine(
     pool_size=settings.DATABASE_POOL_SIZE,
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_recycle=settings.DATABASE_POOL_RECYCLE,
+    # Discard idle connections invalidated by a PostgreSQL recovery/restart.
+    # This does not retry or hide failures of transactions already in flight.
+    pool_pre_ping=True,
     echo=settings.DEBUG,
 )
 
@@ -27,7 +30,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
 
 
 
