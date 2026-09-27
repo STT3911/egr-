@@ -830,46 +830,39 @@ def egr_reconcile_states(limit: int | None = None):
         logger.warning("egr_reconcile_states: EGR_API_URL not set; skipped")
         return {}
 
-    limit = limit or settings.EGR_RECONCILE_LIMIT
+    from app.services.egr_state_reconcile import find_state_targets
+
+    limit = settings.EGR_RECONCILE_LIMIT if limit is None else int(limit)
+    if limit < 1:
+        raise ValueError("EGR reconcile limit must be positive")
     states = list(range(1, 14))
     service = AggregatorService()
     client = EGRClient(settings.EGR_API_URL)
 
     async def _enumerate():
-        out = {}
+        targets: list[int] = []
+        seen: set[int] = set()
         try:
             for s in states:
                 try:
-                    out[s] = await client.get_reg_nums_by_state(s)
+                    unps = await client.get_reg_nums_by_state(s)
                 except Exception as e:
                     logger.warning("egr_reconcile_states: state %s enum failed: %s", s, e)
-                    out[s] = []
+                    continue
+                targets.extend(find_state_targets(
+                    service.db, unps, s, limit=limit - len(targets), seen=seen,
+                ))
+                # Do not retain all thirteen full-state snapshots at once.
+                del unps
+                if len(targets) >= limit:
+                    break
                 await asyncio.sleep(0.3)
         finally:
             await client.close()
-        return out
+        return targets
 
     try:
-        by_state = asyncio.run(_enumerate())
-
-        targets: list[int] = []
-        seen: set[int] = set()
-        for s, unps in by_state.items():
-            if not unps:
-                continue
-            ints = [int(u) for u in unps]
-            rows = service.db.execute(text("""
-                SELECT api.unp
-                FROM unnest(CAST(:unps AS bigint[])) AS api(unp)
-                LEFT JOIN egr_raw_company_data r ON r.unp = api.unp
-                LEFT JOIN egr_companies c ON c.unp = api.unp
-                WHERE r.unp IS NULL
-                   OR c.current_status_code IS DISTINCT FROM :state
-            """), {"unps": ints, "state": s}).fetchall()
-            for (u,) in rows:
-                if u not in seen:
-                    seen.add(u)
-                    targets.append(u)
+        targets = asyncio.run(_enumerate())
 
         logger.info("egr_reconcile_states: %s UNP требуют (пере)забора (cap %s)", len(targets), limit)
 
@@ -878,7 +871,8 @@ def egr_reconcile_states(limit: int | None = None):
             egr_fetch_raw_one.delay(u)
             enqueued += 1
 
-        return {"delta": len(targets), "enqueued": enqueued}
+        return {"delta": len(targets), "enqueued": enqueued,
+                "limit_reached": len(targets) >= limit}
     finally:
         service.close()
 

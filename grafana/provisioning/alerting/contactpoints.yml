@@ -12,6 +12,6 @@ contactPoints:
           message: |
             {{ if eq .Status "resolved" }}✅ <b>Норма</b>{{ else if eq (index .CommonLabels "severity") "critical" }}🔴 <b>Сбой</b>{{ else }}⚠️ <b>Внимание</b>{{ end }}
             <b>{{ .CommonLabels.alertname }}</b>
-            {{ range .Alerts }}• {{ .Annotations.summary }}
+            {{ range .Alerts }}• {{ if eq .Status "resolved" }}Устранено: {{ end }}{{ .Annotations.summary }}
             {{ end }}
         disableResolveMessage: false
