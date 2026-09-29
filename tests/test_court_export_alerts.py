@@ -58,3 +58,14 @@ def test_delivery_exception_does_not_leak_token_or_retry(configured, monkeypatch
     assert send() is False
     assert len(calls) == 1
     assert "test-bot-secret" not in capsys.readouterr().err
+
+
+def test_generic_failure_alert_sanitizes_unknown_exception_labels(configured, monkeypatch):
+    calls = []
+    monkeypatch.setattr(alerts.requests, "post", lambda *a, **kw:
+        calls.append(kw) or SimpleNamespace(status_code=200, json=lambda: {"ok": True}))
+    assert alerts.notify_export_failure(court_id=151, type_proc=14, page=25,
+        unique_total=310, error_type="secret-cookie-value")
+    message = calls[0]["json"]["text"]
+    assert "25" in message and "310" in message
+    assert "ExportError" in message and "secret-cookie-value" not in message

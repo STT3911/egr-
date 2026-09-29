@@ -27,6 +27,29 @@ def notify_auth_failure(*, court_id: int, type_proc: int, unique_total: int) -> 
         "Сохранённые страницы остаются в JSONL и checkpoint.\n"
         "Обновите court.cookie и возобновите контейнер выгрузки."
     )
+    return _send(text)
+
+
+def notify_export_failure(*, court_id: int, type_proc: int, page: int,
+                          unique_total: int, error_type: str) -> bool:
+    """Only allow known exception labels, never arbitrary diagnostic text."""
+    if error_type not in {"RuntimeError", "ValueError", "OSError", "PermissionError",
+                          "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout",
+                          "HTTPError", "RetryError"}:
+        error_type = "ExportError"
+    return _send(
+        "❌ Выгрузка судов остановлена: ошибка ответа, сети или сохранения.\n"
+        f"Суд: {court_id}; TypeProc: {type_proc}; страница: {page}.\n"
+        f"Тип ошибки: {error_type}.\n"
+        f"Уникальных записей в текущем файле: {unique_total}.\n"
+        "Ранее сохранённый прогресс оставлен. Ошибочная страница не завершена.\n"
+        "Нужна диагностика перед продолжением; это не обязательно истечение куки."
+    )
+
+
+def _send(text: str) -> bool:
+    if not telegram_configured():
+        return False
     try:
         response = requests.post(
             "https://api.telegram.org/bot"

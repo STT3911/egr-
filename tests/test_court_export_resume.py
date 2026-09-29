@@ -142,3 +142,38 @@ def test_missing_alert_config_fails_before_court_request(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="ALERT_TELEGRAM_BOT_TOKEN"):
         exporter.main()
     assert client.calls == []
+
+
+@pytest.mark.parametrize("error", [RuntimeError("response secret-cookie-value"),
+                                    OSError("secret-cookie-value")])
+@pytest.mark.parametrize("delivered", [True, False])
+def test_non_auth_error_alert_keeps_checkpoint_and_can_resume(monkeypatch, tmp_path, capsys, error, delivered):
+    client, args = setup_run(monkeypatch, tmp_path)
+    original_fetch = client.fetch_page
+    def fetch(self, filters, page):
+        if page == 2:
+            raise error
+        return original_fetch(self, filters, page)
+    monkeypatch.setattr(client, "fetch_page", fetch)
+    monkeypatch.setattr(exporter, "telegram_configured", lambda: True)
+    calls = []
+    monkeypatch.setattr(exporter, "notify_export_failure", lambda **kw: calls.append(kw) or delivered)
+    monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
+    assert exporter.main() == 1
+    assert len(calls) == 1 and calls[0]["page"] == 2 and calls[0]["unique_total"] == 1
+    assert "secret-cookie-value" not in capsys.readouterr().err
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert state["completed_pages"] == {"151": [1]}
+    assert not list(tmp_path.glob("*.jsonl"))
+    monkeypatch.setattr(client, "fetch_page", original_fetch)
+    assert exporter.main() == 0
+    assert len(next(tmp_path.glob("*.jsonl")).read_text().splitlines()) == 3
+
+
+def test_non_auth_alerts_are_opt_in(monkeypatch, tmp_path):
+    client, _ = setup_run(monkeypatch, tmp_path)
+    def fail(*args):
+        raise RuntimeError("unrecognized response")
+    monkeypatch.setattr(client, "fetch_page", fail)
+    monkeypatch.setattr(exporter, "notify_export_failure", lambda **kw: pytest.fail("unexpected alert"))
+    assert exporter.main() == 1

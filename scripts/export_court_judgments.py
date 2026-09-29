@@ -25,6 +25,7 @@ from app.services.court_judgments import (  # noqa: E402
 )
 from app.services.court_export_alerts import (  # noqa: E402
     notify_auth_failure,
+    notify_export_failure,
     telegram_configured,
 )
 
@@ -209,6 +210,8 @@ def main() -> int:
     fetched = 0
     written = 0
     downloaded = 0
+    active_court_id = court_ids[0]
+    active_page = 1
 
     try:
         with CourtJudgmentClient(
@@ -228,6 +231,8 @@ def main() -> int:
                 category_dispute=args.category_dispute,
                 type_dispute=args.type_dispute,
             ):
+                active_court_id = filters.court
+                active_page = 1
                 completed = _completed_pages(state, filters.court)
                 totals = state.setdefault("total_pages", {})
                 total_pages = int(totals.get(str(filters.court), 0))
@@ -261,6 +266,7 @@ def main() -> int:
                 for page in range(1, total_pages + 1):
                     if page in completed:
                         continue
+                    active_page = page
                     records, reported_total = client.fetch_page(filters, page)
                     totals[str(filters.court)] = max(int(totals[str(filters.court)]), reported_total)
                     fetched += len(records)
@@ -294,7 +300,7 @@ def main() -> int:
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
         if args.notify_telegram:
             delivered = notify_auth_failure(
-                court_id=filters.court,
+                court_id=active_court_id,
                 type_proc=args.type_proc,
                 unique_total=len(seen),
             )
@@ -303,6 +309,20 @@ def main() -> int:
                 file=sys.stderr,
             )
         return 2
+    except Exception as exc:
+        # URLs and exception messages may contain session details; do not echo
+        # them to stderr/Telegram. Never acknowledge or skip the failed page.
+        print(f"Court export stopped: {type(exc).__name__}; court={active_court_id}; page={active_page}",
+              file=sys.stderr)
+        print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
+        if args.notify_telegram:
+            delivered = notify_export_failure(
+                court_id=active_court_id, type_proc=args.type_proc, page=active_page,
+                unique_total=len(seen), error_type=type(exc).__name__,
+            )
+            print("Court Telegram notification: " + ("sent" if delivered else "NOT delivered"),
+                  file=sys.stderr)
+        return 1
 
     complete = all(
         set(range(1, int(state["total_pages"][str(court_id)]) + 1))
