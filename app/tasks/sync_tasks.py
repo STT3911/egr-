@@ -2554,7 +2554,10 @@ def sync_gias_contract_index(
         result = service.sync_index(full=full, max_pages=max_pages)
         logger.info("✅ GIAS contract index sync completed: %s", result)
         return result
-    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+            requests.exceptions.RetryError) as exc:
+        # HTTPAdapter raises RetryError after exhausting transient HTTP statuses
+        # (including 503). Keep the same bounded task-level backoff as timeouts.
         # The service commits only successful pages. Preserve its cursor and
         # yield the worker slot between bounded retries (5, 10, 20 minutes).
         db.rollback()
