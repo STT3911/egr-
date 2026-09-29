@@ -60,12 +60,17 @@ def test_snapshot_streams_bounded_batches(tmp_path, monkeypatch):
     assert len(json.loads(next(tmp_path.glob("*.json")).read_text())) == 21
 
 
-def test_gias_timeout_retries_without_resetting_history(monkeypatch):
+@pytest.mark.parametrize("error", [
+    requests.exceptions.ConnectionError("read timeout"),
+    requests.exceptions.Timeout("timeout"),
+    requests.exceptions.RetryError("too many 503 responses"),
+])
+def test_gias_timeout_retries_without_resetting_history(monkeypatch, error):
     import app.tasks.sync_tasks as tasks
     from celery.exceptions import Retry
     db = Mock()
     service = Mock()
-    service.sync_index.side_effect = requests.exceptions.ConnectionError("read timeout")
+    service.sync_index.side_effect = error
     monkeypatch.setattr(tasks, "SessionLocal", lambda: db)
     monkeypatch.setattr(tasks, "GiasContractService", lambda db: service)
     retry = Mock(side_effect=Retry())
@@ -86,6 +91,23 @@ def test_unsafe_full_history_schedule_is_opt_in():
     from app.core.config import settings
     if not settings.EGR_HISTORICAL_SCHEDULE_ENABLED:
         assert "auto-fetch-historical" not in celery_app.conf.beat_schedule
+
+
+def test_gias_auth_http_error_is_not_retried(monkeypatch):
+    import app.tasks.sync_tasks as tasks
+    db, service = Mock(), Mock()
+    response = requests.Response()
+    response.status_code = 403
+    service.sync_index.side_effect = requests.HTTPError(response=response)
+    monkeypatch.setattr(tasks, "SessionLocal", lambda: db)
+    monkeypatch.setattr(tasks, "GiasContractService", lambda db: service)
+    retry = Mock()
+    monkeypatch.setattr(tasks.sync_gias_contract_index, "retry", retry)
+    with pytest.raises(requests.HTTPError):
+        tasks.sync_gias_contract_index.run()
+    retry.assert_not_called()
+    service.close.assert_called_once()
+    db.close.assert_called_once()
 
 
 def test_old_json_schedule_is_opt_in():
