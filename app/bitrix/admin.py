@@ -42,7 +42,8 @@ async def _check_is_admin_on_the_fly(domain: str, auth_id: str) -> bool:
         return False
 
 
-# Preserve the production landing hotfix: never redirect an auth POST.
+# Bitrix may open either spelling. Handle both directly to keep auth POSTs
+# out of slash redirects (the upstream request can have an HTTP scheme).
 @router.api_route("", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
 @router.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
 async def admin_panel(request: Request, db: AsyncSession = Depends(get_db)):

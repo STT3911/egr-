@@ -122,8 +122,8 @@ def installation_params():
 def test_install_finishes_only_after_confirmed_events(local_app, path):
     client, db = local_app
     response = client.post(path, data=installation_params(), follow_redirects=False)
-    assert "location" not in response.headers
     assert response.status_code == 200
+    assert "location" not in response.headers
     assert response.text.count('src="https://api.bitrix24.com/api/v1/"') == 1
     assert response.text.index('src="https://api.bitrix24.com/api/v1/"') < response.text.index("BX24.installFinish()")
     assert "window.location" not in response.text
@@ -171,9 +171,11 @@ def test_admin_initialization_sets_portal_domain(local_app, monkeypatch, path):
     bitrix = Mock(get_requisite_presets=AsyncMock(return_value=[]), get_company_userfields=AsyncMock(return_value=[]))
     monkeypatch.setattr(admin, "BitrixClient", Mock(return_value=bitrix))
     response = client.post(path, data=installation_params(), follow_redirects=False)
-    assert "location" not in response.headers
     assert response.status_code == 200
+    assert "location" not in response.headers
     assert db.add.call_args.args[0].bitrix_domain == PORTAL
+    assert db.add.call_args.args[0].access_token == "test-access"
+    assert db.add.call_args.args[0].refresh_token == "test-refresh"
     db.commit.assert_awaited_once()
 
 
