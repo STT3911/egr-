@@ -8,6 +8,7 @@ import math
 import os
 import random
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -38,6 +39,20 @@ COURTS: Dict[int, str] = {
 
 class CourtAuthenticationError(RuntimeError):
     """The supplied ASP.NET session is absent or no longer valid."""
+
+
+class CourtResponseError(RuntimeError):
+    """Safe structured diagnostics: never response text, cookies or request URL."""
+    def __init__(self, reason: str, response: requests.Response):
+        if reason not in {"blank_response", "unrecognized_response", "unexpected_redirect"}:
+            raise ValueError("Unknown court response reason")
+        self.reason = reason
+        self.http_status = int(response.status_code)
+        self.response_bytes = len(response.content or b"")
+        self.attempts = 1
+        message = ("Unexpected court redirect; export stopped" if reason == "unexpected_redirect"
+                   else "Empty or unrecognized court response; page was not completed")
+        super().__init__(message)
 
 
 def normalize_cookie_header(value: str) -> str:
@@ -262,14 +277,14 @@ class CourtJudgmentClient:
         timeout: Tuple[float, float] = (10.0, 60.0),
         cookie_file: Optional[Path] = None,
         rate_limit_state_file: Optional[Path] = None,
-        min_interval_seconds: float = 300.0,
+        min_interval_seconds: float = 30.0,
         delay_jitter_seconds: float = 0.0,
     ) -> None:
         cookie_header = normalize_cookie_header(cookie_header)
         if not cookie_header:
             raise ValueError("Court cookie header is empty")
-        if not math.isfinite(min_interval_seconds) or min_interval_seconds < 300:
-            raise ValueError("min_interval_seconds must be at least 300")
+        if not math.isfinite(min_interval_seconds) or min_interval_seconds < 30:
+            raise ValueError("min_interval_seconds must be at least 30")
         if not math.isfinite(delay_jitter_seconds) or delay_jitter_seconds < 0:
             raise ValueError("delay_jitter_seconds must be finite and nonnegative")
 
@@ -398,7 +413,7 @@ class CourtJudgmentClient:
         if response.status_code in (401, 403):
             raise CourtAuthenticationError("Court access denied; verify account access before resuming")
         if 300 <= response.status_code < 400:
-            raise RuntimeError("Unexpected court redirect; export stopped")
+            raise CourtResponseError("unexpected_redirect", response)
         response.raise_for_status()
         content_type = response.headers.get("Content-Type", "").lower()
         login_page = False
@@ -418,6 +433,27 @@ class CourtJudgmentClient:
         self,
         filters: CourtSearchFilters,
         page: int,
+    ) -> Tuple[List[CourtJudgment], int]:
+        # The site sometimes returns a whitespace-only HTTP 200. Retry the same
+        # page twice through _request, which enforces the persistent rate limit.
+        # Authentication failures, changed markup and redirects are not retried.
+        for attempt in range(1, 4):
+            try:
+                return self._fetch_page_once(filters, page)
+            except CourtResponseError as error:
+                error.attempts = attempt
+                if error.reason != "blank_response" or attempt == 3:
+                    raise
+                print(
+                    f"Court blank response: court={filters.court}; page={page}; "
+                    f"HTTP={error.http_status}; bytes={error.response_bytes}; "
+                    f"attempt={attempt}/3; retry after the normal request interval",
+                    file=sys.stderr, flush=True,
+                )
+        raise AssertionError("Unreachable court retry state")
+
+    def _fetch_page_once(
+        self, filters: CourtSearchFilters, page: int,
     ) -> Tuple[List[CourtJudgment], int]:
         if page < 1:
             raise ValueError("page must be at least 1")
@@ -452,7 +488,9 @@ class CourtJudgmentClient:
                 == "По Вашему запросу ничего не найдено. Попробуйте изменить параметры поиска."
             )
             if page > 1 or ("searchResultPage" not in response.text and not empty_notice):
-                raise RuntimeError("Empty or unrecognized court response; page was not completed")
+                reason = ("blank_response" if response.status_code == 200 and not response.text.strip()
+                          else "unrecognized_response")
+                raise CourtResponseError(reason, response)
         return records, pages
 
     def download_document(self, url: str, destination: Path) -> Path:

@@ -84,10 +84,10 @@ def main():
             args.cookie_file.read_text(encoding="utf-8-sig"),
             cookie_file=args.cookie_file,
             rate_limit_state_file=args.cookie_file.parent / ".court-request-rate.txt",
-            min_interval_seconds=300,
+            min_interval_seconds=30,
             delay_jitter_seconds=0,
         ) as client:
-            print("One request after the 300-second interval; no redirects or retries.", flush=True)
+            print("One request after the 30-second interval; no redirects or retries.", flush=True)
             response = client._request("GET", BASE_URL + REFERER_PATH, timeout=client.timeout)
             controls = SearchControls()
             controls.feed(response.text)

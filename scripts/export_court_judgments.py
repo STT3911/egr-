@@ -21,12 +21,14 @@ from app.services.court_judgments import (  # noqa: E402
     CourtAuthenticationError,
     CourtJudgment,
     CourtJudgmentClient,
+    CourtResponseError,
     iter_court_filters,
 )
 from app.services.court_export_alerts import (  # noqa: E402
     notify_auth_failure,
     notify_export_failure,
     telegram_configured,
+    notifications_managed,
 )
 
 
@@ -58,8 +60,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--delay",
         type=float,
-        default=300.0,
-        help="Minimum seconds between every HTTP request (minimum/default: 300)",
+        default=30.0,
+        help="Minimum seconds between every HTTP request (minimum/default: 30)",
     )
     parser.add_argument(
         "--delay-jitter",
@@ -71,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--notify-telegram",
         action="store_true",
-        help="Alert on rejected court authentication; requires ALERT_TELEGRAM_BOT_TOKEN and ALERT_TELEGRAM_CHAT_ID",
+        help="Report export failures to default Alerts chat; authentication uses the separate cookie-controller chat when configured",
     )
     parser.add_argument(
         "--output-dir",
@@ -171,8 +173,8 @@ def main() -> int:
     date_to = _validate_date(args.date_to)
     if datetime.strptime(date_from, "%d.%m.%Y") > datetime.strptime(date_to, "%d.%m.%Y"):
         raise ValueError("--date-from must not be after --date-to")
-    if args.delay < 300:
-        raise ValueError("--delay must be at least 300 seconds")
+    if args.delay < 30:
+        raise ValueError("--delay must be at least 30 seconds")
     if args.delay_jitter < 0:
         raise ValueError("--delay-jitter must not be negative")
     if args.max_pages is not None and args.max_pages < 1:
@@ -298,11 +300,12 @@ def main() -> int:
     except CourtAuthenticationError as exc:
         print(str(exc), file=sys.stderr)
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
-        if args.notify_telegram:
+        if args.notify_telegram and not notifications_managed(args.cookie_file):
             delivered = notify_auth_failure(
                 court_id=active_court_id,
                 type_proc=args.type_proc,
                 unique_total=len(seen),
+                cookie_file=args.cookie_file,
             )
             print(
                 "Court Telegram notification: " + ("sent" if delivered else "NOT delivered"),
@@ -315,13 +318,26 @@ def main() -> int:
         print(f"Court export stopped: {type(exc).__name__}; court={active_court_id}; page={active_page}",
               file=sys.stderr)
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
+        response_info = {}
+        if isinstance(exc, CourtResponseError):
+            response_info = {"reason": exc.reason, "http_status": exc.http_status,
+                             "response_bytes": exc.response_bytes, "attempts": exc.attempts,
+                             "court_id": active_court_id, "type_proc": args.type_proc,
+                             "page": active_page}
+            print(json.dumps(response_info), file=sys.stderr)
+        # Ordinary failures ALWAYS use the default Alerts destination, even when
+        # the cookie controller is alive. Only auth alerts are delegated to it.
         if args.notify_telegram:
             delivered = notify_export_failure(
                 court_id=active_court_id, type_proc=args.type_proc, page=active_page,
                 unique_total=len(seen), error_type=type(exc).__name__,
+                **{key: value for key, value in response_info.items()
+                   if key in {"reason", "http_status", "response_bytes", "attempts"}},
             )
             print("Court Telegram notification: " + ("sent" if delivered else "NOT delivered"),
                   file=sys.stderr)
+        # The controller schedules blank-response recovery without asking for a
+        # cookie; other non-auth failures stay stopped for diagnosis.
         return 1
 
     complete = all(

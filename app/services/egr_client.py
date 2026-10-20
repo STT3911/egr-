@@ -1,5 +1,6 @@
 """EGR API clients"""
 import asyncio
+import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -172,12 +173,15 @@ class EGRClient(BaseClient):
     def __init__(self, base_url: str = "https://egr.gov.by/api/v2/egr"):
         super().__init__(base_url)
 
-    async def _request_strict(self, endpoint: str) -> Any:
+    async def _request_strict(self, endpoint: str, *, read_timeout: float | None = None) -> Any:
         """For checkpointed syncs: transport/schema failures must never mean no changes."""
         client = await self._get_client()
         for attempt in range(3):
             try:
-                response = await client.get(f"{self.base_url}/{endpoint}")
+                kwargs = {}
+                if read_timeout is not None:
+                    kwargs["timeout"] = httpx.Timeout(30.0, connect=10.0, read=read_timeout, pool=60.0)
+                response = await client.get(f"{self.base_url}/{endpoint}", **kwargs)
                 break
             except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ReadError,
                     httpx.RemoteProtocolError) as exc:
@@ -201,21 +205,32 @@ class EGRClient(BaseClient):
         if source not in PERIOD_SOURCES:
             raise ValueError("Unknown EGR period source")
         datetime.strptime(day, "%d.%m.%Y")
-        rows = await self._request_strict(f"{source}/{day}/{day}")
+        # Daily event feeds can be much slower than individual company cards.
+        # Keep card timeouts unchanged and bound every daily read at two minutes.
+        rows = await self._request_strict(f"{source}/{day}/{day}", read_timeout=120.0)
         validate_period_rows(source, rows)
         return rows
 
     async def get_full_company_history_strict(self, unp: int, *, delay: float = 0.5) -> Dict[str, Any]:
         """Fetch a complete snapshot; never replace a failed history request with []."""
-        base = await self._request_strict(f"getBaseInfoByRegNum/{unp}")
-        if isinstance(base, list) and len(base) == 1:
-            base = base[0]
+        base_response = await self._request_strict(f"getBaseInfoByRegNum/{unp}")
+        base = base_response
+        if isinstance(base, list) and base and all(isinstance(row, dict) for row in base):
+            # The source sometimes repeats the exact same base card (observed:
+            # 15 identical rows). Never pick an arbitrary row from differing
+            # snapshots, even if their UNP and registration date match.
+            variants = {json.dumps(row, sort_keys=True, ensure_ascii=False) for row in base}
+            if len(variants) == 1:
+                base = base[0]
         if not isinstance(base, dict) or str(base.get("ngrn")) != str(unp):
             raise ValueError(f"Invalid EGR base info for UNP {unp}")
         entity_type = (base.get("nsi00211") or {}).get("nkvob")
         if entity_type not in (1, 2):
             raise ValueError(f"Unknown EGR entity type for UNP {unp}")
         result = {"base_info": base}
+        if isinstance(base_response, list) and len(base_response) > 1:
+            # Keep the complete official response in raw JSON for audit/replay.
+            result["base_info_response"] = base_response
         endpoints = {
             "addresses": "getAllAddressByRegNum",
             "ved": "getAllVEDByRegNum",

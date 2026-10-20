@@ -6,7 +6,7 @@
   "timezone": "browser",
   "title": "ЕГР — статус источников (парсинг)",
   "uid": "egr-sources",
-  "version": 1,
+  "version": 3,
   "schemaVersion": 39,
   "refresh": "1m",
   "panels": [
@@ -33,12 +33,13 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "ЕГР: отставание ежедневной синхронизации (дней)",
+      "title": "ЕГР: отставание обработки (дней)",
+      "description": "Пропущенные дневные выгрузки относительно вчерашнего дня по Минску. 0 означает, что все дни обработаны; отдельные незакрытые связи и истории показаны ниже. Дата полной синхронизации не подменяется датой обработки.",
       "datasource": { "type": "postgres", "uid": "egr-postgres" },
       "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "d", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "red", "value": 4 } ] } }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "noValue": "Нет данных", "mappings": [ { "type": "special", "options": { "match": "null", "result": { "text": "Нет данных", "color": "gray" } } } ], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 4 } ] } }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT (current_date - value::date) AS value FROM egr_system_state WHERE key = 'egr_last_sync_date'" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "WITH checkpoint AS (SELECT (SELECT value::jsonb FROM egr_system_state WHERE key = 'egr_period_sync_v2') AS progress, (SELECT value::date FROM egr_system_state WHERE key = 'egr_last_sync_date') AS legacy_day), sync AS (SELECT COALESCE((progress->>'scanned_through')::date, (progress->>'last_completed_day')::date, legacy_day) AS scanned_day FROM checkpoint) SELECT CASE WHEN scanned_day IS NULL THEN NULL ELSE GREATEST(0, (now() AT TIME ZONE 'Europe/Minsk')::date - 1 - scanned_day) END AS value FROM sync" } ]
     },
     {
       "id": 4,
@@ -51,11 +52,55 @@
       "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "SELECT count(*) AS value FROM egr_raw_company_data WHERE last_error IS NOT NULL AND last_error NOT ILIKE '%no_data%'" } ]
     },
     {
+      "id": 5,
+      "type": "stat",
+      "title": "ЕГР: данные обработаны по",
+      "description": "Последний полностью обработанный день по всем восьми источникам. Неразрешённые отдельные связи и истории учитываются отдельно.",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "string", "noValue": "Нет данных", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "WITH checkpoint AS (SELECT (SELECT value::jsonb FROM egr_system_state WHERE key = 'egr_period_sync_v2') AS progress, (SELECT value::date FROM egr_system_state WHERE key = 'egr_last_sync_date') AS legacy_day) SELECT COALESCE((progress->>'scanned_through')::date, (progress->>'last_completed_day')::date, legacy_day)::text AS value FROM checkpoint" } ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "ЕГР: полностью сверено по",
+      "description": "Контрольная дата без неразрешённых пробелов. Не продвигается через отдельную неполную связь или конфликт истории, даже если следующие дни уже обработаны.",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "string", "noValue": "Нет данных", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "WITH checkpoint AS (SELECT (SELECT value::jsonb FROM egr_system_state WHERE key = 'egr_period_sync_v2') AS progress, (SELECT value::date FROM egr_system_state WHERE key = 'egr_last_sync_date') AS legacy_day) SELECT COALESCE((progress->>'last_completed_day')::date, legacy_day)::text AS value FROM checkpoint" } ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "ЕГР: неполные связи ИП → юрлицо",
+      "description": "Число исходных записей в очереди сверки. Ненулевое значение — отдельное предупреждение, а не остановка обработки всего реестра.",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "noValue": "Нет данных", "mappings": [ { "type": "special", "options": { "match": "null", "result": { "text": "Нет данных", "color": "gray" } } } ], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "WITH checkpoint AS (SELECT (SELECT value::jsonb FROM egr_system_state WHERE key = 'egr_period_sync_v2') AS progress) SELECT CASE WHEN progress IS NULL THEN NULL ELSE (SELECT count(*) FROM jsonb_object_keys(COALESCE(NULLIF(progress->'transition_conflicts', 'null'::jsonb), '{}'::jsonb))) END AS value FROM checkpoint" } ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "ЕГР: истории требуют сверки",
+      "description": "Число сохранённых конфликтов истории. Эти записи остаются в очереди повторной обработки и удерживают дату полной сверки.",
+      "datasource": { "type": "postgres", "uid": "egr-postgres" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "noValue": "Нет данных", "mappings": [ { "type": "special", "options": { "match": "null", "result": { "text": "Нет данных", "color": "gray" } } } ], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "datasource": { "type": "postgres", "uid": "egr-postgres" }, "rawSql": "WITH checkpoint AS (SELECT (SELECT value::jsonb FROM egr_system_state WHERE key = 'egr_period_sync_v2') AS progress) SELECT CASE WHEN progress IS NULL THEN NULL ELSE (SELECT count(*) FROM jsonb_object_keys(COALESCE(NULLIF(progress->'history_conflicts', 'null'::jsonb), '{}'::jsonb))) END AS value FROM checkpoint" } ]
+    },
+    {
       "id": 10,
       "type": "table",
       "title": "Источники данных — объём и свежесть (age_hours: зелёный <24ч, жёлтый <48ч, красный >48ч)",
       "datasource": { "type": "postgres", "uid": "egr-postgres" },
-      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 6 },
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 11 },
       "options": { "showHeader": true, "sortBy": [ { "displayName": "age_hours", "desc": true } ] },
       "fieldConfig": {
         "defaults": {},

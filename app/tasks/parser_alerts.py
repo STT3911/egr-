@@ -125,8 +125,34 @@ def parser_task_finished(
     if state != "SUCCESS":
         return
     if isinstance(retval, dict) and retval.get("status") in {
+        "cooldown", "superseded_retry", "already_running",
+    }:
+        # A coordination skip is not a completed source synchronization.
+        return
+    if (task_name == "app.tasks.sync_tasks.sync_daily_changes" and isinstance(retval, dict)
+            and "unresolved_transitions" in retval):
+        count = retval["unresolved_transitions"]
+        if retval.get("notify_transition_conflicts"):
+            send_telegram_alert(
+                ("⚠️ ЕГР: неполные связи ИП → юрлицо сохранены для сверки\n" if count else
+                 "✅ ЕГР: очередь неполных связей ИП → юрлицо разобрана\n")
+                + f"Осталось связей: {count}\n"
+                + f"Обработаны дни по: {retval.get('scanned_through') or '-'}\n"
+                + "Полнота синхронизации учитывается отдельно; исходные данные сохранены."
+            )
+            return
+        if count:
+            # Not a clean completion, and not a new incident every hour.
+            return
+    if isinstance(retval, dict) and retval.get("status") in {
         "source_empty", "source_unavailable", "snapshot_fallback",
     }:
+        if (task_name == "app.tasks.sync_tasks.sync_daily_changes"
+                and retval.get("status") == "source_unavailable"
+                and retval.get("notify_source_failure") is False):
+            # The outage is durable in the EGR checkpoint; don't repeat the
+            # same incident on every scheduled run. Other failures stay loud.
+            return
         send_telegram_alert(
             "⚠️ Свежие данные источника не получены\n"
             f"Задача: {_display_name(task_name)}\n"

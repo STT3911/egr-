@@ -266,6 +266,8 @@ def _egr_source(db: Session) -> dict:
             details["sync_processed_in_day"] = pending.get("next_index", 0)
             details["sync_total_in_day"] = len(pending.get("unps", []))
             details["sync_unresolved_histories"] = len(progress.get("history_conflicts", {}))
+            details["sync_unresolved_transitions"] = len(progress.get("transition_conflicts", {}))
+            details["sync_scanned_through"] = progress.get("scanned_through")
 
     return _serialize_source_status(
         key="egr",

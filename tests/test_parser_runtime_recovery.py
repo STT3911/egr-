@@ -9,6 +9,15 @@ import requests
 from app.services.egr_snapshot import export_snapshot
 
 
+def mock_gias_gate(monkeypatch, tasks):
+    from contextlib import nullcontext
+    gate = Mock()
+    gate.blocked.return_value = None
+    gate.fail.return_value = 300
+    monkeypatch.setattr(tasks, "gias_index_gate", lambda: nullcontext(gate))
+    return gate
+
+
 def test_snapshot_permission_failure_happens_before_network(tmp_path, monkeypatch):
     import app.services.egr_snapshot as module
     client = Mock(get_period_rows=AsyncMock())
@@ -67,6 +76,7 @@ def test_snapshot_streams_bounded_batches(tmp_path, monkeypatch):
 ])
 def test_gias_timeout_retries_without_resetting_history(monkeypatch, error):
     import app.tasks.sync_tasks as tasks
+    mock_gias_gate(monkeypatch, tasks)
     from celery.exceptions import Retry
     db = Mock()
     service = Mock()
@@ -95,6 +105,7 @@ def test_unsafe_full_history_schedule_is_opt_in():
 
 def test_gias_auth_http_error_is_not_retried(monkeypatch):
     import app.tasks.sync_tasks as tasks
+    mock_gias_gate(monkeypatch, tasks)
     db, service = Mock(), Mock()
     response = requests.Response()
     response.status_code = 403

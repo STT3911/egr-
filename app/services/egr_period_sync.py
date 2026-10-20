@@ -8,12 +8,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from datetime import date, timedelta
+
+import httpx
 
 from app.database.models import SystemState
 from app.services.egr_event_notifications import emit_egr_source_events
 from app.services.egr_contract import egr_date, HistoryReconciliationError
+from app.services.egr_transition_reconciliation import (
+    SOURCE as TRANSITION_SOURCE, IDENTIFIERS, valid_unp, invalid_identifiers,
+    row_digest, quarantine_rows, resolution_candidate, defer_conflict, transient_source_error,
+)
 
 logger = logging.getLogger(__name__)
 STATE_KEY = "egr_period_sync_v2"
@@ -35,16 +42,32 @@ def validate_period_rows(source, rows):
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError(f"{source}: invalid row")
+        if source == TRANSITION_SOURCE:
+            # One known entity is enough to preserve/quarantine the observation,
+            # NOT enough to insert a relationship. Unrecognizable rows stay loud.
+            if not any(valid_unp(row.get(field)) for field in IDENTIFIERS):
+                raise ValueError(f"{source}: no valid identifier")
+            continue
         for field in PERIOD_SOURCES[source]:
             value = row.get(field)
-            if isinstance(value, bool) or not str(value).isdigit() or not 0 < int(value) < 1_000_000_000:
+            if not valid_unp(value):
                 raise ValueError(f"{source}: invalid {field}")
 
 
-async def collect_day(client, day, *, delay=0.5, row_limit=2500):
+async def collect_day(client, day, *, delay=0.5, row_limit=2500, partial=None, save_partial=None):
     """Collect all eight feeds before acknowledging ANY part of this day."""
-    unps, counts, events, transitions = set(), {}, {}, []
+    partial = partial if partial is not None else {
+        "day": day.isoformat(), "unps": [], "counts": {}, "events": {}, "transitions": [],
+    }
+    if partial["day"] != day.isoformat() or not set(partial["counts"]).issubset(PERIOD_SOURCES):
+        raise ValueError("Invalid EGR partial feed checkpoint")
+    unps = set(partial["unps"])
+    counts, events, transitions = partial["counts"], partial["events"], partial["transitions"]
     for source, fields in PERIOD_SOURCES.items():
+        if source in counts:
+            if row_limit and counts[source] >= row_limit:
+                raise ValueError(f"{source} {day}: possible truncation ({counts[source]} rows)")
+            continue
         await asyncio.sleep(delay)
         rows = await client.get_period_rows(source, day.strftime("%d.%m.%Y"))
         validate_period_rows(source, rows)
@@ -56,9 +79,12 @@ async def collect_day(client, day, *, delay=0.5, row_limit=2500):
         if source == "getIPtoJurByPeriod":
             transitions = rows
         for row in rows:
-            unps.update(int(row[field]) for field in fields)
+            unps.update(int(row[field]) for field in fields if valid_unp(row.get(field)))
             if source == "getEventByPeriod":
                 events.setdefault(str(int(row["ngrn"])), []).append(row)
+        partial.update(unps=sorted(unps), transitions=transitions)
+        if save_partial is not None:
+            save_partial()
     return {"day": day.isoformat(), "unps": sorted(unps), "next_index": 0,
             "counts": counts, "events": events, "transitions": transitions}
 
@@ -86,6 +112,8 @@ class PeriodSyncStore:
                 from sqlalchemy.dialects.postgresql import insert
                 from app.database.models import EGRIPToJur
                 for item in transitions:
+                    if invalid_identifiers(item):
+                        raise ValueError("Cannot persist an incomplete EGR relationship")
                     values = dict(ip_unp=int(item["ipngrn"]), jur_unp=int(item["ulngrn"]),
                                   registration_date=egr_date(item.get("dreg")), raw=item)
                     stmt = insert(EGRIPToJur).values(**values)
@@ -117,7 +145,80 @@ class PeriodSyncStore:
 
 async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
                           overlap_days=3, max_companies=500, max_seconds=1200,
-                          delay=0.5, row_limit=2500):
+                          delay=0.5, row_limit=2500, clock=None):
+    """Persist transient source outages without skipping or acknowledging a day."""
+    if min(bootstrap_days, overlap_days, max_companies) < 1 or max_seconds <= 0 or delay < 0 or row_limit < 0:
+        raise ValueError("Invalid EGR period sync limits")
+    clock = clock or time.time
+    state = store.load()
+    retry = (state or {}).get("source_retry", {})
+    remaining = retry.get("next_retry_at", 0) - clock()
+    if remaining > 0:
+        return {"status": "cooldown", "source": "EGR", "day": state.get("next_day"),
+                "retry_after_seconds": int(remaining) + 1}
+    try:
+        result = await _run_period_sync_once(
+            store, client, refresh, target=target, bootstrap_days=bootstrap_days,
+            overlap_days=overlap_days, max_companies=max_companies, max_seconds=max_seconds,
+            delay=delay, row_limit=row_limit, clock=clock,
+        )
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError,
+            httpx.HTTPStatusError) as exc:
+        # Schema errors, auth errors, DB errors and invalid snapshots stay loud.
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code != 429 and not 500 <= exc.response.status_code < 600:
+            raise
+        state = store.load()
+        if state is None:
+            raise
+        retry = state.get("source_retry", {})
+        failures = min(3, int(retry.get("failures", 0)) + 1)
+        seconds = 3600 * 2 ** (failures - 1)
+        if isinstance(exc, httpx.HTTPStatusError):
+            from email.utils import parsedate_to_datetime
+            header = exc.response.headers.get("Retry-After", "").strip()
+            try:
+                wait = float(header) if header.isdigit() else parsedate_to_datetime(header).timestamp() - clock()
+                if math.isfinite(wait):
+                    seconds = max(seconds, wait)
+            except (ValueError, TypeError, OverflowError):
+                pass
+        collection = state.get("collecting")
+        source = (next((key for key in PERIOD_SOURCES if key not in collection["counts"]), "company_history")
+                  if collection else "company_history")
+        state["source_retry"] = {"failures": failures, "next_retry_at": clock() + seconds,
+                                 "day": state.get("next_day"), "source": source,
+                                 "error_type": type(exc).__name__}
+        store.save(state)
+        logger.warning("EGR temporary outage: day=%s source=%s type=%s; retry in %ss",
+                       state.get("next_day"), source, type(exc).__name__, seconds)
+        return {"status": "source_unavailable", "source": source, "day": state.get("next_day"),
+                "error_type": type(exc).__name__, "retry_after_seconds": seconds,
+                "notify_source_failure": not bool(retry)}
+    before = state
+    state = store.load()
+    recovered = (result.get("status") in {"complete", "up_to_date"}
+                 or result.get("processed", 0) > 0
+                 or (state and before and state.get("next_day") != before.get("next_day"))
+                 or (state and before and before.get("collecting") and state.get("pending")))
+    if state and recovered and state.pop("source_retry", None) is not None:
+        store.save(state)
+        logger.info("EGR source recovered; saved checkpoint resumed")
+    if state is not None:
+        queue = state.get("transition_conflicts", {})
+        signature = row_digest(sorted(queue)) if queue else ""
+        previous = state.get("transition_alert_signature", "")
+        result["unresolved_transitions"] = len(queue)
+        result.setdefault("scanned_through", state.get("scanned_through"))
+        result["notify_transition_conflicts"] = signature != previous
+        if signature != previous:
+            state["transition_alert_signature"] = signature
+            store.save(state)
+    return result
+
+
+async def _run_period_sync_once(store, client, refresh, *, target, bootstrap_days=30,
+                          overlap_days=3, max_companies=500, max_seconds=1200,
+                          delay=0.5, row_limit=2500, clock=time.time):
     """Resume a saved window. Acknowledgements follow successful DB processing.
 
     refresh may commit independently. A crash before acknowledgement replays
@@ -127,19 +228,30 @@ async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
         raise ValueError("Invalid EGR period sync limits")
     started = time.monotonic()
     state = store.load()
-    if not state or (state.get("next_day") is None and not state.get("history_conflicts")):
+    if not state or (state.get("next_day") is None and not state.get("history_conflicts")
+                     and not state.get("transition_conflicts")):
         last = date.fromisoformat(state["completed_target"]) if state else None
         if last and last >= target:
             return {"status": "up_to_date", "target": target.isoformat()}
         start = (min(last + timedelta(days=1), target - timedelta(days=overlap_days - 1))
                  if last else target - timedelta(days=bootstrap_days - 1))
+        previous_state = state or {}
         state = {"version": 2, "target": target.isoformat(), "next_day": start.isoformat(),
                  "pending": None, "completed_target": last.isoformat() if last else None,
                  "last_completed_day": last.isoformat() if last else None}
+        for key in ("transition_resolutions", "transition_alert_signature", "scanned_through"):
+            if key in previous_state:
+                state[key] = previous_state[key]
+        store.save(state)
+    elif state.get("next_day") is None and target > date.fromisoformat(state["target"]):
+        # A quarantined row must not freeze every future daily window.
+        state["next_day"] = (date.fromisoformat(state["target"]) + timedelta(days=1)).isoformat()
+        state["target"] = target.isoformat()
         store.save(state)
     processed = 0
     attempts = 0
     conflicts = state.setdefault("history_conflicts", {})
+    transition_conflicts = state.setdefault("transition_conflicts", {})
     finished = state.setdefault("scanned_days", [])
     end = date.fromisoformat(state["target"])
 
@@ -148,12 +260,16 @@ async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
 
     def progress(status):
         return {"status": status, "processed": processed, "day": state.get("next_day"),
-                "unresolved": len(conflicts), "target": end.isoformat()}
+                "unresolved": len(conflicts) + len(transition_conflicts),
+                "unresolved_histories": len(conflicts),
+                "unresolved_transitions": len(transition_conflicts),
+                "scanned_through": state.get("scanned_through"), "target": end.isoformat()}
 
     def advance_watermark():
         # A scanned day is NOT a completed day while any earlier UNP is
         # unresolved. Retain events + dates for retry, never mask a gap.
-        first_gap = min((item["day"] for item in conflicts.values()), default=None)
+        first_gap = min((item["day"] for item in
+                         [*conflicts.values(), *transition_conflicts.values()]), default=None)
         eligible = [day for day in finished if first_gap is None or day < first_gap]
         previous = state.get("last_completed_day")
         if eligible:
@@ -162,6 +278,84 @@ async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
                 state["last_completed_day"] = newest
                 return date.fromisoformat(newest)
         return None
+
+    # Separate retry queue: bounded, durable and independent of the daily feeds.
+    # Reserve most of the company budget for new daily work while catching up.
+    retry_limit = max_companies if state.get("next_day") is None else max_companies // 5
+    retry_attempts = 0
+    fetched = {}
+    for key in sorted(transition_conflicts, key=lambda k: transition_conflicts[k]["next_retry_at"]):
+        item = transition_conflicts[key]
+        if budget_exhausted() or retry_attempts >= retry_limit:
+            break
+        if not item.get("candidate") and item["next_retry_at"] > clock():
+            continue
+        if not item.get("candidate"):
+            day_text = item["day"]
+            if day_text not in fetched:
+                if len(fetched) >= 3:
+                    break
+                await asyncio.sleep(delay)
+                retry_attempts += 1
+                try:
+                    rows = await client.get_period_rows(
+                        TRANSITION_SOURCE, date.fromisoformat(day_text).strftime("%d.%m.%Y"),
+                    )
+                    validate_period_rows(TRANSITION_SOURCE, rows)
+                    if row_limit and len(rows) >= row_limit:
+                        raise ValueError("EGR transition retry: possible truncation")
+                    fetched[day_text] = rows
+                    quarantine_rows(state, day_text, rows, clock())
+                except Exception as exc:
+                    if not transient_source_error(exc):
+                        raise
+                    fetched[day_text] = exc
+            rows = fetched[day_text]
+            if isinstance(rows, Exception):
+                defer_conflict(item, clock(), error=type(rows).__name__)
+                store.save(state)
+                continue
+            candidate = resolution_candidate(item, rows)
+            if candidate is None:
+                defer_conflict(item, clock())
+                store.save(state)
+                continue
+            item.update(candidate=candidate, refresh_index=0)
+            store.save(state)
+        candidate = item["candidate"]
+        unps = sorted({int(candidate[field]) for field in IDENTIFIERS})
+        while item["refresh_index"] < len(unps):
+            if budget_exhausted() or retry_attempts >= retry_limit:
+                break
+            unp = unps[item["refresh_index"]]
+            await asyncio.sleep(delay)
+            attempts += 1
+            retry_attempts += 1
+            try:
+                await refresh(unp)
+            except HistoryReconciliationError as exc:
+                conflicts.setdefault(f"{item['day']}:{unp}", {
+                    "day": item["day"], "unp": unp, "attempts": 1,
+                    "events": [], "reason": str(exc),
+                })
+            except Exception as exc:
+                if not transient_source_error(exc):
+                    raise
+                defer_conflict(item, clock(), error=type(exc).__name__)
+                item.pop("candidate", None)
+                store.save(state)
+                break
+            else:
+                processed += 1
+            item["refresh_index"] += 1
+            store.save(state)
+        else:
+            del transition_conflicts[key]
+            # Keep the original incomplete observation even after resolving it.
+            state.setdefault("transition_resolutions", {})[key] = {
+                **item, "resolved_at": clock(), "resolution": candidate,
+            }
+            store.save(state, transitions=[candidate], completed_day=advance_watermark())
 
     # Retry a bounded subset, least attempted first: one irreconcilable UNP
     # cannot monopolize all future runs or starve other conflicts.
@@ -188,8 +382,20 @@ async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
             return progress("pending")
         day = date.fromisoformat(state["next_day"])
         if state["pending"] is None:
-            state["pending"] = await collect_day(client, day, delay=delay, row_limit=row_limit)
-            store.save(state, transitions=state["pending"]["transitions"])
+            collection = state.setdefault("collecting", {
+                "day": day.isoformat(), "unps": [], "counts": {}, "events": {}, "transitions": [],
+            })
+            store.save(state)
+            state["pending"] = await collect_day(
+                client, day, delay=delay, row_limit=row_limit, partial=collection,
+                save_partial=lambda: store.save(state),
+            )
+            state.pop("collecting", None)
+            # Raw incomplete rows remain durable; only complete pairs reach the
+            # relationship table. Known companies are still in pending.unps.
+            quarantine_rows(state, day.isoformat(), state["pending"]["transitions"], clock())
+            store.save(state, transitions=[row for row in state["pending"]["transitions"]
+                                           if not invalid_identifiers(row)])
             logger.info("EGR ByPeriod %s: %s; unique_unps=%s", day,
                         state["pending"]["counts"], len(state["pending"]["unps"]))
         pending = state["pending"]
@@ -218,11 +424,12 @@ async def run_period_sync(store, client, refresh, *, target, bootstrap_days=30,
         state["pending"] = None
         if day.isoformat() not in finished:
             finished.append(day.isoformat())
+        state["scanned_through"] = max(day.isoformat(), state.get("scanned_through") or day.isoformat())
         state["next_day"] = (day + timedelta(days=1)).isoformat() if day < end else None
-        if day == end and not conflicts:
+        if day == end and not conflicts and not transition_conflicts:
             state["completed_target"] = end.isoformat()
         store.save(state, completed_day=advance_watermark())
-    if conflicts:
+    if conflicts or transition_conflicts:
         return progress("blocked")
     state["completed_target"] = end.isoformat()
     store.save(state, completed_day=advance_watermark())

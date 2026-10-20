@@ -134,7 +134,7 @@ def test_client_loads_persisted_request_timestamp(tmp_path) -> None:
         client.close()
 
 
-@pytest.mark.parametrize("interval, expected_wait", [(300, 250.0), (600, 550.0)])
+@pytest.mark.parametrize("interval, expected_wait", [(30, 0.0), (60, 10.0), (180, 130.0), (300, 250.0), (600, 550.0)])
 def test_client_waits_for_persisted_minimum_interval(monkeypatch, interval, expected_wait) -> None:
     client = CourtJudgmentClient(
         "ASP.NET_SessionId=session; .ASPXAUTH=auth",
@@ -151,7 +151,7 @@ def test_client_waits_for_persisted_minimum_interval(monkeypatch, interval, expe
     finally:
         client.close()
 
-    assert waited == [expected_wait]
+    assert waited == ([expected_wait] if expected_wait else [])
 
 
 @pytest.mark.parametrize("value", [
@@ -163,7 +163,7 @@ def test_copied_cookie_label(value):
         assert client.session.cookies.get(".ASPXAUTH") == "auth"
 
 
-@pytest.mark.parametrize("interval", [0, 0.5, 299.9, float("nan"), float("inf")])
+@pytest.mark.parametrize("interval", [0, 0.5, 29.9, float("nan"), float("inf")])
 def test_short_or_invalid_intervals_rejected(interval):
     with pytest.raises(ValueError):
         CourtJudgmentClient("a=b", min_interval_seconds=interval)
@@ -250,9 +250,40 @@ def test_empty_notice_on_later_page_is_not_silently_skipped(monkeypatch):
     "<p>Проверьте даты</p>" + EMPTY_NOTICE, "<p>Войдите в систему</p>" + EMPTY_NOTICE])
 def test_unknown_first_page_is_not_treated_as_zero_results(monkeypatch, body):
     with CourtJudgmentClient("a=b") as client:
+        monkeypatch.setattr(client, "_wait_for_request_slot", lambda: None)
         stub_html_response(monkeypatch, client, body)
         with pytest.raises(RuntimeError):
             client.fetch_page(CourtSearchFilters("01.01.1900", "15.09.2026", 151, 368), 1)
+
+
+@pytest.mark.parametrize("recover", [True, False])
+def test_blank_response_retries_same_page_with_persisted_rate_limit(monkeypatch, tmp_path, recover):
+    now = [1000.0]
+    monkeypatch.setattr(court_module.time, "time", lambda: now[0])
+    monkeypatch.setattr(court_module.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    calls = []
+    rate_file = tmp_path / "rate.txt"
+    with CourtJudgmentClient("a=b", rate_limit_state_file=rate_file) as client:
+        def request(*args, **kwargs):
+            calls.append((now[0], kwargs["params"]["page"]))
+            response = requests.Response()
+            response.status_code = 200
+            response.encoding = "utf-8"
+            response._content = (SAMPLE if recover and len(calls) == 2 else "\r\n").encode()
+            return response
+        monkeypatch.setattr(client.session, "request", request)
+        filters = CourtSearchFilters("01.01.2025", "31.01.2025", 151)
+        if recover:
+            rows, pages = client.fetch_page(filters, 49)
+            assert len(rows) == 1 and pages == 8
+            assert calls == [(1000, "49"), (1030, "49")]
+        else:
+            with pytest.raises(court_module.CourtResponseError) as failure:
+                client.fetch_page(filters, 49)
+            assert failure.value.reason == "blank_response"
+            assert failure.value.attempts == 3 and failure.value.response_bytes == 2
+            assert calls == [(1000, "49"), (1030, "49"), (1060, "49")]
+        assert float(rate_file.read_text()) == calls[-1][0]
 
 
 @pytest.mark.parametrize("status", [401, 403, 429, 500])

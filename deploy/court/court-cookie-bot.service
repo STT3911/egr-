@@ -1,0 +1,19 @@
+[Unit]
+Description=Court cookie renewal controller
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/home/user/egr-dev
+EnvironmentFile=/home/user/egr-secrets/court-control.env
+ExecStart=/usr/bin/python3 /home/user/egr-dev/scripts/court_cookie_bot.py
+UMask=0077
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=78
+
+[Install]
+WantedBy=multi-user.target

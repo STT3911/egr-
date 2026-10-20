@@ -34,6 +34,7 @@ from app.core.config import settings
 from app.core.logger import get_logger
 from app.database.models import BankrotCase, BankrotCaseDataset, BankrotSyncRun
 from app.services.bankrot_client import BankrotClient, BankrotAPIError
+from app.services.bankrot_archive import BankrotArchiveWriter, maintain_bankrot_archives
 
 logger = get_logger("bankrot.sync")
 
@@ -547,6 +548,9 @@ def sync_bankrot_cases(
     def page_complete(page_num: int, next_offset: int, total: int) -> bool:
         """Commit one full page and its cursor atomically enough for safe replay."""
         nonlocal checkpoint_stats, stopped_early
+        # Archive references and their shared blobs must survive a process crash
+        # before the database acknowledges this page.
+        fout.flush()
         flush_pending()
         stats["next_offset"] = next_offset
         stats["last_page"] = page_num
@@ -578,7 +582,7 @@ def sync_bankrot_cases(
     try:
         output_mode = "a" if start_offset and tmp_path.exists() else "w"
         with BankrotClient(token=token) as client, \
-             open(tmp_path, output_mode, encoding="utf-8") as fout:
+             BankrotArchiveWriter(tmp_path, output_mode) as fout:
 
             for list_item in client.iter_all_cases(
                 page_size=page_size,
@@ -752,9 +756,7 @@ def sync_bankrot_cases(
                     "judgements_group": judgements_data,
                     "related_data": related_data,
                 }
-                fout.write(
-                    json.dumps(merged, ensure_ascii=False, default=str) + "\n"
-                )
+                fout.write_record(merged)
 
                 # ----- Intermediate DB flush -----
                 if len(pending) >= save_every:
@@ -818,6 +820,26 @@ def sync_bankrot_cases(
             "stats_json":      stats,
         })
         db.commit()
+
+        # Business data is already committed. A disk/archive failure must never
+        # turn a successful import into a failed/resumed-empty logical run.
+        try:
+            archive_result = maintain_bankrot_archives(
+                db, out_dir, keep=getattr(settings, "BANKROT_ARCHIVE_KEEP_COMPLETED", 0),
+                only_run_id=run_id,
+            )
+            db.refresh(sync_run)
+            stats["output_file"] = sync_run.output_file
+            stats["archive_maintenance"] = archive_result
+        except SoftTimeLimitExceeded:
+            # Run is already done: don't let the outer handler rewrite its
+            # completed cursor. The raw file remains available for maintenance.
+            db.rollback()
+            logger.warning("Bankrot archive maintenance deferred after completed import")
+            return stats
+        except Exception:
+            db.rollback()
+            logger.warning("Bankrot archive maintenance deferred; database import preserved")
 
         logger.info(
             "Bankrot sync complete: run_id=%d processed=%d failed=%d "

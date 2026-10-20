@@ -83,9 +83,10 @@ def test_invalid_feed_never_means_no_changes(rows):
         validate_period_rows("getAddressByPeriod", rows)
 
 
-def test_transition_requires_both_identifiers():
-    with pytest.raises(ValueError):
-        validate_period_rows("getIPtoJurByPeriod", [{"ipngrn": 300325070}])
+def test_transition_accepts_one_known_entity_for_quarantine_not_for_linking():
+    validate_period_rows("getIPtoJurByPeriod", [{"ipngrn": 300325070}])
+    with pytest.raises(ValueError, match="no valid identifier"):
+        validate_period_rows("getIPtoJurByPeriod", [{}])
 
 
 @pytest.mark.parametrize("status,body", [(500, '[]'), (404, ''), (302, ''), (200, ''), (200, '{}')])
@@ -150,8 +151,10 @@ def test_exhausted_strict_timeout_keeps_unp_checkpoint_and_reports_endpoint(stor
             await client.get_full_company_history_strict(unp, delay=0)
         finally:
             await client.close()
-    with pytest.raises(httpx.ReadTimeout, match="getBaseInfoByRegNum/193879557.*after 3 attempts"):
-        run(store, feeds, refresh)
+    result = run(store, feeds, refresh)
+    assert result["status"] == "source_unavailable"
+    assert result["error_type"] == "ReadTimeout"
+    assert result["notify_source_failure"] is True
     assert len(requests) == 3
     assert store.load()["pending"]["next_index"] == 0
     assert store.db.get(SystemState, "egr_last_sync_date") is None
@@ -257,16 +260,18 @@ def test_history_conflict_does_not_block_other_days_or_claim_completion(store, m
     client.get_period_rows.assert_not_called()
 
 
-def test_conflict_ack_is_atomic_and_source_errors_remain_fatal(store, monkeypatch):
+def test_conflict_ack_is_atomic_and_source_timeouts_preserve_conflict(store, monkeypatch):
     from app.services.egr_contract import HistoryReconciliationError
     client = feed_client({"getAddressByPeriod": [{"ngrn": 193879557}, {"ngrn": 300325070}]})
     run(store, client, AsyncMock(side_effect=HistoryReconciliationError("ambiguous")), max_companies=1)
     saved = store.load()
     assert saved["pending"]["next_index"] == 1
     assert len(saved["history_conflicts"]) == 1
-    with pytest.raises(httpx.ReadTimeout):
-        run(store, client, AsyncMock(side_effect=httpx.ReadTimeout("source down")))
-    assert store.load() == saved
+    result = run(store, client, AsyncMock(side_effect=httpx.ReadTimeout("source down")))
+    assert result["status"] == "source_unavailable"
+    after = store.load()
+    assert after.pop("source_retry")["error_type"] == "ReadTimeout"
+    assert after == saved
 
 
 def test_conflict_retry_budget_does_not_spin(store):

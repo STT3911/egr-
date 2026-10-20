@@ -26,6 +26,7 @@ from app.services.egr_event_notifications import emit_egr_source_events
 from app.services.grp_client import GRPClient
 from app.services.gias_directory import GiasDirectoryService
 from app.services.gias_contracts import GiasContractService
+from app.services.gias_index_gate import gias_index_gate
 from app.services.source_fetch_state import select_due_unps, record_attempt
 from app.database.models import SystemState, RawCompanyData, GrpRawData, GrpTaxpayerData, Company, CompanyPlaceLocation
 from app.crud.grp import GrpCRUD
@@ -2543,6 +2544,16 @@ def sync_gias_contract_index(
     max_pages: int | None = None,
 ):
     """Synchronize the resumable GIAS contract index."""
+    with gias_index_gate() as gate:
+        if gate is None:
+            return {"status": "already_running"}
+        blocked = gate.blocked(self.request.id, self.request.retries)
+        if blocked:
+            return blocked
+        return _run_gias_contract_index(self, gate, full=full, max_pages=max_pages)
+
+
+def _run_gias_contract_index(self, gate, *, full, max_pages):
     db = SessionLocal()
     service = GiasContractService(db)
     try:
@@ -2552,6 +2563,7 @@ def sync_gias_contract_index(
             max_pages,
         )
         result = service.sync_index(full=full, max_pages=max_pages)
+        gate.success()
         logger.info("✅ GIAS contract index sync completed: %s", result)
         return result
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
@@ -2561,7 +2573,7 @@ def sync_gias_contract_index(
         # The service commits only successful pages. Preserve its cursor and
         # yield the worker slot between bounded retries (5, 10, 20 minutes).
         db.rollback()
-        delay = min(1200, 300 * 2 ** self.request.retries)
+        delay = gate.fail(self.request.id)
         # Beat jobs expire after 110 seconds. Do not inherit that deadline:
         # the deferred retry would otherwise expire before it can run.
         raise self.retry(exc=exc, countdown=delay, expires=delay + 600, args=(),

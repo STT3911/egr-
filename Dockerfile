@@ -64,6 +64,9 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 # Switch to non-root user
+# Allow a host-mapped export UID to traverse the installed Python packages.
+# The home remains non-listable and non-writable to other users.
+RUN chmod 0711 /home/appuser
 USER appuser
 
 # Expose port

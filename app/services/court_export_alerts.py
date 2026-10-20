@@ -4,8 +4,22 @@ from __future__ import annotations
 
 import os
 import sys
+import json
+import time
+from pathlib import Path
 
 import requests
+
+
+def notifications_managed(cookie_file: Path | None) -> bool:
+    if cookie_file is None:
+        return False
+    try:
+        path = cookie_file.parent / ".court-control-heartbeat.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return 0 <= time.time() - float(data["updated_at"]) < 120
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def telegram_configured() -> bool:
@@ -15,7 +29,25 @@ def telegram_configured() -> bool:
     )
 
 
-def notify_auth_failure(*, court_id: int, type_proc: int, unique_total: int) -> bool:
+def auth_chat_id(cookie_file: Path | None = None) -> str:
+    """Separate auth destination; heartbeat metadata survives controller downtime."""
+    configured = os.environ.get("COURT_AUTH_TELEGRAM_CHAT_ID", "").strip()
+    if configured:
+        return configured
+    if cookie_file is not None:
+        try:
+            data = json.loads((cookie_file.parent / ".court-control-heartbeat.json").read_text(encoding="utf-8"))
+            chat_id = data["auth_chat_id"]
+            if isinstance(chat_id, int) and not isinstance(chat_id, bool) and chat_id != 0:
+                return str(chat_id)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    # Backwards compatibility for standalone runs without a cookie controller.
+    return os.environ.get("ALERT_TELEGRAM_CHAT_ID", "").strip()
+
+
+def notify_auth_failure(*, court_id: int, type_proc: int, unique_total: int,
+                        cookie_file: Path | None = None) -> bool:
     """Send once; never include cookies, response bodies or exception details."""
     if not telegram_configured():
         return False
@@ -27,18 +59,31 @@ def notify_auth_failure(*, court_id: int, type_proc: int, unique_total: int) -> 
         "Сохранённые страницы остаются в JSONL и checkpoint.\n"
         "Обновите court.cookie и возобновите контейнер выгрузки."
     )
-    return _send(text)
+    return _send(text, chat_id=auth_chat_id(cookie_file))
 
 
 def notify_export_failure(*, court_id: int, type_proc: int, page: int,
-                          unique_total: int, error_type: str) -> bool:
+                          unique_total: int, error_type: str, reason: str = "",
+                          http_status: int | None = None, response_bytes: int | None = None,
+                          attempts: int = 1) -> bool:
     """Only allow known exception labels, never arbitrary diagnostic text."""
     if error_type not in {"RuntimeError", "ValueError", "OSError", "PermissionError",
                           "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout",
-                          "HTTPError", "RetryError"}:
+                          "HTTPError", "RetryError", "CourtResponseError"}:
         error_type = "ExportError"
+    explanations = {
+        "blank_response": "Сайт вернул пустой HTTP 200; три попытки той же страницы не дали данных.",
+        "unrecognized_response": "Сайт вернул ответ, который парсер не распознал.",
+        "unexpected_redirect": "Сайт перенаправил запрос на неожиданный адрес.",
+    }
+    diagnostic = explanations.get(reason, "")
+    if diagnostic and isinstance(http_status, int) and isinstance(response_bytes, int):
+        diagnostic += f" HTTP: {http_status}; размер ответа: {response_bytes} байт."
+    if diagnostic:
+        diagnostic += "\n"
     return _send(
         "❌ Выгрузка судов остановлена: ошибка ответа, сети или сохранения.\n"
+        + diagnostic +
         f"Суд: {court_id}; TypeProc: {type_proc}; страница: {page}.\n"
         f"Тип ошибки: {error_type}.\n"
         f"Уникальных записей в текущем файле: {unique_total}.\n"
@@ -47,7 +92,7 @@ def notify_export_failure(*, court_id: int, type_proc: int, page: int,
     )
 
 
-def _send(text: str) -> bool:
+def _send(text: str, *, chat_id: str | None = None) -> bool:
     if not telegram_configured():
         return False
     try:
@@ -56,7 +101,7 @@ def _send(text: str) -> bool:
             + os.environ["ALERT_TELEGRAM_BOT_TOKEN"].strip()
             + "/sendMessage",
             json={
-                "chat_id": os.environ["ALERT_TELEGRAM_CHAT_ID"].strip(),
+                "chat_id": chat_id if chat_id is not None else os.environ["ALERT_TELEGRAM_CHAT_ID"].strip(),
                 "text": text,
                 "disable_web_page_preview": True,
             },

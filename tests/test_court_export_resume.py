@@ -5,14 +5,16 @@ import sys
 import pytest
 
 from app.services.court_judgments import CourtAuthenticationError, CourtJudgment
+from app.services.court_judgments import CourtResponseError
+import requests
 from scripts import export_court_judgments as exporter
 
 
-def test_cli_defaults_match_five_minute_client_delay(monkeypatch):
+def test_cli_defaults_match_thirty_second_client_delay(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["export_court_judgments.py", "--cookie-stdin"])
     args = exporter.parse_args()
     with exporter.CourtJudgmentClient("a=b") as client:
-        assert args.delay == client.min_interval_seconds == 300
+        assert args.delay == client.min_interval_seconds == 30
         assert args.delay_jitter == client.delay_jitter_seconds == 0
 
 
@@ -46,6 +48,14 @@ def setup_run(monkeypatch, tmp_path):
     monkeypatch.setattr(exporter, "CourtJudgmentClient", Client)
     monkeypatch.setattr(sys, "argv", args)
     return Client, args
+
+
+def test_cli_rejects_less_than_thirty_seconds_before_export(monkeypatch, tmp_path):
+    client, args = setup_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", args + ["--delay", "29"])
+    with pytest.raises(ValueError, match="at least 30 seconds"):
+        exporter.main()
+    assert client.calls == []
 
 
 def test_page_limit_keeps_checkpoint_then_resume_finishes(monkeypatch, tmp_path):
@@ -117,7 +127,8 @@ def test_auth_alert_preserves_exit_code_and_checkpoint(monkeypatch, tmp_path, de
     monkeypatch.setattr(exporter, "notify_auth_failure", notify)
     monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
     assert exporter.main() == 2
-    assert alerts == [{"court_id": 151, "type_proc": 14, "unique_total": 1}]
+    assert alerts == [{"court_id": 151, "type_proc": 14, "unique_total": 1,
+                       "cookie_file": tmp_path / "cookie.txt"}]
     state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
     assert state["completed_pages"] == {"151": [1]}
     assert ("notification: sent" if delivered else "notification: NOT delivered") in capsys.readouterr().err
@@ -147,7 +158,7 @@ def test_missing_alert_config_fails_before_court_request(monkeypatch, tmp_path):
 @pytest.mark.parametrize("error", [RuntimeError("response secret-cookie-value"),
                                     OSError("secret-cookie-value")])
 @pytest.mark.parametrize("delivered", [True, False])
-def test_non_auth_error_alert_keeps_checkpoint_and_can_resume(monkeypatch, tmp_path, capsys, error, delivered):
+def test_non_auth_error_notifies_keeps_checkpoint_and_can_resume(monkeypatch, tmp_path, capsys, error, delivered):
     client, args = setup_run(monkeypatch, tmp_path)
     original_fetch = client.fetch_page
     def fetch(self, filters, page):
@@ -156,11 +167,14 @@ def test_non_auth_error_alert_keeps_checkpoint_and_can_resume(monkeypatch, tmp_p
         return original_fetch(self, filters, page)
     monkeypatch.setattr(client, "fetch_page", fetch)
     monkeypatch.setattr(exporter, "telegram_configured", lambda: True)
+    monkeypatch.setattr(exporter, "notifications_managed", lambda _: True)
+    monkeypatch.setattr(exporter, "notify_auth_failure", lambda **kw: pytest.fail("Not an auth failure"))
     calls = []
     monkeypatch.setattr(exporter, "notify_export_failure", lambda **kw: calls.append(kw) or delivered)
     monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
     assert exporter.main() == 1
-    assert len(calls) == 1 and calls[0]["page"] == 2 and calls[0]["unique_total"] == 1
+    assert calls == [{"court_id": 151, "type_proc": 14, "page": 2,
+                      "unique_total": 1, "error_type": type(error).__name__}]
     assert "secret-cookie-value" not in capsys.readouterr().err
     state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
     assert state["completed_pages"] == {"151": [1]}
@@ -177,3 +191,42 @@ def test_non_auth_alerts_are_opt_in(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "fetch_page", fail)
     monkeypatch.setattr(exporter, "notify_export_failure", lambda **kw: pytest.fail("unexpected alert"))
     assert exporter.main() == 1
+
+
+def test_exhausted_blank_response_keeps_page_incomplete_and_reports_safe_metadata(monkeypatch, tmp_path, capsys):
+    client, args = setup_run(monkeypatch, tmp_path)
+    original = client.fetch_page
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b"\r\n"
+    failure = CourtResponseError("blank_response", response)
+    failure.attempts = 3
+    def fetch(self, filters, page):
+        if page == 2:
+            raise failure
+        return original(self, filters, page)
+    monkeypatch.setattr(client, "fetch_page", fetch)
+    monkeypatch.setattr(exporter, "telegram_configured", lambda: True)
+    alerts = []
+    monkeypatch.setattr(exporter, "notify_export_failure", lambda **kwargs: alerts.append(kwargs) or True)
+    monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
+    assert exporter.main() == 1
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert state["completed_pages"] == {"151": [1]}
+    assert alerts == [{"court_id": 151, "type_proc": 14, "page": 2,
+                       "unique_total": 1, "error_type": "CourtResponseError",
+                       "reason": "blank_response", "http_status": 200,
+                       "response_bytes": 2, "attempts": 3}]
+    assert '"reason": "blank_response"' in capsys.readouterr().err
+
+
+def test_auth_notification_is_managed_by_controller_when_heartbeat_is_fresh(monkeypatch, tmp_path):
+    client, args = setup_run(monkeypatch, tmp_path)
+    client.fail = 2
+    monkeypatch.setattr(exporter, "telegram_configured", lambda: True)
+    monkeypatch.setattr(exporter, "notifications_managed", lambda _: True)
+    monkeypatch.setattr(exporter, "notify_auth_failure", lambda **kw: pytest.fail("Duplicate auth alert"))
+    monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
+    assert exporter.main() == 2
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert state["completed_pages"] == {"151": [1]}

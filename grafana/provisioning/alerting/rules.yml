@@ -53,6 +53,24 @@ groups:
                         lower('${SEZ_SCHEDULE_ENABLED}') IN ('true', '1', 'yes', 'on') AS sez_enabled,
                         lower('${GIAS_SYNC_ENABLED}') IN ('true', '1', 'yes', 'on') AS gias_enabled
                 ),
+                egr_checkpoint AS (
+                    SELECT
+                        (SELECT value::jsonb FROM egr_system_state WHERE key = 'egr_period_sync_v2') AS progress,
+                        (SELECT value::date FROM egr_system_state WHERE key = 'egr_last_sync_date') AS legacy_day
+                ),
+                egr_sync AS (
+                    SELECT
+                        COALESCE((progress->>'scanned_through')::date,
+                                 (progress->>'last_completed_day')::date, legacy_day) AS scanned_day,
+                        COALESCE((progress->>'last_completed_day')::date, legacy_day) AS completed_day,
+                        (SELECT count(*) FROM jsonb_object_keys(COALESCE(
+                            NULLIF(progress->'transition_conflicts', 'null'::jsonb), '{}'::jsonb
+                        ))) AS unresolved_transitions,
+                        (SELECT count(*) FROM jsonb_object_keys(COALESCE(
+                            NULLIF(progress->'history_conflicts', 'null'::jsonb), '{}'::jsonb
+                        ))) AS unresolved_histories
+                    FROM egr_checkpoint
+                ),
                 latest_bankrot AS (
                     SELECT status, error, started_at, finished_at
                     FROM bankrot_sync_runs
@@ -125,12 +143,38 @@ groups:
                 issues AS (
                     SELECT 10 AS priority, 'critical' AS severity,
                            CASE
-                               WHEN s.value IS NULL THEN 'ЕГР: отсутствует egr_last_sync_date'
-                               ELSE 'ЕГР: ежедневная синхронизация отстаёт более чем на 3 дня'
+                               WHEN scanned_day IS NULL THEN 'ЕГР: нет контрольной даты обработки ежедневных изменений'
+                               ELSE 'ЕГР: обработка ежедневных изменений отстаёт более чем на 3 дня'
                            END AS detail
-                    FROM (SELECT 1) seed
-                    LEFT JOIN egr_system_state s ON s.key = 'egr_last_sync_date'
-                    WHERE s.value IS NULL OR current_date - s.value::date > 3
+                    FROM egr_sync
+                    WHERE scanned_day IS NULL
+                       OR (now() AT TIME ZONE 'Europe/Minsk')::date - 1 - scanned_day > 3
+
+                    UNION ALL
+
+                    SELECT 11, 'warning',
+                           format('ЕГР: неполных связей ИП → юрлицо на сверке: %s; дни обработаны по %s; полностью сверено по %s',
+                                  unresolved_transitions, COALESCE(scanned_day::text, 'неизвестно'),
+                                  COALESCE(completed_day::text, 'неизвестно'))
+                    FROM egr_sync
+                    WHERE unresolved_transitions > 0
+
+                    UNION ALL
+
+                    SELECT 12, 'warning',
+                           format('ЕГР: конфликтов истории на сверке: %s; дни обработаны по %s; полностью сверено по %s',
+                                  unresolved_histories, COALESCE(scanned_day::text, 'неизвестно'),
+                                  COALESCE(completed_day::text, 'неизвестно'))
+                    FROM egr_sync
+                    WHERE unresolved_histories > 0
+
+                    UNION ALL
+
+                    SELECT 13, 'warning', 'ЕГР: дата полной сверки не подтверждена при обработанных новых днях'
+                    FROM egr_sync
+                    WHERE scanned_day IS NOT NULL
+                      AND (completed_day IS NULL OR completed_day < scanned_day)
+                      AND unresolved_transitions = 0 AND unresolved_histories = 0
 
                     UNION ALL
 
