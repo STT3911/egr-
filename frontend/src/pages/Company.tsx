@@ -3,13 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CompanyMap } from "@/components/CompanyMap";
+import { CompanyContacts } from "@/components/CompanyContacts";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
 import { GiasBankAccountsSection } from "@/components/gias/GiasBankAccountsSection";
 import { getBankrotPayloadCount } from "@/lib/bankrotData";
 import { getCompanyAgeYears } from "@/lib/companyAge";
 import { motion, type Variants, useScroll, useSpring } from "framer-motion";
-import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Globe, Loader2, Mail, Moon, Phone, Printer, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Award, Building2, CalendarDays, ChevronUp, ClipboardCheck, Database, Download, ExternalLink, FileText, Loader2, Mail, Moon, Phone, RefreshCw, Share2, ShieldCheck, Sparkles, Store, Sun, Users, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   getCompanyProfile,
@@ -1286,58 +1287,7 @@ const Company = () => {
           )}
 
           {/* Контактная информация */}
-          {profile.contacts && profile.contacts.length > 0 && (
-            <SectionCard>
-            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
-              <CardHeader className="rounded-t-lg" style={{
-                background: 'linear-gradient(90deg, hsl(var(--accent) / 0.1) 0%, hsl(var(--secondary) / 0.1) 100%)'
-              }}>
-                <CardTitle className="text-foreground flex items-center gap-2 text-lg sm:text-xl">
-                  <div className="w-2 h-2 rounded-full bg-accent animate-pulse"></div>
-                  Контактная информация
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 sm:space-y-4 p-4 sm:p-6">
-                {profile.contacts.map((contact, idx) => (
-                  <div key={idx} className="glass p-3 sm:p-4 rounded-lg hover:bg-accent/5 transition-all duration-300 space-y-2 sm:space-y-3">
-                    {contact.phone && (
-                      <div className="flex items-center gap-3">
-                        <Phone className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <p className="text-foreground font-semibold text-sm sm:text-base break-all">{contact.phone}</p>
-                      </div>
-                    )}
-                    {contact.fax && (
-                      <div className="flex items-center gap-3">
-                        <Printer className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <p className="text-foreground font-semibold text-sm sm:text-base break-all">{contact.fax}</p>
-                      </div>
-                    )}
-                    {contact.email && (
-                      <div className="flex items-center gap-3">
-                        <Mail className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <p className="text-foreground font-semibold text-sm sm:text-base break-all">{contact.email}</p>
-                      </div>
-                    )}
-                    {contact.website && (
-                      <div className="flex items-center gap-3">
-                        <Globe className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <a
-                          href={contact.website}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary hover:text-primary/80 font-semibold underline decoration-primary/30 hover:decoration-primary transition-all duration-300 text-sm sm:text-base break-all"
-                        >
-                          {contact.website}
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-              </CardContent>
-            </Card>
-            </SectionCard>
-          )}
+          <CompanyContacts profile={profile} />
 
           {/* Данные налоговой (GRP) */}
           {(grpLoading || grpData) && (

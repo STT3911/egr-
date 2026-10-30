@@ -43,6 +43,14 @@ export type CompanyGiasBankAccount = {
   source_updated_at?: string | null;
 };
 
+export type AggregatedCompanyContact = {
+  contact_type: string;
+  value: string;
+  full_name?: string | null;
+  position?: string | null;
+  sources: string[];
+};
+
 export type CompanyProfile = {
   unp: number;
   current_status_code?: number;
@@ -83,6 +91,7 @@ export type CompanyProfile = {
     phone?: string;
     fax?: string;
   }[];
+  contacts_aggregated?: AggregatedCompanyContact[];
   pvt_resident?: {
     name?: string;
     profile_url?: string;
