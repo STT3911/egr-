@@ -31,9 +31,11 @@ export function CompanyContacts({ profile }: { profile: ContactProfile }) {
           if (!rows.length) return null;
           const Icon = icons[group.kind];
           return (
-            <section key={group.kind} aria-label={group.title}>
-              <h3 className="mb-2 text-sm font-semibold text-muted-foreground">{group.title}</h3>
-              <ul className="divide-y divide-border rounded-xl border border-border/70 bg-card/40 px-3 sm:px-4">
+            <section key={group.kind} aria-label={group.title} className="overflow-hidden rounded-xl border border-border/70 bg-card/35">
+              <div className="border-b border-border/60 bg-background/45 px-3 py-2.5 sm:px-4">
+                <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>
+              </div>
+              <ul className="divide-y divide-border px-3 sm:px-4">
                 {rows.map(contact => {
                   const href = contactHref(contact);
                   const valueClass = "min-w-0 break-all text-sm font-semibold text-foreground sm:text-base";
