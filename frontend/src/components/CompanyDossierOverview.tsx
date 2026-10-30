@@ -52,7 +52,7 @@ export function CompanyDossierOverview({ profile, risk, taxDebt }: Props) {
   ] as const;
 
   return (
-    <Card className="overflow-hidden border-primary/20 bg-card/95 shadow-card">
+    <Card id="egr-section" className="scroll-mt-24 overflow-hidden border-primary/20 bg-card/95 shadow-card">
       <CardHeader className="border-b border-border/60 bg-gradient-to-r from-primary/10 via-accent/8 to-transparent">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>

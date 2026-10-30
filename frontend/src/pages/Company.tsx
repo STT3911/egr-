@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CompanyMap } from "@/components/CompanyMap";
 import { CompanyContacts } from "@/components/CompanyContacts";
 import { CompanyDossierOverview } from "@/components/CompanyDossierOverview";
+import { CompanyDossierSectionNav } from "@/components/CompanyDossierSectionNav";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
 import { GiasBankAccountsSection } from "@/components/gias/GiasBankAccountsSection";
@@ -739,6 +740,9 @@ const Company = () => {
             className="space-y-6"
           >
             <SectionCard>
+              <CompanyDossierSectionNav profile={profile} />
+            </SectionCard>
+            <SectionCard>
               <CompanyDossierOverview profile={profile} risk={risk} taxDebt={taxDebtData} />
             </SectionCard>
             {businessPulse && (() => {
@@ -1101,7 +1105,7 @@ const Company = () => {
           {/* История названий */}
           {profile.names && profile.names.length > 0 && (
             <SectionCard>
-            <Card className="glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
+            <Card id="trade-registry-section" className="scroll-mt-24 glass shadow-card hover:shadow-glow transition-all duration-300 border-accent/20">
               <CardHeader className="rounded-t-lg" style={{
                 background: 'linear-gradient(90deg, hsl(var(--accent) / 0.1) 0%, hsl(var(--primary) / 0.1) 100%)'
               }}>
