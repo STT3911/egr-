@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CompanyMap } from "@/components/CompanyMap";
 import { CompanyContacts } from "@/components/CompanyContacts";
+import { CompanyDossierOverview } from "@/components/CompanyDossierOverview";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
 import { GiasBankAccountsSection } from "@/components/gias/GiasBankAccountsSection";
@@ -602,7 +603,7 @@ const Company = () => {
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45 }}
-        className="max-w-4xl mx-auto space-y-6 relative z-10"
+        className="mx-auto max-w-7xl space-y-6 relative z-10"
       >
         {/* Back to Home Button */}
         <div className="flex items-center justify-start">
@@ -737,6 +738,9 @@ const Company = () => {
             animate="visible"
             className="space-y-6"
           >
+            <SectionCard>
+              <CompanyDossierOverview profile={profile} risk={risk} taxDebt={taxDebtData} />
+            </SectionCard>
             {businessPulse && (() => {
               const toneClasses: Record<PulseTone, string> = {
                 emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",

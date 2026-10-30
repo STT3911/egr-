@@ -92,6 +92,18 @@ export type CompanyProfile = {
     fax?: string;
   }[];
   contacts_aggregated?: AggregatedCompanyContact[];
+  gias_accreditation?: {
+    state?: string;
+    summary?: string;
+    phone?: string;
+    email?: string;
+    web_site?: string;
+    city_name?: string;
+    placements_address?: string;
+    dt_update?: string;
+    dt_from?: string;
+    dt_to?: string;
+  } | null;
   pvt_resident?: {
     name?: string;
     profile_url?: string;
