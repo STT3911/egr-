@@ -101,7 +101,6 @@ export function CompanyDossierOverview({ profile, risk, taxDebt }: Props) {
             <div className="flex flex-wrap gap-2">
               {domains.map(([label, present, source]) => <Badge key={label} variant="outline" className={present ? toneClasses.good : "border-border/60 text-muted-foreground"}>{label}{present ? " · есть" : " · нет"}</Badge>)}
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Наличие блока не означает, что источник обновлён сегодня. Дата и источник указаны внутри соответствующей секции.</p>
           </section>
         </div>
 
