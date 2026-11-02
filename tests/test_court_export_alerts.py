@@ -78,9 +78,29 @@ def test_blank_response_alert_is_not_claimed_to_be_expired_cookie(configured, mo
         calls.append(kw) or SimpleNamespace(status_code=200, json=lambda: {"ok": True}))
     assert alerts.notify_export_failure(court_id=151, type_proc=14, page=49, unique_total=550,
         error_type="CourtResponseError", reason="blank_response", http_status=200,
-        response_bytes=2, attempts=3)
+        response_bytes=2, attempts=3, pages_completed=48, pages_total=639,
+        current_pages_completed=48, current_pages_total=639)
     message = calls[0]["json"]["text"]
     assert "пустой HTTP 200" in message and "три попытки" in message and "2 байт" in message
+    assert "Пропарсено страниц: 48 из 639" in message
+    assert "Уникальных дел в текущем файле: 550" in message
+
+
+def test_auth_alert_contains_checkpoint_progress(configured, monkeypatch):
+    calls = []
+    monkeypatch.setenv("COURT_AUTH_TELEGRAM_CHAT_ID", "712998661")
+    monkeypatch.setattr(alerts.requests, "post", lambda *a, **kw:
+        calls.append(kw) or SimpleNamespace(status_code=200, json=lambda: {"ok": True}))
+    assert alerts.notify_auth_failure(
+        court_id=152, type_proc=14, page=290, unique_total=9310,
+        pages_completed=934, pages_total=7652,
+        current_pages_completed=289, current_pages_total=658,
+    )
+    message = calls[0]["json"]["text"]
+    assert "Ошибка на странице: 290" in message
+    assert "Пропарсено страниц: 934 из 7652" in message
+    assert "По текущему суду: 289 из 658 страниц" in message
+    assert "Уникальных дел в текущем файле: 9310" in message
 
 
 @pytest.mark.parametrize("age, managed", [(10, True), (119, True), (120, False), (1000, False), (-5, False)])

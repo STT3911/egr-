@@ -203,7 +203,84 @@ def test_blank_stop_reason_recognizes_existing_exporter_logs_without_leaking_tex
         '{"reason":"blank_response","http_status":200,"response_bytes":2,"attempts":3}\n'
         'Court Telegram notification: sent\n'))
     status = {"state": {"StartedAt": "2026-09-30T00:00:00Z", "ExitCode": 1}}
-    assert exporter.stop_report(status) == {"reason": "blank_response", "progress": "151:61"}
+    assert exporter.stop_report(status) == {
+        "reason": "blank_response", "progress": "151:61",
+        "http_status": 200, "response_bytes": 2, "attempts": 3,
+    }
+
+
+def test_stop_report_preserves_safe_progress_metadata(setup):
+    controller, _, _ = setup
+    exporter = Exporter(controller.config)
+    exporter._run = Mock(return_value=(
+        'Court export stopped: CourtResponseError; court=152; page=290\n'
+        '{"reason":"unexpected_redirect","court_id":152,"type_proc":14,"page":290,'
+        '"unique_total":9310,"pages_completed":934,"pages_total":7652,'
+        '"current_pages_completed":289,"current_pages_total":658}\n'))
+    status = {"state": {"StartedAt": "2026-09-30T00:00:00Z", "ExitCode": 1}}
+    assert exporter.stop_report(status) == {
+        "reason": "unexpected_redirect", "progress": "152:14:290", "page": 290,
+        "court_id": 152, "type_proc": 14,
+        "unique_total": 9310, "pages_completed": 934, "pages_total": 7652,
+        "current_pages_completed": 289, "current_pages_total": 658,
+    }
+
+
+def test_auth_notification_includes_export_progress(setup):
+    controller, telegram, exporter = setup
+    exporter.stop_report.return_value = {
+        "reason": "auth_required", "progress": "152:14:290", "page": 290,
+        "unique_total": 9310, "pages_completed": 934, "pages_total": 7652,
+        "current_pages_completed": 289, "current_pages_total": 658,
+    }
+    controller.check_stop()
+    text = telegram.send.call_args.args[1]
+    assert "Пропарсено страниц: 934 из 7652" in text
+    assert "Уникальных дел в текущем файле: 9310" in text
+
+
+def test_probed_auth_alert_preserves_original_stop_details_and_retries_delivery(setup):
+    from dataclasses import replace
+    controller, telegram, exporter = setup
+    controller.config = replace(controller.config, notify_chat_id=712998661)
+    exporter.status.return_value["state"]["ExitCode"] = 1
+    exporter.stop_report.return_value = {
+        "reason": "unexpected_redirect", "progress": "152:14:616",
+        "court_id": 152, "type_proc": 14, "page": 616,
+        "pages_completed": 1260, "pages_total": 7652,
+        "current_pages_completed": 615, "current_pages_total": 658,
+        "unique_total": 12493,
+        "http_status": 302, "response_bytes": 120,
+    }
+    controller.auth_probe.check.return_value = {"status": "auth_required"}
+    telegram.send.side_effect = ControlError("No delivery")
+    with pytest.raises(ControlError):
+        controller.check_stop()
+    telegram.send.side_effect = None
+    resumed = Controller(controller.config, telegram, exporter, clock=lambda: 1000,
+                         auth_probe=controller.auth_probe)
+    resumed.check_stop()
+    resumed.check_stop()
+    controller.auth_probe.check.assert_called_once()
+    assert telegram.send.call_count == 2
+    assert telegram.send.call_args_list[0].args == telegram.send.call_args_list[1].args
+    destination, message = telegram.send.call_args.args
+    assert destination == 712998661
+    assert "Суд: 152; TypeProc: 14; страница: 616" in message
+    assert "Пропарсено страниц: 1260 из 7652" in message
+    assert "По текущему суду: 615 из 658" in message
+    assert "Уникальных дел в текущем файле: 12493" in message
+    assert "Дополнительная проверка подтвердила отказ авторизации" in message
+    assert "HTTP при остановке: 302; размер ответа: 120 байт" in message
+    exporter.start.assert_not_called()
+
+
+def test_legacy_auth_alert_does_not_invent_statistics(setup):
+    controller, telegram, _ = setup
+    controller.check_stop()
+    text = telegram.send.call_args.args[1]
+    assert "Статистика прогресса отсутствует в логе этого запуска" in text
+    assert "Пропарсено страниц: 0" not in text
 
 
 def test_controller_heartbeat_contains_timestamp_and_auth_route_without_secrets(setup):

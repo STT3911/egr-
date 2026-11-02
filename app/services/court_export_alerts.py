@@ -46,7 +46,29 @@ def auth_chat_id(cookie_file: Path | None = None) -> str:
     return os.environ.get("ALERT_TELEGRAM_CHAT_ID", "").strip()
 
 
+def _progress_lines(*, pages_completed: int | None, pages_total: int | None,
+                    current_pages_completed: int | None,
+                    current_pages_total: int | None, unique_total: int) -> str:
+    lines = []
+    if isinstance(pages_completed, int):
+        total = f" из {pages_total}" if isinstance(pages_total, int) and pages_total > 0 else ""
+        lines.append(f"Пропарсено страниц: {pages_completed}{total}.")
+    if isinstance(current_pages_completed, int):
+        current_total = (
+            f" из {current_pages_total}"
+            if isinstance(current_pages_total, int) and current_pages_total > 0
+            else ""
+        )
+        lines.append(f"По текущему суду: {current_pages_completed}{current_total} страниц.")
+    lines.append(f"Уникальных дел в текущем файле: {unique_total}.")
+    return "\n".join(lines)
+
+
 def notify_auth_failure(*, court_id: int, type_proc: int, unique_total: int,
+                        page: int | None = None, pages_completed: int | None = None,
+                        pages_total: int | None = None,
+                        current_pages_completed: int | None = None,
+                        current_pages_total: int | None = None,
                         cookie_file: Path | None = None) -> bool:
     """Send once; never include cookies, response bodies or exception details."""
     if not telegram_configured():
@@ -55,7 +77,14 @@ def notify_auth_failure(*, court_id: int, type_proc: int, unique_total: int,
         "⚠️ Выгрузка судов остановлена: сайт отклонил авторизацию.\n"
         "Куки могли истечь либо доступ аккаунта ограничен.\n"
         f"Суд: {court_id}; TypeProc: {type_proc}.\n"
-        f"Уникальных записей в текущем файле: {unique_total}.\n"
+        + (f"Ошибка на странице: {page}.\n" if isinstance(page, int) else "")
+        + _progress_lines(
+            pages_completed=pages_completed,
+            pages_total=pages_total,
+            current_pages_completed=current_pages_completed,
+            current_pages_total=current_pages_total,
+            unique_total=unique_total,
+        ) + "\n"
         "Сохранённые страницы остаются в JSONL и checkpoint.\n"
         "Обновите court.cookie и возобновите контейнер выгрузки."
     )
@@ -65,7 +94,10 @@ def notify_auth_failure(*, court_id: int, type_proc: int, unique_total: int,
 def notify_export_failure(*, court_id: int, type_proc: int, page: int,
                           unique_total: int, error_type: str, reason: str = "",
                           http_status: int | None = None, response_bytes: int | None = None,
-                          attempts: int = 1) -> bool:
+                          attempts: int = 1, pages_completed: int | None = None,
+                          pages_total: int | None = None,
+                          current_pages_completed: int | None = None,
+                          current_pages_total: int | None = None) -> bool:
     """Only allow known exception labels, never arbitrary diagnostic text."""
     if error_type not in {"RuntimeError", "ValueError", "OSError", "PermissionError",
                           "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout",
@@ -86,7 +118,13 @@ def notify_export_failure(*, court_id: int, type_proc: int, page: int,
         + diagnostic +
         f"Суд: {court_id}; TypeProc: {type_proc}; страница: {page}.\n"
         f"Тип ошибки: {error_type}.\n"
-        f"Уникальных записей в текущем файле: {unique_total}.\n"
+        + _progress_lines(
+            pages_completed=pages_completed,
+            pages_total=pages_total,
+            current_pages_completed=current_pages_completed,
+            current_pages_total=current_pages_total,
+            unique_total=unique_total,
+        ) + "\n"
         "Ранее сохранённый прогресс оставлен. Ошибочная страница не завершена.\n"
         "Нужна диагностика перед продолжением; это не обязательно истечение куки."
     )

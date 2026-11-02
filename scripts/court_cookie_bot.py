@@ -270,7 +270,8 @@ class Exporter:
             except (ValueError, TypeError):
                 continue
             if isinstance(item, dict) and item.get("reason") in {
-                "blank_response", "unrecognized_response", "unexpected_redirect",
+                "auth_required", "blank_response", "unrecognized_response",
+                "unexpected_redirect", "export_error",
             }:
                 progress = next((re.search(r"court=(\d+); page=(\d+)", entry)
                                  for entry in reversed(lines) if "Court export stopped:" in entry), None)
@@ -278,8 +279,15 @@ class Exporter:
                     progress_key = ":".join(str(item[key]) for key in ("court_id", "type_proc", "page"))
                 else:
                     progress_key = ":".join(progress.groups()) if progress else "unknown"
-                return {"reason": item["reason"],
-                        "progress": progress_key}
+                report = {"reason": item["reason"], "progress": progress_key}
+                for key in (
+                    "court_id", "type_proc", "page", "unique_total", "pages_completed", "pages_total",
+                    "current_pages_completed", "current_pages_total",
+                    "http_status", "response_bytes", "attempts",
+                ):
+                    if type(item.get(key)) is int and item[key] >= 0:
+                        report[key] = item[key]
+                return report
         if status["state"].get("ExitCode") == 2 and any(
             line.startswith(("Court session expired;", "Court access denied;")) for line in lines
         ):
@@ -382,13 +390,50 @@ class Controller:
                 reply += " Не удалось удалить сообщение с кукой — удалите его вручную."
         self.telegram.send(self.config.user_id, reply)
 
-    def notify_auth_required(self, marker):
+    @staticmethod
+    def _progress_text(report):
+        lines = []
+        if isinstance(report.get("pages_completed"), int):
+            total = (f" из {report['pages_total']}"
+                     if isinstance(report.get("pages_total"), int)
+                     and report["pages_total"] > 0 else "")
+            lines.append(f"Пропарсено страниц: {report['pages_completed']}{total}.")
+        if isinstance(report.get("current_pages_completed"), int):
+            total = (f" из {report['current_pages_total']}"
+                     if isinstance(report.get("current_pages_total"), int)
+                     and report["current_pages_total"] > 0 else "")
+            lines.append(f"По текущему суду: {report['current_pages_completed']}{total} страниц.")
+        if isinstance(report.get("unique_total"), int):
+            lines.append(f"Уникальных дел в текущем файле: {report['unique_total']}.")
+        return "\n".join(lines)
+
+    def notify_auth_required(self, marker, report=None):
         if self.state.get("notified_stop") == marker:
             return
+        report = report or {}
+        lines = ["⚠️ Выгрузка судов остановлена: сайт отклонил авторизацию."]
+        position = []
+        for key, label in (("court_id", "Суд"), ("type_proc", "TypeProc"), ("page", "страница")):
+            if type(report.get(key)) is int and report[key] > 0:
+                position.append(f"{label}: {report[key]}")
+        if position:
+            lines.append("; ".join(position) + ".")
+        elif re.fullmatch(r"\d+(?::\d+){1,2}", str(report.get("progress", ""))):
+            lines.append("Позиция остановки: " + report["progress"] + ".")
+        if report.get("reason") == "unexpected_redirect":
+            lines.append("Первоначальная остановка: неожиданный редирект. "
+                         "Дополнительная проверка подтвердила отказ авторизации.")
+        if type(report.get("http_status")) is int:
+            diagnostic = f"HTTP при остановке: {report['http_status']}"
+            if type(report.get("response_bytes")) is int:
+                diagnostic += f"; размер ответа: {report['response_bytes']} байт"
+            lines.append(diagnostic + ".")
+        progress = self._progress_text(report)
+        lines.append(progress or "Статистика прогресса отсутствует в логе этого запуска.")
+        lines.append("Прогресс сохранён. Пришлите свежий полный Cookie обычным текстом "
+                     "в личный чат этому боту. Он сохранит куку и продолжит с прежнего места.")
         receipt = self.telegram.send(self.config.notify_chat_id,
-            "⚠️ Сайт судов отклонил авторизацию. Выгрузка ждёт обновления сессии. "
-            "Пришлите свежий полный Cookie обычным текстом в личный чат этому боту. "
-            "Он сохранит куку и продолжит с прежнего места.")
+                                     "\n".join(lines))
         if (isinstance(receipt, dict) and isinstance(receipt.get("chat"), dict)
                 and receipt["chat"].get("id") != self.config.notify_chat_id):
             raise ControlError("Unexpected notification destination in receipt")
@@ -406,7 +451,7 @@ class Controller:
         generation = [self.config.cookie.stat().st_mtime_ns, self.config.cookie.stat().st_size]
         if (self.state.get("auth_confirmed_stop") == marker
                 and self.state.get("auth_cookie_generation") == generation):
-            self.notify_auth_required(marker)
+            self.notify_auth_required(marker, self.exporter.stop_report(status))
             return
         if (self.state.get("auth_probe_stop") == marker
                 and self.clock() < self.state.get("next_auth_probe_at", 0)):
@@ -434,7 +479,7 @@ class Controller:
         self.state.update(auth_confirmed_stop=marker, auth_cookie_generation=generation,
                           retry_due=None)
         self.save()
-        self.notify_auth_required(marker)
+        self.notify_auth_required(marker, self.exporter.stop_report(current))
 
     def check_stop(self):
         status = self.exporter.status()
@@ -459,12 +504,14 @@ class Controller:
                         "❌ Выгрузка судов остановлена: ошибка ответа, сети или сохранения.\n"
                         + reasons.get(report["reason"], "Требуется диагностика ошибки выгрузки.")
                         + "\nПозиция (суд:тип:страница): " + report.get("progress", "unknown")
+                        + ("\n" + self._progress_text(report)
+                           if self._progress_text(report) else "")
                         + "\nПрогресс сохранён. Это не подтверждённая ошибка авторизации.")
                 self.state["ordinary_notified_stop"] = marker
             self.state["retry_due"] = None
             if report["reason"] == "auth_required":
                 # Exit code alone is insufficient: argparse also exits 2.
-                self.notify_auth_required(marker)
+                self.notify_auth_required(marker, report)
             elif report["reason"] == "blank_response":
                 progress = report["progress"]
                 failures = (self.state.get("blank_failures", 0) + 1

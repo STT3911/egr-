@@ -151,6 +151,32 @@ def _completed_pages(state: Dict[str, object], court_id: int) -> Set[int]:
     return {int(value) for value in raw}
 
 
+def _progress_snapshot(
+    state: Dict[str, object], court_ids: Iterable[int], active_court_id: int,
+) -> Dict[str, int]:
+    """Return safe checkpoint progress for Telegram/log output."""
+    completed_by_court = state.get("completed_pages", {})
+    totals = state.get("total_pages", {})
+    completed_pages = 0
+    total_pages = 0
+    for court_id in court_ids:
+        raw_completed = completed_by_court.get(str(court_id), [])
+        completed_pages += len({int(value) for value in raw_completed})
+        raw_total = totals.get(str(court_id), 0)
+        if isinstance(raw_total, int) and raw_total > 0:
+            total_pages += raw_total
+    current_completed = len({
+        int(value) for value in completed_by_court.get(str(active_court_id), [])
+    })
+    current_total = totals.get(str(active_court_id), 0)
+    return {
+        "pages_completed": completed_pages,
+        "pages_total": total_pages,
+        "current_pages_completed": current_completed,
+        "current_pages_total": current_total if isinstance(current_total, int) else 0,
+    }
+
+
 def _write_page(
     handle: object,
     records: Iterable[CourtJudgment],
@@ -300,11 +326,22 @@ def main() -> int:
     except CourtAuthenticationError as exc:
         print(str(exc), file=sys.stderr)
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
+        progress = _progress_snapshot(state, court_ids, active_court_id)
+        print(json.dumps({
+            "reason": "auth_required",
+            "court_id": active_court_id,
+            "type_proc": args.type_proc,
+            "page": active_page,
+            "unique_total": len(seen),
+            **progress,
+        }), file=sys.stderr)
         if args.notify_telegram and not notifications_managed(args.cookie_file):
             delivered = notify_auth_failure(
                 court_id=active_court_id,
                 type_proc=args.type_proc,
                 unique_total=len(seen),
+                page=active_page,
+                **progress,
                 cookie_file=args.cookie_file,
             )
             print(
@@ -319,18 +356,30 @@ def main() -> int:
               file=sys.stderr)
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
         response_info = {}
+        progress = _progress_snapshot(state, court_ids, active_court_id)
         if isinstance(exc, CourtResponseError):
             response_info = {"reason": exc.reason, "http_status": exc.http_status,
                              "response_bytes": exc.response_bytes, "attempts": exc.attempts,
                              "court_id": active_court_id, "type_proc": args.type_proc,
-                             "page": active_page}
+                             "page": active_page, "unique_total": len(seen),
+                             **progress}
             print(json.dumps(response_info), file=sys.stderr)
+        else:
+            print(json.dumps({
+                "reason": "export_error",
+                "court_id": active_court_id,
+                "type_proc": args.type_proc,
+                "page": active_page,
+                "unique_total": len(seen),
+                **progress,
+            }), file=sys.stderr)
         # Ordinary failures ALWAYS use the default Alerts destination, even when
         # the cookie controller is alive. Only auth alerts are delegated to it.
         if args.notify_telegram:
             delivered = notify_export_failure(
                 court_id=active_court_id, type_proc=args.type_proc, page=active_page,
                 unique_total=len(seen), error_type=type(exc).__name__,
+                **progress,
                 **{key: value for key, value in response_info.items()
                    if key in {"reason", "http_status", "response_bytes", "attempts"}},
             )

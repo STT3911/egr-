@@ -128,6 +128,8 @@ def test_auth_alert_preserves_exit_code_and_checkpoint(monkeypatch, tmp_path, de
     monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
     assert exporter.main() == 2
     assert alerts == [{"court_id": 151, "type_proc": 14, "unique_total": 1,
+                       "page": 2, "pages_completed": 1, "pages_total": 3,
+                       "current_pages_completed": 1, "current_pages_total": 3,
                        "cookie_file": tmp_path / "cookie.txt"}]
     state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
     assert state["completed_pages"] == {"151": [1]}
@@ -174,7 +176,9 @@ def test_non_auth_error_notifies_keeps_checkpoint_and_can_resume(monkeypatch, tm
     monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
     assert exporter.main() == 1
     assert calls == [{"court_id": 151, "type_proc": 14, "page": 2,
-                      "unique_total": 1, "error_type": type(error).__name__}]
+                      "unique_total": 1, "error_type": type(error).__name__,
+                      "pages_completed": 1, "pages_total": 3,
+                      "current_pages_completed": 1, "current_pages_total": 3}]
     assert "secret-cookie-value" not in capsys.readouterr().err
     state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
     assert state["completed_pages"] == {"151": [1]}
@@ -215,6 +219,8 @@ def test_exhausted_blank_response_keeps_page_incomplete_and_reports_safe_metadat
     assert state["completed_pages"] == {"151": [1]}
     assert alerts == [{"court_id": 151, "type_proc": 14, "page": 2,
                        "unique_total": 1, "error_type": "CourtResponseError",
+                       "pages_completed": 1, "pages_total": 3,
+                       "current_pages_completed": 1, "current_pages_total": 3,
                        "reason": "blank_response", "http_status": 200,
                        "response_bytes": 2, "attempts": 3}]
     assert '"reason": "blank_response"' in capsys.readouterr().err
