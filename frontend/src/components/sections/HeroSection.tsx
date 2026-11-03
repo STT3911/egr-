@@ -1,8 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowDownRight, Database, Gauge, Layers3, Sparkles } from "lucide-react";
 import { CompanySearch } from "@/components/CompanySearch";
-import { AnimatedHeroBackdrop } from "./AnimatedHeroBackdrop";
-import { DataCube } from "./DataCube";
 
 const proof = [
   { icon: Database, value: "1,6 млн", label: "компаний в базе" },
@@ -15,8 +13,6 @@ const sourceLabels = ["Регистрационные данные", "Банкр
 export const HeroSection = () => {
   return (
     <section className="hero-shell relative overflow-hidden px-4 pb-12 pt-28 sm:px-6 sm:pb-16 sm:pt-36">
-      <AnimatedHeroBackdrop />
-
       <div className="container relative z-10 mx-auto max-w-7xl">
         <div className="hero-layout">
           <div className="hero-copy max-w-3xl lg:pb-6">
@@ -81,15 +77,6 @@ export const HeroSection = () => {
             </motion.div>
 
           </div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 28 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.75, delay: 0.16 }}
-            className="hero-cube-wrap relative min-w-0"
-          >
-            <DataCube />
-          </motion.div>
 
           <motion.div
             initial={{ opacity: 0, y: 24 }}
