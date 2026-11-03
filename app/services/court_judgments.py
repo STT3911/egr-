@@ -21,6 +21,7 @@ import requests
 
 
 BASE_URL = "https://service.court.gov.by"
+MIN_REQUEST_INTERVAL_SECONDS = 5
 SEARCH_PATH = "/ru/juridical/judgmentresults/search"
 SEARCH_PAGE_PATH = "/ru/juridical/judgmentresults/searchpage"
 REFERER_PATH = "/ru/juridical/judgmentresults"
@@ -283,8 +284,8 @@ class CourtJudgmentClient:
         cookie_header = normalize_cookie_header(cookie_header)
         if not cookie_header:
             raise ValueError("Court cookie header is empty")
-        if not math.isfinite(min_interval_seconds) or min_interval_seconds < 30:
-            raise ValueError("min_interval_seconds must be at least 30")
+        if not math.isfinite(min_interval_seconds) or min_interval_seconds < MIN_REQUEST_INTERVAL_SECONDS:
+            raise ValueError(f"min_interval_seconds must be at least {MIN_REQUEST_INTERVAL_SECONDS}")
         if not math.isfinite(delay_jitter_seconds) or delay_jitter_seconds < 0:
             raise ValueError("delay_jitter_seconds must be finite and nonnegative")
 

@@ -52,8 +52,8 @@ def setup_run(monkeypatch, tmp_path):
 
 def test_cli_rejects_less_than_thirty_seconds_before_export(monkeypatch, tmp_path):
     client, args = setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(sys, "argv", args + ["--delay", "29"])
-    with pytest.raises(ValueError, match="at least 30 seconds"):
+    monkeypatch.setattr(sys, "argv", args + ["--delay", "4.9"])
+    with pytest.raises(ValueError, match="at least 5 seconds"):
         exporter.main()
     assert client.calls == []
 

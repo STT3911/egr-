@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -18,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from app.services.court_judgments import (  # noqa: E402
     COURTS,
+    MIN_REQUEST_INTERVAL_SECONDS,
     CourtAuthenticationError,
     CourtJudgment,
     CourtJudgmentClient,
@@ -61,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         "--delay",
         type=float,
         default=30.0,
-        help="Minimum seconds between every HTTP request (minimum/default: 30)",
+        help=f"Seconds between HTTP request starts (minimum: {MIN_REQUEST_INTERVAL_SECONDS}, default: 30)",
     )
     parser.add_argument(
         "--delay-jitter",
@@ -199,8 +201,8 @@ def main() -> int:
     date_to = _validate_date(args.date_to)
     if datetime.strptime(date_from, "%d.%m.%Y") > datetime.strptime(date_to, "%d.%m.%Y"):
         raise ValueError("--date-from must not be after --date-to")
-    if args.delay < 30:
-        raise ValueError("--delay must be at least 30 seconds")
+    if not math.isfinite(args.delay) or args.delay < MIN_REQUEST_INTERVAL_SECONDS:
+        raise ValueError(f"--delay must be at least {MIN_REQUEST_INTERVAL_SECONDS} seconds")
     if args.delay_jitter < 0:
         raise ValueError("--delay-jitter must not be negative")
     if args.max_pages is not None and args.max_pages < 1:

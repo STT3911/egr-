@@ -163,7 +163,7 @@ def test_copied_cookie_label(value):
         assert client.session.cookies.get(".ASPXAUTH") == "auth"
 
 
-@pytest.mark.parametrize("interval", [0, 0.5, 29.9, float("nan"), float("inf")])
+@pytest.mark.parametrize("interval", [0, 0.5, 4.9, float("nan"), float("inf")])
 def test_short_or_invalid_intervals_rejected(interval):
     with pytest.raises(ValueError):
         CourtJudgmentClient("a=b", min_interval_seconds=interval)
