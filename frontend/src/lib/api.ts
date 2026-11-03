@@ -51,6 +51,21 @@ export type AggregatedCompanyContact = {
   sources: string[];
 };
 
+export type CompanyEgrEvent = {
+  event_record_id?: number | null;
+  event_type?: string | null;
+  event_date?: string | null;
+  cancel_date?: string | null;
+  document_date?: string | null;
+  deadline_date?: string | null;
+  suspension_end_date?: string | null;
+  document_number?: string | null;
+  decision_authority?: string | null;
+  document_authority?: string | null;
+  foundation?: string | null;
+  notes?: string | null;
+};
+
 export type CompanyProfile = {
   unp: number;
   current_status_code?: number;
@@ -91,6 +106,7 @@ export type CompanyProfile = {
     phone?: string;
     fax?: string;
   }[];
+  events?: CompanyEgrEvent[];
   contacts_aggregated?: AggregatedCompanyContact[];
   gias_accreditation?: {
     state?: string;

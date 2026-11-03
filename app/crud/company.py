@@ -499,6 +499,10 @@ class CompanyCRUD:
                 selectinload(Company.addresses_history),
                 selectinload(Company.ved_history),
                 selectinload(Company.contacts_history),
+                selectinload(Company.events).selectinload(CompanyEvent.event_type),
+                selectinload(Company.events).selectinload(CompanyEvent.decision_authority),
+                selectinload(Company.events).selectinload(CompanyEvent.document_authority),
+                selectinload(Company.events).selectinload(CompanyEvent.foundation),
                 selectinload(Company.gias_accreditation),
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.author),
                 selectinload(Company.gias_locked_suppliers).selectinload(LockedSupplier.base_incl),
@@ -881,6 +885,28 @@ class CompanyCRUD:
             for row in bankrot_rows
         ]
 
+        egr_events = [
+            {
+                "event_record_id": row.event_record_id,
+                "event_type": row.event_type.name if row.event_type else None,
+                "event_date": row.event_date.isoformat() if row.event_date else None,
+                "cancel_date": row.cancel_date.isoformat() if row.cancel_date else None,
+                "document_date": row.document_date.isoformat() if row.document_date else None,
+                "deadline_date": row.deadline_date.isoformat() if row.deadline_date else None,
+                "suspension_end_date": row.suspension_end_date.isoformat() if row.suspension_end_date else None,
+                "document_number": row.document_number,
+                "decision_authority": row.decision_authority.name if row.decision_authority else None,
+                "document_authority": row.document_authority.name if row.document_authority else None,
+                "foundation": row.foundation.name if row.foundation else None,
+                "notes": row.notes,
+            }
+            for row in sorted(
+                company.events,
+                key=lambda item: (item.event_date is not None, item.event_date or datetime.min.date()),
+                reverse=True,
+            )
+        ]
+
         # Public, dated evidence only. These rows must not be presented as an
         # authoritative current director because the source has no UNP and is
         # linked solely by an unambiguous normalized organization name.
@@ -963,6 +989,7 @@ class CompanyCRUD:
             "inspection_plan_records": inspection_plan_records,
             "belltpp_own_certificates": belltpp_own_certificates,
             "bankrot_cases": bankrot_cases,
+            "events": egr_events,
             "leadership_observations": leadership_observations,
             "names": [
                 {
