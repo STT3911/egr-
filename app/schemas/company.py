@@ -184,6 +184,22 @@ class BankrotCaseSchema(BaseModel):
     updated_at: Optional[str] = None
 
 
+class CompanyEventSchema(BaseModel):
+    """Официальное регистрационное событие ЕГР."""
+    event_record_id: Optional[int] = None
+    event_type: Optional[str] = None
+    event_date: Optional[str] = None
+    cancel_date: Optional[str] = None
+    document_date: Optional[str] = None
+    deadline_date: Optional[str] = None
+    suspension_end_date: Optional[str] = None
+    document_number: Optional[str] = None
+    decision_authority: Optional[str] = None
+    document_authority: Optional[str] = None
+    foundation: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class BankrotCaseDatasetSchema(BaseModel):
     dataset_type: str
     endpoint: str
@@ -289,6 +305,7 @@ class CompanyProfileResponse(BaseModel):
     inspection_plan_records: List[CompanyInspectionPlanRecordSchema] = []
     belltpp_own_certificates: List[CompanyBeltppOwnCertificateSchema] = []
     bankrot_cases: List[BankrotCaseSchema] = []
+    events: List[CompanyEventSchema] = []
 
     class Config:
         from_attributes = True

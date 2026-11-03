@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 
 const Index = lazy(() => import("./pages/Index"));
 const Company = lazy(() => import("./pages/Company"));
+const CompanyEvents = lazy(() => import("./pages/CompanyEvents"));
 const References = lazy(() => import("./pages/References"));
 const ReferenceDetail = lazy(() => import("./pages/ReferenceDetail"));
 const CompanyRawData = lazy(() => import("./pages/CompanyRawData"));
@@ -62,6 +63,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
             <Route path="/company/:unp" element={<Company />} />
+            <Route path="/company/:unp/events" element={<CompanyEvents />} />
             <Route path="/company/:unp/raw" element={<CompanyRawData />} />
             <Route path="/company/:unp/compare" element={<CompanyCompare />} />
             <Route path="/company/:unp/relations" element={<CompanyRelations />} />
