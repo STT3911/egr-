@@ -242,6 +242,8 @@ def main() -> int:
     downloaded = 0
     active_court_id = court_ids[0]
     active_page = 1
+    deferred_failure = None
+    consecutive_blank_pages = 0
 
     try:
         with CourtJudgmentClient(
@@ -269,6 +271,7 @@ def main() -> int:
 
                 if not total_pages:
                     first_records, total_pages = client.fetch_page(filters, 1)
+                    consecutive_blank_pages = 0
                     totals[str(filters.court)] = total_pages
                     fetched += len(first_records)
                     if 1 not in completed:
@@ -297,7 +300,36 @@ def main() -> int:
                     if page in completed:
                         continue
                     active_page = page
-                    records, reported_total = client.fetch_page(filters, page)
+                    try:
+                        records, reported_total = client.fetch_page(filters, page)
+                    except CourtResponseError as exc:
+                        if exc.reason != "blank_response" or page == 1:
+                            raise
+                        pending = state.setdefault("pending_pages", {}).setdefault(str(filters.court), {})
+                        previous = pending.get(str(page), {})
+                        pending[str(page)] = {
+                            "reason": exc.reason,
+                            "http_status": exc.http_status,
+                            "response_bytes": exc.response_bytes,
+                            "failed_runs": int(previous.get("failed_runs", 0)) + 1,
+                        }
+                        _save_state(state_path, state)
+                        deferred_failure = (filters.court, page, exc)
+                        consecutive_blank_pages += 1
+                        print(json.dumps({
+                            "status": "page_deferred",
+                            "court": filters.court,
+                            "page": page,
+                            "reason": exc.reason,
+                            "unique_total": len(seen),
+                            "pending_pages": sum(len(pages) for pages in state["pending_pages"].values()),
+                        }), flush=True)
+                        # Several adjacent blank pages may mean the search session
+                        # is broken. Preserve all gaps and let the controller retry.
+                        if consecutive_blank_pages >= 3:
+                            raise
+                        continue
+                    consecutive_blank_pages = 0
                     totals[str(filters.court)] = max(int(totals[str(filters.court)]), reported_total)
                     fetched += len(records)
                     written += _write_page(output, records, seen)
@@ -311,6 +343,7 @@ def main() -> int:
                                 downloaded += 1
                     completed.add(page)
                     state["completed_pages"][str(filters.court)] = sorted(completed)
+                    state.get("pending_pages", {}).get(str(filters.court), {}).pop(str(page), None)
                     _save_state(state_path, state)
                     print(
                         json.dumps(
@@ -325,6 +358,9 @@ def main() -> int:
                         ),
                         flush=True,
                     )
+            if deferred_failure is not None:
+                active_court_id, active_page, error = deferred_failure
+                raise error
     except CourtAuthenticationError as exc:
         print(str(exc), file=sys.stderr)
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)
@@ -353,7 +389,7 @@ def main() -> int:
         return 2
     except Exception as exc:
         # URLs and exception messages may contain session details; do not echo
-        # them to stderr/Telegram. Never acknowledge or skip the failed page.
+        # them to stderr/Telegram. Failed pages remain incomplete in the checkpoint.
         print(f"Court export stopped: {type(exc).__name__}; court={active_court_id}; page={active_page}",
               file=sys.stderr)
         print(f"Progress preserved in {partial_path} and {state_path}", file=sys.stderr)

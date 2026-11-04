@@ -216,14 +216,62 @@ def test_exhausted_blank_response_keeps_page_incomplete_and_reports_safe_metadat
     monkeypatch.setattr(sys, "argv", args + ["--notify-telegram"])
     assert exporter.main() == 1
     state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
-    assert state["completed_pages"] == {"151": [1]}
+    assert state["completed_pages"] == {"151": [1, 3]}
+    assert state["pending_pages"]["151"]["2"]["reason"] == "blank_response"
+    assert not list(tmp_path.glob("*.jsonl"))
     assert alerts == [{"court_id": 151, "type_proc": 14, "page": 2,
-                       "unique_total": 1, "error_type": "CourtResponseError",
-                       "pages_completed": 1, "pages_total": 3,
-                       "current_pages_completed": 1, "current_pages_total": 3,
+                       "unique_total": 2, "error_type": "CourtResponseError",
+                       "pages_completed": 2, "pages_total": 3,
+                       "current_pages_completed": 2, "current_pages_total": 3,
                        "reason": "blank_response", "http_status": 200,
                        "response_bytes": 2, "attempts": 3}]
     assert '"reason": "blank_response"' in capsys.readouterr().err
+    client.calls.clear()
+    monkeypatch.setattr(client, "fetch_page", original)
+    assert exporter.main() == 0
+    assert client.calls == [2]
+    rows = [json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text().splitlines()]
+    assert {row["key"] for row in rows} == {"document:1", "document:2", "document:3"}
+
+
+@pytest.mark.parametrize("reason", ["unexpected_redirect", "unrecognized_response"])
+def test_redirect_and_unknown_responses_still_stop_before_next_page(monkeypatch, tmp_path, reason):
+    client, _ = setup_run(monkeypatch, tmp_path)
+    response = requests.Response()
+    response.status_code = 302 if reason == "unexpected_redirect" else 200
+    original = client.fetch_page
+
+    def fetch(self, filters, page):
+        if page == 2:
+            raise CourtResponseError(reason, response)
+        return original(self, filters, page)
+
+    monkeypatch.setattr(client, "fetch_page", fetch)
+    assert exporter.main() == 1
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert state["completed_pages"] == {"151": [1]}
+    assert not state.get("pending_pages")
+    assert 3 not in client.calls
+
+
+def test_three_consecutive_blank_pages_stop_and_preserve_all_gaps(monkeypatch, tmp_path):
+    client, _ = setup_run(monkeypatch, tmp_path)
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b"\r\n"
+
+    def fetch(self, filters, page):
+        self.calls.append(page)
+        if page > 1:
+            raise CourtResponseError("blank_response", response)
+        return [record(page)], 8
+
+    monkeypatch.setattr(client, "fetch_page", fetch)
+    assert exporter.main() == 1
+    assert client.calls == [1, 2, 3, 4]
+    state = json.loads(next(tmp_path.glob("*.state.json")).read_text())
+    assert set(state["pending_pages"]["151"]) == {"2", "3", "4"}
+    assert state["completed_pages"] == {"151": [1]}
 
 
 def test_auth_notification_is_managed_by_controller_when_heartbeat_is_fresh(monkeypatch, tmp_path):
