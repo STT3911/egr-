@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 from typing import Optional, List, Dict, Any, Union
 from app.core.logger import get_logger
+from app.services.egr_contract import HistoryReconciliationError
 
 logger = get_logger("egr_client")
 
@@ -222,6 +223,10 @@ class EGRClient(BaseClient):
             variants = {json.dumps(row, sort_keys=True, ensure_ascii=False) for row in base}
             if len(variants) == 1:
                 base = base[0]
+            elif all(str(row.get("ngrn")) == str(unp) for row in base):
+                raise HistoryReconciliationError(
+                    f"Conflicting EGR base cards for UNP {unp}"
+                )
         if not isinstance(base, dict) or str(base.get("ngrn")) != str(unp):
             raise ValueError(f"Invalid EGR base info for UNP {unp}")
         entity_type = (base.get("nsi00211") or {}).get("nkvob")
