@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.services.egr_client import EGRClient
+from app.services.egr_contract import HistoryReconciliationError
 
 
 UNP = 791462139
@@ -55,14 +56,23 @@ def test_existing_single_card_contract_is_unchanged(payload):
 @pytest.mark.parametrize("payload", [
     [], None, {}, [None], [BASE, None], [BASE, []],
     [BASE, {**BASE, "ngrn": UNP + 1}],
-    [BASE, {**BASE, "dfrom": "2026-10-13T21:00:00.000+00:00"}],
-    [BASE, {**BASE, "nsi00219": {"nksost": 2}}],
-    [BASE, {**BASE, "nsi00211": {"nkvob": True}}],
-    [BASE, {**BASE, "nsi00211": {"nkvob": 1.0}}],
     [{**BASE, "ngrn": UNP + 1}] * 15,
 ])
-def test_invalid_foreign_or_differing_cards_are_not_accepted_by_picking_first(payload):
-    with pytest.raises(ValueError, match="Invalid EGR base info"):
+def test_invalid_or_foreign_cards_are_rejected(payload):
+    with pytest.raises(ValueError, match="Invalid EGR base info") as error:
+        fetch(payload)
+    assert not isinstance(error.value, HistoryReconciliationError)
+
+
+@pytest.mark.parametrize("payload", [
+    [BASE, {**BASE, "dfrom": "2026-10-13T21:00:00.000+00:00"}],
+    [BASE, {**BASE, "nsi00219": {"nksost": 2}}],
+    [BASE, {**BASE, "nsi00211": {"nkvob": 2}}],
+    [BASE, {**BASE, "nsi00211": {"nkvob": True}}],
+    [BASE, {**BASE, "nsi00211": {"nkvob": 1.0}}],
+])
+def test_differing_cards_for_the_same_unp_are_reconciliation_conflicts(payload):
+    with pytest.raises(HistoryReconciliationError, match="Conflicting EGR base cards"):
         fetch(payload)
 
 
