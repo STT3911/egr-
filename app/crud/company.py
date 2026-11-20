@@ -34,6 +34,7 @@ import logging
 from app.utils.search_normalizer import normalize_company_name
 from app.services.contact_parser import parse_contacts
 from app.services.company_contacts import is_current_contact_period
+from app.services.company_address_presentation import profile_addresses
 from app.services.egr_contract import HistoryReconciliationError
 
 logger = logging.getLogger(__name__)
@@ -1001,17 +1002,7 @@ class CompanyCRUD:
                 }
                 for n in company.names_history
             ],
-            "addresses": [
-                {
-                    "full_address": a.full_address,
-                    "postal_code": a.postal_code,
-                    "region": a.region,
-                    "district": a.district,
-                    "valid_from": a.valid_from.isoformat() if a.valid_from else None,
-                    "valid_to": a.valid_to.isoformat() if a.valid_to else None,
-                }
-                for a in company.addresses_history
-            ],
+            "addresses": profile_addresses(company.addresses_history, pl),
             "ved": [
                 {
                     "ved_code": v.ved_code,

@@ -666,8 +666,8 @@ async def get_company_profile(
     try:
         unp = int(identifier)
         # v9 excludes expired/future EGR contacts from the public profile.
-        # v10 adds the normalized company event feed to the cached profile.
-        cache_key = f"company_profile_v10:{unp}"
+        # v11 presents saved source addresses even when EGR history is absent.
+        cache_key = f"company_profile_v11:{unp}"
 
         if not force_refresh and not db_only:
             aggregator = AggregatorService()
@@ -1212,6 +1212,8 @@ async def get_company_public(
         place_location_address = place_location.address if place_location else None
         place_location_lat = place_location.lat if place_location else None
         place_location_lon = place_location.lon if place_location else None
+        from app.services.company_address_presentation import profile_addresses
+        addresses = profile_addresses([current_address] if current_address else [], place_location)
 
         # Статус
         status_name = None
@@ -1235,16 +1237,7 @@ async def get_company_public(
             "latitude": place_location_lat,
             "longitude": place_location_lon,
             "names": [],  # история скрыта
-            "addresses": [
-                {
-                    "full_address": current_address.full_address,
-                    "postal_code": current_address.postal_code,
-                    "region": current_address.region,
-                    "district": current_address.district,
-                    "valid_from": current_address.valid_from.isoformat() if current_address.valid_from else None,
-                    "valid_to": None,
-                }
-            ] if current_address else [],
+            "addresses": [{**address, "valid_to": None} for address in addresses],
             "ved": [
                 {
                     "ved_code": v.ved_code,

@@ -21,6 +21,7 @@ class CompanyAddressSchema(BaseModel):
     district: Optional[str] = None
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+    source: Optional[str] = None
 
 
 class CompanyVEDSchema(BaseModel):
