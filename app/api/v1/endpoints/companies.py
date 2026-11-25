@@ -1,5 +1,6 @@
 """Company endpoints"""
 import httpx
+from datetime import date
 from fastapi import APIRouter, HTTPException, Query, Path, Depends
 from fastapi.responses import Response
 from typing import Optional
@@ -14,6 +15,7 @@ from app.schemas.nalog_debt import CompanyNalogDebtResponse, NalogDebtRecordResp
 from app.crud.company import CompanyCRUD
 from app.services.aggregator import AggregatorService
 from app.services.company_report import build_company_report
+from app.services.company_timeline import EventSource, TimelinePage, company_timeline
 from app.services.grp_discovery import discover_company_from_grp
 from app.core.config import settings
 from app.services.egr_client import EGRClient, MobileEGRClient
@@ -745,6 +747,29 @@ async def get_company_profile(
     except Exception as e:
         logger.error(f"Error getting company profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{identifier}/events", response_model=TimelinePage)
+def get_company_events(
+    identifier: str = Path(..., pattern=r"^[0-9]{9}$"),
+    source: EventSource | None = Query(None),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    cursor: str | None = Query(None, max_length=160),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    try:
+        result = company_timeline(
+            db, int(identifier), source=source, date_from=date_from, date_to=date_to,
+            cursor=cursor, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Компания {identifier} не найдена")
+    return result
 
 
 @router.get("/{identifier}/report.xlsx")

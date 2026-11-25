@@ -51,8 +51,8 @@ def _is_public_api_route(request: Request) -> bool:
         if suffix.endswith("/related"):
             unp = suffix.removesuffix("/related").strip("/")
             return bool(unp.isdigit() and len(unp) == 9)
-        if suffix.endswith("/risk"):
-            unp = suffix.removesuffix("/risk").strip("/")
+        if suffix.endswith(("/risk", "/events")):
+            unp = suffix.rsplit("/", 1)[0].strip("/")
             return bool(unp.isdigit() and len(unp) == 9)
 
     grp_prefix = "/api/v1/grp/"
