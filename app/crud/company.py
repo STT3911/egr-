@@ -47,6 +47,8 @@ _REF_TABLE_NAMES = (
     "ref_liquidation_methods",
 )
 
+_AUTHORITY_PLACEHOLDER = r"^([0-9]+|Орган [0-9]+|Неизвестный орган|Реорганизованный орган( \(id [0-9]+\))?)?$"
+
 
 class CompanyCRUD:
     """CRUD operations for Company entity"""
@@ -462,6 +464,16 @@ class CompanyCRUD:
             for table, ref_id, name in entry.get("_references", []):
                 if table not in ("ref_events", "ref_authorities", "ref_foundations"):
                     raise ValueError("Unknown EGR reference table")
+                if table == "ref_authorities":
+                    # Company imports can create a placeholder before the event
+                    # payload provides the official name for the same ID.
+                    self.db.execute(text(
+                        "INSERT INTO ref_authorities (id, name) VALUES (:id, :name) "
+                        "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name "
+                        "WHERE btrim(ref_authorities.name) ~ :placeholder "
+                        "AND btrim(EXCLUDED.name) !~ :placeholder"
+                    ), {"id": ref_id, "name": name, "placeholder": _AUTHORITY_PLACEHOLDER})
+                    continue
                 self.db.execute(text(
                     f"INSERT INTO {table} (id, name) VALUES (:id, :name) ON CONFLICT (id) DO NOTHING"
                 ), {"id": ref_id, "name": name})
