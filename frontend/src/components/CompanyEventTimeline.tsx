@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Landmark } from "lucide-react";
 import { Link } from "react-router-dom";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCompanyEvents, type CompanyEventSource, type CompanyTimelineEvent } from "@/lib/api";
 
@@ -52,7 +54,10 @@ export function CompanyEventTimeline({ unp, items, preview, empty = "Событ�
                     <p key={index} className="mt-1 whitespace-pre-line break-words text-sm text-muted-foreground">{detail}</p>
                   ))}
                   <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                    <span className="font-medium text-muted-foreground">{eventSources[item.source]}</span>
+                    <Badge variant="outline" className="gap-1.5 border-primary/30 bg-primary/10">
+                      {item.source === "egr" && <Landmark className="h-3.5 w-3.5 text-primary" aria-hidden="true" />}
+                      {eventSources[item.source]}
+                    </Badge>
                     {item.contract_id && (
                       <Link to={`/contracts/${item.contract_id}?fromUnp=${unp}`} className="font-medium text-primary underline-offset-4 hover:underline">
                         Открыть договор
