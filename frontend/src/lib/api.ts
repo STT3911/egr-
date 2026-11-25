@@ -514,6 +514,29 @@ export const getCompanyProfile = async (unp: string) => {
   return request<CompanyProfile>(`/api/v1/companies/${encodeURIComponent(unp)}`);
 };
 
+export type CompanyEventSource = "egr" | "mart" | "license" | "inspection" | "bankrot" | "gias" | "belltpp" | "sez";
+
+export type CompanyTimelineEvent = {
+  id: string;
+  source: CompanyEventSource;
+  date: string | null;
+  title: string;
+  details: string[];
+  contract_id: string | null;
+};
+
+export type CompanyTimelinePage = {
+  company_name: string | null;
+  items: CompanyTimelineEvent[];
+  next_cursor: string | null;
+};
+
+export const getCompanyEvents = (
+  unp: string,
+  params: { limit: number; source?: string; date_from?: string; date_to?: string; cursor?: string },
+  signal?: AbortSignal,
+) => request<CompanyTimelinePage>(`/api/v1/companies/${encodeURIComponent(unp)}/events?${toQuery(params)}`, { signal });
+
 export const getGiasContract = async (contractId: string) => {
   return request<GiasContractDetail>(
     `/api/v1/gias/contracts/${encodeURIComponent(contractId)}`

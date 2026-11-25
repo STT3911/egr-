@@ -6,7 +6,7 @@ import { CompanyMap } from "@/components/CompanyMap";
 import { CompanyContacts } from "@/components/CompanyContacts";
 import { CompanyDossierOverview } from "@/components/CompanyDossierOverview";
 import { CompanyDossierSectionNav } from "@/components/CompanyDossierSectionNav";
-import { CompanyEventTimeline } from "@/components/CompanyEventTimeline";
+import { CompanyEventPreview } from "@/components/CompanyEventTimeline";
 import { BankrotDataView } from "@/components/bankrot/BankrotDataView";
 import { GiasContractsSection } from "@/components/gias/GiasContractsSection";
 import { GiasBankAccountsSection } from "@/components/gias/GiasBankAccountsSection";
@@ -747,7 +747,7 @@ const Company = () => {
               <CompanyDossierOverview profile={profile} risk={risk} taxDebt={taxDebtData} />
             </SectionCard>
             <SectionCard>
-              <CompanyEventTimeline profile={profile} />
+              <CompanyEventPreview unp={String(profile.unp)} />
             </SectionCard>
             {businessPulse && (() => {
               const toneClasses: Record<PulseTone, string> = {
