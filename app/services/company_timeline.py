@@ -105,7 +105,7 @@ EVENTS = text("""
         FROM names n WHERE NOT EXISTS (SELECT 1 FROM linked e WHERE e.name_id = n.id)
         UNION ALL
         SELECT 'egr:ved:' || CAST(id AS text), 'egr', valid_from, 'day', 'Начало действия вида деятельности',
-               ARRAY[concat_ws(' — ', ved_code, ved_name)], NULL
+               ARRAY[ved_name], NULL
         FROM egr_company_ved_history
         WHERE company_id = :company_id AND valid_from IS NOT NULL AND CAST(:source AS text) IN ('all', 'egr')
         UNION ALL
