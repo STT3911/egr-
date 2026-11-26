@@ -21,10 +21,14 @@ describe("Лента событий", () => {
       { id: "month", source: "inspection", date: "2026-10", title: "Плановая проверка", details: ["Контролирующий орган"], contract_id: null },
       { id: "known", source: "gias", date: "2026-08-10", title: "Договор ГИАС", details: ["Масло моторное"], contract_id: "test-id" },
       { id: "unknown", source: "egr", date: null, title: "Регистрация", details: [], contract_id: null },
+      { id: "pvt", source: "pvt", date: null, title: "Запись в реестре резидентов", details: [], contract_id: null, source_url: "https://www.park.by/residents/infuberi/" },
     ]} /></MemoryRouter>);
     expect(screen.getByText("10.2026").getAttribute("datetime")).toBe("2026-10");
     expect(screen.getByText("10.08.2026")).toBeTruthy();
     expect(screen.getByText("Дата не указана")).toBeTruthy();
+    expect(screen.getByText("ПВТ")).toBeTruthy();
+    expect(screen.getByText("Дата вступления не указана")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Открыть источник" }).getAttribute("href")).toBe("https://www.park.by/residents/infuberi/");
     expect(screen.getByRole("link", { name: "Открыть договор" }).getAttribute("href")).toBe("/contracts/test-id?fromUnp=193879557");
     expect(screen.getByRole("link", { name: "Все события" }).getAttribute("href")).toBe("/company/193879557/events");
   });

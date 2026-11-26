@@ -15,6 +15,7 @@ export const eventSources: Record<CompanyEventSource, string> = {
   gias: "ГИАС",
   belltpp: "БелТПП",
   sez: "ЕАЭС",
+  pvt: "ПВТ",
 };
 
 function formatEventDate(date: string) {
@@ -48,7 +49,11 @@ export function CompanyEventTimeline({ unp, items, preview, empty = "Событ�
                       <time dateTime={item.date} className="shrink-0 text-sm tabular-nums text-muted-foreground">
                         {formatEventDate(item.date)}
                       </time>
-                    ) : <span className="shrink-0 text-sm text-muted-foreground">Дата не указана</span>}
+                    ) : (
+                      <span className="shrink-0 text-sm text-muted-foreground">
+                        {item.source === "pvt" ? "Дата вступления не указана" : "Дата не указана"}
+                      </span>
+                    )}
                   </div>
                   {item.details.map((detail, index) => (
                     <p key={index} className="mt-1 whitespace-pre-line break-words text-sm text-muted-foreground">{detail}</p>
@@ -62,6 +67,11 @@ export function CompanyEventTimeline({ unp, items, preview, empty = "Событ�
                       <Link to={`/contracts/${item.contract_id}?fromUnp=${unp}`} className="font-medium text-primary underline-offset-4 hover:underline">
                         Открыть договор
                       </Link>
+                    )}
+                    {item.source_url && (
+                      <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
+                        Открыть источник
+                      </a>
                     )}
                   </div>
                 </div>
