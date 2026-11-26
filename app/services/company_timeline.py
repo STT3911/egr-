@@ -62,6 +62,12 @@ EVENTS = text("""
         FROM egr_company_names_history
         WHERE company_id = :company_id AND CAST(:source AS text) IN ('all', 'egr')
           AND valid_from IS NOT NULL AND :company_source = 'egr'
+    ), activities AS (
+        SELECT id, valid_from, valid_to, nullif(btrim(ved_code), '') AS code,
+               nullif(btrim(ved_name), '') AS name,
+               count(*) OVER (PARTITION BY valid_from) AS same_day
+        FROM egr_company_ved_history
+        WHERE company_id = :company_id AND valid_from IS NOT NULL AND CAST(:source AS text) IN ('all', 'egr')
     ), linked AS (
         SELECT e.*, a.id AS address_id, a.full_address, n.id AS name_id, n.name AS company_name
         FROM registry_events e
@@ -116,10 +122,19 @@ EVENTS = text("""
                ARRAY[name], NULL, NULL
         FROM names n WHERE NOT EXISTS (SELECT 1 FROM linked e WHERE e.name_id = n.id)
         UNION ALL
-        SELECT 'egr:ved:' || CAST(id AS text), 'egr', valid_from, 'day', 'Начало действия вида деятельности',
-               ARRAY[ved_name], NULL, NULL
-        FROM egr_company_ved_history
-        WHERE company_id = :company_id AND valid_from IS NOT NULL AND CAST(:source AS text) IN ('all', 'egr')
+        SELECT 'egr:ved:' || CAST(a.id AS text), 'egr', a.valid_from, 'day',
+               CASE WHEN previous.code IS NOT NULL THEN 'Изменение вида деятельности'
+                    ELSE 'Начало действия вида деятельности' END,
+               CASE WHEN previous.code IS NOT NULL
+                    THEN ARRAY['Прежний вид: ' || previous.name, 'Новый вид: ' || a.name]
+                    ELSE ARRAY[a.name] END, NULL, NULL
+        FROM activities a
+        LEFT JOIN LATERAL (
+            SELECT min(p.code) AS code, min(p.name) AS name
+            FROM activities p
+            WHERE p.valid_to = a.valid_from AND p.valid_from < a.valid_from
+            HAVING count(*) = 1
+        ) previous ON a.same_day = 1 AND previous.code <> a.code
         UNION ALL
         SELECT 'mart:' || CAST(id AS text), 'mart', inclusion_date, 'day', 'Запись в торговом реестре',
                ARRAY[coalesce(object_name, object_type, legal_name), 'Регистрация №' || registration_number], NULL, NULL
