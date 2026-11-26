@@ -37,7 +37,7 @@ export const HeroSection = () => {
               className="max-w-4xl text-4xl font-extrabold leading-[0.94] text-foreground sm:text-5xl md:text-6xl xl:text-[4.5rem]"
             >
               Проверяйте бизнес
-              <span className="block text-gradient">до сделки</span>
+              <span className="block text-primary">до сделки</span>
             </motion.h1>
 
             <motion.p
