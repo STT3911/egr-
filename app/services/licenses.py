@@ -6,13 +6,13 @@ import hashlib
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import requests
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import case, cast, func, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -185,6 +185,7 @@ def normalize_license_row(row: dict[str, Any], company_id: Any | None) -> dict[s
 
     holder = row.get("licenseHolder") if isinstance(row.get("licenseHolder"), dict) else {}
     activity = row.get("reActivityType") if isinstance(row.get("reActivityType"), dict) else {}
+    source_row = {key: value for key, value in row.items() if key != "_timeline"}
     holder_unp = parse_unp(holder.get("unp"))
     now = datetime.utcnow()
 
@@ -200,8 +201,8 @@ def normalize_license_row(row: dict[str, Any], company_id: Any | None) -> dict[s
         "activity_date_start": parse_datetime(activity.get("dateStart")),
         "activity_date_end": parse_datetime(activity.get("dateEnd")),
         "activity_is_active": activity.get("isActive") if isinstance(activity.get("isActive"), bool) else None,
-        "raw_json": row,
-        "sync_hash": stable_hash(row),
+        "raw_json": source_row,
+        "sync_hash": stable_hash(source_row),
         "last_seen_at": now,
         "updated_at": now,
     }
@@ -240,13 +241,108 @@ def upsert_license_rows(db: Any, payloads: list[dict[str, Any]]) -> None:
             "activity_date_start": stmt.excluded.activity_date_start,
             "activity_date_end": stmt.excluded.activity_date_end,
             "activity_is_active": stmt.excluded.activity_is_active,
-            "raw_json": stmt.excluded.raw_json,
+            "raw_json": case(
+                (
+                    LicenseRecord.holder_unp.is_not_distinct_from(stmt.excluded.holder_unp)
+                    & LicenseRecord.generated_number.is_not_distinct_from(stmt.excluded.generated_number)
+                    & LicenseRecord.raw_json.has_key("_timeline"),
+                    stmt.excluded.raw_json.op("||")(
+                        func.jsonb_build_object("_timeline", LicenseRecord.raw_json["_timeline"])
+                    ),
+                ),
+                else_=stmt.excluded.raw_json,
+            ),
             "sync_hash": stmt.excluded.sync_hash,
             "last_seen_at": stmt.excluded.last_seen_at,
             "updated_at": func.now(),
         },
     )
     db.execute(stmt)
+
+
+def license_timeline_dates(detail: dict[str, Any]) -> dict[str, str]:
+    """Read the same business dates as the public license card."""
+    result: dict[str, str] = {}
+    decision = parse_datetime(detail.get("decisionDate"))
+    if decision:
+        result["decision_date"] = decision.date().isoformat()
+    status = detail.get("reLicenseStatus")
+    # The public card uses this field as the termination date only for status 2.
+    if detail.get("isActual") is True and isinstance(status, dict) and str(status.get("code")) == "2":
+        termination = parse_datetime(detail.get("suspensionDateStart"))
+        if termination and (not decision or termination.date() >= decision.date()):
+            result["termination_date"] = termination.date().isoformat()
+    return result
+
+
+def refresh_license_timeline_dates(
+    db: Any, *, limit: int, license_ids: list[int] | None = None, verify_tls: bool | None = None,
+) -> dict[str, int]:
+    """Enrich a bounded batch without holding a database transaction during HTTP."""
+    from app.database.models import LicenseRecord
+
+    stats = {"checked": 0, "saved": 0, "invalid": 0, "source_errors": 0}
+    if limit <= 0:
+        return stats
+
+    checked_at = LicenseRecord.raw_json["_timeline"]["checked_at"].astext
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    statement = select(LicenseRecord.license_id, LicenseRecord.holder_unp, LicenseRecord.generated_number)
+    statement = statement.where(LicenseRecord.holder_unp.is_not(None))
+    if license_ids is None:
+        statement = statement.where(or_(checked_at.is_(None), checked_at < cutoff))
+    else:
+        statement = statement.where(LicenseRecord.license_id.in_(license_ids))
+    rows = db.execute(statement.order_by(checked_at.asc().nulls_first(), LicenseRecord.id.desc()).limit(limit)).all()
+    db.commit()
+
+    url = f"{settings.LICENSE_API_URL.rstrip('/')}/getOne"
+    with requests.Session() as client:
+        for index, (license_id, unp, number) in enumerate(rows):
+            if index:
+                time.sleep(max(0.5, settings.LICENSE_PAGE_DELAY_SECONDS))
+            stamp = datetime.now(timezone.utc).isoformat()
+            try:
+                response = client.get(
+                    url, params={"Id": license_id}, headers={"Accept": "application/json"},
+                    timeout=min(settings.LICENSE_TIMEOUT_SECONDS, 10),
+                    verify=settings.LICENSE_VERIFY_TLS if verify_tls is None else verify_tls,
+                )
+                if response.status_code == 404:
+                    stats["invalid"] += 1
+                    continue
+                response.raise_for_status()
+                detail = response.json()
+            except (requests.RequestException, ValueError) as exc:
+                logger.warning("License detail source unavailable: %s", exc)
+                stats["source_errors"] += 1
+                break
+
+            stats["checked"] += 1
+            holder = detail.get("licenseHolder") if isinstance(detail, dict) else None
+            if (
+                not isinstance(holder, dict)
+                or str(detail.get("id")) != str(license_id)
+                or parse_unp(holder.get("unp")) != unp
+                or clean_text(detail.get("generatedNumber")) != number
+            ):
+                stats["invalid"] += 1
+                continue
+
+            dates = {**license_timeline_dates(detail), "checked_at": stamp}
+            result = db.execute(
+                update(LicenseRecord)
+                .where(
+                    LicenseRecord.license_id == license_id,
+                    LicenseRecord.holder_unp == unp,
+                    LicenseRecord.generated_number.is_not_distinct_from(number),
+                    or_(checked_at.is_(None), checked_at <= stamp),
+                )
+                .values(raw_json=LicenseRecord.raw_json.op("||")(cast({"_timeline": dates}, JSONB)))
+            )
+            stats["saved"] += result.rowcount
+            db.commit()
+    return stats
 
 
 def _emit_license_event(db: Any, payload: dict[str, Any]) -> None:
@@ -396,4 +492,8 @@ def check_license_api_changes(
         page = next_page
         if stats["pages_checked"] < budget and settings.LICENSE_PAGE_DELAY_SECONDS > 0:
             time.sleep(settings.LICENSE_PAGE_DELAY_SECONDS)
+    if scheduled:
+        stats["timeline_details"] = refresh_license_timeline_dates(
+            db, limit=settings.LICENSE_TIMELINE_DETAILS_PER_RUN, verify_tls=verify_tls,
+        )
     return stats

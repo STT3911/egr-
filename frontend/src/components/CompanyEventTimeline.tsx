@@ -13,6 +13,7 @@ export const eventSources: Record<CompanyEventSource, string> = {
   inspection: "Плановые проверки",
   bankrot: "Банкротство",
   gias: "ГИАС",
+  gias_locked: "Реестр недобросовестных поставщиков",
   belltpp: "БелТПП",
   sez: "ЕАЭС",
   pvt: "ПВТ",
