@@ -266,6 +266,7 @@ class Settings(BaseSettings):
     LICENSE_SCHEDULE_ENABLED: bool = False
     LICENSE_SCHEDULE_SECONDS: int = 86400
     LICENSE_CHECK_PAGES: int = 10
+    LICENSE_TIMELINE_DETAILS_PER_RUN: int = 300
 
     # Геокодинг адресов через OSM/Nominatim (координаты можно хранить, в отличие
     # от Яндекса). Nominatim требует валидный User-Agent с контактом и лимит 1 req/sec.

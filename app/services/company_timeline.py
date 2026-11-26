@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-EventSource = Literal['egr', 'mart', 'license', 'inspection', 'bankrot', 'gias', 'belltpp', 'sez', 'pvt']
+EventSource = Literal['egr', 'mart', 'license', 'inspection', 'bankrot', 'gias', 'gias_locked', 'belltpp', 'sez', 'pvt']
 
 
 class TimelineEvent(BaseModel):
@@ -92,6 +92,12 @@ EVENTS = text("""
                       THEN make_date(CAST(parts[1] AS int), coalesce(CAST(parts[2] AS int), 1), 1)
                       END AS month_start, coalesce(CAST(parts[3] AS int), 1) AS day_number
         FROM sez_parts s
+    ), license_dates AS (
+        SELECT license_id, generated_number, activity_type_name,
+               CAST(raw_json -> '_timeline' ->> 'decision_date' AS date) AS decision_date,
+               CAST(raw_json -> '_timeline' ->> 'termination_date' AS date) AS termination_date,
+               'https://license.gov.by/onelicense/' || CAST(license_id AS text) AS profile_url
+        FROM license_records WHERE holder_unp = :unp AND CAST(:source AS text) IN ('all', 'license')
     ), events AS (
         SELECT 'egr:event:' || coalesce(CAST(event_record_id AS text), CAST(id AS text)) AS id,
                'egr' AS source, event_date AS event_day, 'day' AS precision,
@@ -140,9 +146,16 @@ EVENTS = text("""
                ARRAY[coalesce(object_name, object_type, legal_name), 'Регистрация №' || registration_number], NULL, NULL
         FROM trade_registry_records WHERE unp = :unp AND CAST(:source AS text) IN ('all', 'mart')
         UNION ALL
-        SELECT 'license:' || CAST(license_id AS text), 'license', CAST(activity_date_start AS date),
-               'day', 'Начало действия лицензии', ARRAY[generated_number, activity_type_name], NULL, NULL
-        FROM license_records WHERE holder_unp = :unp AND CAST(:source AS text) IN ('all', 'license')
+        SELECT 'license:' || CAST(license_id AS text), 'license', decision_date, 'day',
+               CASE WHEN decision_date IS NULL THEN 'Запись в реестре лицензий'
+                    ELSE 'Решение о предоставлении лицензии' END,
+               ARRAY[generated_number, activity_type_name], NULL, profile_url
+        FROM license_dates
+        UNION ALL
+        SELECT 'license:' || CAST(license_id AS text) || ':' || 'terminated', 'license', termination_date, 'day',
+               'Прекращение действия лицензии', ARRAY[generated_number, activity_type_name], NULL, profile_url
+        FROM license_dates
+        WHERE termination_date <= CAST(now() AT TIME ZONE 'Europe/Minsk' AS date)
         UNION ALL
         SELECT 'inspection:' || CAST(id AS text), 'inspection',
                CASE WHEN plan_year BETWEEN 1 AND 9999 THEN make_date(plan_year,
@@ -164,6 +177,23 @@ EVENTS = text("""
           AND (provider_unp = :unp OR customer_unp = :unp
                OR (provider_unp IS NULL AND provider_company_id = :company_id)
                OR (customer_unp IS NULL AND customer_company_id = :company_id))
+        UNION ALL
+        SELECT 'gias_locked:' || CAST(s.uuid AS text) || ':' || e.kind, 'gias_locked', d.event_day,
+               'day', e.title,
+               ARRAY['Запись №' || nullif(btrim(s.reg_number), ''), 'Основание: ' || r.text], NULL, NULL
+        FROM locked_suppliers s
+        CROSS JOIN LATERAL (VALUES
+            ('include', s.add_date, 'Включение в реестр недобросовестных поставщиков', s.base_incl_id),
+            ('exclude', s.del_date, 'Исключение из реестра недобросовестных поставщиков', s.base_excl_id)
+        ) e(kind, event_at, title, reason_id)
+        CROSS JOIN LATERAL (
+            SELECT CAST(e.event_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Minsk' AS date) AS event_day
+        ) d
+        LEFT JOIN locked_supplier_reasons r ON r.id = e.reason_id
+        WHERE CAST(:source AS text) IN ('all', 'gias_locked')
+          AND (s.company_id = :company_id OR (s.company_id IS NULL AND s.provider_unp = CAST(:unp AS text)))
+          AND d.event_day <= CAST(now() AT TIME ZONE 'Europe/Minsk' AS date)
+          AND (e.kind = 'include' OR s.add_date IS NULL OR s.del_date >= s.add_date)
         UNION ALL
         SELECT 'belltpp:' || CAST(id AS text), 'belltpp', issue_date, 'day', 'Сертификат БелТПП',
                ARRAY['Сертификат №' || cert_number], NULL, NULL
