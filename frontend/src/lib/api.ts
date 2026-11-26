@@ -514,7 +514,7 @@ export const getCompanyProfile = async (unp: string) => {
   return request<CompanyProfile>(`/api/v1/companies/${encodeURIComponent(unp)}`);
 };
 
-export type CompanyEventSource = "egr" | "mart" | "license" | "inspection" | "bankrot" | "gias" | "belltpp" | "sez";
+export type CompanyEventSource = "egr" | "mart" | "license" | "inspection" | "bankrot" | "gias" | "belltpp" | "sez" | "pvt";
 
 export type CompanyTimelineEvent = {
   id: string;
@@ -523,6 +523,7 @@ export type CompanyTimelineEvent = {
   title: string;
   details: string[];
   contract_id: string | null;
+  source_url?: string | null;
 };
 
 export type CompanyTimelinePage = {

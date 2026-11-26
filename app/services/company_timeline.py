@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-EventSource = Literal['egr', 'mart', 'license', 'inspection', 'bankrot', 'gias', 'belltpp', 'sez']
+EventSource = Literal['egr', 'mart', 'license', 'inspection', 'bankrot', 'gias', 'belltpp', 'sez', 'pvt']
 
 
 class TimelineEvent(BaseModel):
@@ -17,6 +17,7 @@ class TimelineEvent(BaseModel):
     title: str
     details: list[str]
     contract_id: str | None = None
+    source_url: str | None = None
 
 
 class TimelinePage(BaseModel):
@@ -26,7 +27,7 @@ class TimelinePage(BaseModel):
 
 
 COMPANY = text("""
-    SELECT c.id, coalesce(n.short_name_ru, n.full_name_ru) AS name
+    SELECT c.id, c.source, coalesce(n.short_name_ru, n.full_name_ru) AS name
     FROM egr_companies c
     LEFT JOIN LATERAL (
         SELECT nullif(btrim(short_name_ru), '') AS short_name_ru,
@@ -51,7 +52,7 @@ EVENTS = text("""
         LEFT JOIN ref_authorities a ON a.id = e.decision_authority_id
         WHERE e.company_id = :company_id AND CAST(:source AS text) IN ('all', 'egr')
     ), addresses AS (
-        SELECT id, valid_from, full_address, count(*) OVER (PARTITION BY valid_from) AS same_day
+        SELECT id, valid_from, valid_to, full_address, count(*) OVER (PARTITION BY valid_from) AS same_day
         FROM egr_company_addresses_history
         WHERE company_id = :company_id AND CAST(:source AS text) IN ('all', 'egr')
           AND valid_from IS NOT NULL AND nullif(btrim(full_address), '') IS NOT NULL
@@ -60,7 +61,7 @@ EVENTS = text("""
                count(*) OVER (PARTITION BY valid_from) AS same_day
         FROM egr_company_names_history
         WHERE company_id = :company_id AND CAST(:source AS text) IN ('all', 'egr')
-          AND valid_from IS NOT NULL
+          AND valid_from IS NOT NULL AND :company_source = 'egr'
     ), linked AS (
         SELECT e.*, a.id AS address_id, a.full_address, n.id AS name_id, n.name AS company_name
         FROM registry_events e
@@ -93,45 +94,56 @@ EVENTS = text("""
                      CASE WHEN authority_name !~ '^(Орган [0-9]+|[0-9]+|Неизвестный орган)$'
                           THEN authority_name END,
                      notes, 'Наименование: ' || company_name, 'Адрес: ' || full_address] AS details,
-               CAST(NULL AS text) AS contract_id
+               CAST(NULL AS text) AS contract_id, CAST(NULL AS text) AS source_url
         FROM linked
         UNION ALL
-        SELECT 'egr:address:' || CAST(id AS text), 'egr', valid_from, 'day', 'Начало действия адреса',
-               ARRAY[full_address], NULL
-        FROM addresses a WHERE NOT EXISTS (SELECT 1 FROM linked e WHERE e.address_id = a.id)
+        SELECT 'egr:address:' || CAST(a.id AS text), 'egr', a.valid_from, 'day',
+               CASE WHEN previous.full_address IS NOT NULL THEN 'Смена юридического адреса'
+                    ELSE 'Начало действия адреса' END,
+               CASE WHEN previous.full_address IS NOT NULL
+                    THEN ARRAY['Прежний адрес: ' || previous.full_address, 'Новый адрес: ' || a.full_address]
+                    ELSE ARRAY[a.full_address] END, NULL, NULL
+        FROM addresses a
+        LEFT JOIN LATERAL (
+            SELECT min(p.full_address) AS full_address
+            FROM addresses p
+            WHERE p.valid_to = a.valid_from AND p.valid_from < a.valid_from
+            HAVING count(*) = 1
+        ) previous ON a.same_day = 1 AND lower(btrim(previous.full_address)) <> lower(btrim(a.full_address))
+        WHERE NOT EXISTS (SELECT 1 FROM linked e WHERE e.address_id = a.id)
         UNION ALL
         SELECT 'egr:name:' || CAST(id AS text), 'egr', valid_from, 'day', 'Начало действия наименования',
-               ARRAY[name], NULL
+               ARRAY[name], NULL, NULL
         FROM names n WHERE NOT EXISTS (SELECT 1 FROM linked e WHERE e.name_id = n.id)
         UNION ALL
         SELECT 'egr:ved:' || CAST(id AS text), 'egr', valid_from, 'day', 'Начало действия вида деятельности',
-               ARRAY[ved_name], NULL
+               ARRAY[ved_name], NULL, NULL
         FROM egr_company_ved_history
         WHERE company_id = :company_id AND valid_from IS NOT NULL AND CAST(:source AS text) IN ('all', 'egr')
         UNION ALL
         SELECT 'mart:' || CAST(id AS text), 'mart', inclusion_date, 'day', 'Запись в торговом реестре',
-               ARRAY[coalesce(object_name, object_type, legal_name), 'Регистрация №' || registration_number], NULL
+               ARRAY[coalesce(object_name, object_type, legal_name), 'Регистрация №' || registration_number], NULL, NULL
         FROM trade_registry_records WHERE unp = :unp AND CAST(:source AS text) IN ('all', 'mart')
         UNION ALL
         SELECT 'license:' || CAST(license_id AS text), 'license', CAST(activity_date_start AS date),
-               'day', 'Начало действия лицензии', ARRAY[generated_number, activity_type_name], NULL
+               'day', 'Начало действия лицензии', ARRAY[generated_number, activity_type_name], NULL, NULL
         FROM license_records WHERE holder_unp = :unp AND CAST(:source AS text) IN ('all', 'license')
         UNION ALL
         SELECT 'inspection:' || CAST(id AS text), 'inspection',
                CASE WHEN plan_year BETWEEN 1 AND 9999 THEN make_date(plan_year,
                    CASE WHEN start_month_no BETWEEN 1 AND 12 THEN start_month_no ELSE 1 END, 1) END,
                CASE WHEN start_month_no BETWEEN 1 AND 12 THEN 'month' ELSE 'year' END,
-               'Плановая проверка', ARRAY[plan_title, controller_authority], NULL
+               'Плановая проверка', ARRAY[plan_title, controller_authority], NULL, NULL
         FROM inspection_plan_records WHERE subject_unp = :unp AND CAST(:source AS text) IN ('all', 'inspection')
         UNION ALL
         SELECT 'bankrot:' || CAST(case_id AS text), 'bankrot', start_date, 'day', 'Дело о банкротстве',
-               ARRAY[number, court], NULL
+               ARRAY[number, court], NULL, NULL
         FROM bankrot_cases WHERE debtor_unp = :unp AND CAST(:source AS text) IN ('all', 'bankrot')
         UNION ALL
         SELECT 'gias:' || CAST(contract_id AS text), 'gias',
                CAST(contract_date AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Minsk' AS date),
                'day', 'Договор ГИАС',
-               ARRAY[title, 'Договор №' || coalesce(registration_number, contract_number)], CAST(contract_id AS text)
+               ARRAY[title, 'Договор №' || coalesce(registration_number, contract_number)], CAST(contract_id AS text), NULL
         FROM gias_contracts
         WHERE CAST(:source AS text) IN ('all', 'gias')
           AND (provider_unp = :unp OR customer_unp = :unp
@@ -139,7 +151,7 @@ EVENTS = text("""
                OR (customer_unp IS NULL AND customer_company_id = :company_id))
         UNION ALL
         SELECT 'belltpp:' || CAST(id AS text), 'belltpp', issue_date, 'day', 'Сертификат БелТПП',
-               ARRAY['Сертификат №' || cert_number], NULL
+               ARRAY['Сертификат №' || cert_number], NULL, NULL
         FROM belltpp_own_certificates WHERE holder_unp = :unp AND CAST(:source AS text) IN ('all', 'belltpp')
         UNION ALL
         SELECT 'sez:' || CAST(item_id AS text), 'sez',
@@ -147,8 +159,14 @@ EVENTS = text("""
                          month_start + (day_number - 1) < month_start + interval '1 month'
                     THEN month_start + (day_number - 1) END,
                CASE array_length(parts, 1) WHEN 1 THEN 'year' WHEN 2 THEN 'month' ELSE 'day' END,
-               'Запись в реестре СЭЗ', ARRAY[coalesce(sez_name, project_name, full_name)], NULL
+               'Запись в реестре СЭЗ', ARRAY[coalesce(sez_name, project_name, full_name)], NULL, NULL
         FROM sez_dates
+        UNION ALL
+        SELECT 'pvt:' || CAST(id AS text), 'pvt', NULL, 'day',
+               'Запись в реестре резидентов', ARRAY[]::text[], NULL,
+               CASE WHEN profile_url ~ '^https://(www[.])?park[.]by/residents/[A-Za-z0-9_-]+/?$'
+                    THEN profile_url END
+        FROM pvt_resident_records WHERE unp = :unp AND CAST(:source AS text) IN ('all', 'pvt')
     ), ordered AS (
         SELECT *, coalesce(event_day, DATE '0001-01-01') AS sort_day,
                CASE precision WHEN 'year' THEN event_day + interval '1 year' - interval '1 day'
@@ -156,7 +174,7 @@ EVENTS = text("""
                               ELSE event_day END AS last_day
         FROM events
     )
-    SELECT id, source, precision, event_day, sort_day, title, details, contract_id
+    SELECT id, source, precision, event_day, sort_day, title, details, contract_id, source_url
     FROM ordered
     WHERE (CAST(:date_from AS date) IS NULL OR last_day >= :date_from)
       AND (CAST(:date_to AS date) IS NULL OR event_day <= :date_to)
@@ -188,6 +206,7 @@ def company_timeline(
         return None
     rows = db.execute(EVENTS, {
         'company_id': company['id'], 'unp': unp, 'source': source or 'all',
+        'company_source': company['source'],
         'date_from': date_from, 'date_to': date_to, 'cursor_day': cursor_day,
         'cursor_id': cursor_id, 'limit': limit + 1,
     }).mappings().all()
@@ -199,7 +218,7 @@ def company_timeline(
             id=row['id'], source=row['source'],
             date=event_date.isoformat()[:date_lengths[row['precision']]] if event_date else None,
             title=row['title'], details=[part.strip() for part in row['details'] if part and part.strip()],
-            contract_id=row['contract_id'],
+            contract_id=row['contract_id'], source_url=row['source_url'],
         ))
     last = rows[limit - 1] if len(rows) > limit else None
     next_cursor = f"{last['sort_day'].isoformat()}|{last['id']}" if last else None
