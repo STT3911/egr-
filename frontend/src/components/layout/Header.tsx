@@ -71,7 +71,7 @@ export const Header = () => {
         >
           <div className="flex items-center gap-3">
             <Link to="/" className="flex min-w-0 items-center gap-3">
-              <div className="gradient-primary flex h-11 w-11 items-center justify-center rounded-2xl text-lg font-extrabold text-primary-foreground shadow-soft">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-lg font-extrabold text-primary-foreground shadow-soft">
                 T
               </div>
               <div className="truncate text-sm font-bold uppercase tracking-[0.2em] text-foreground sm:text-base">
@@ -171,7 +171,7 @@ export const Header = () => {
                   <a
                     href="#hero-search"
                     onClick={() => setIsMenuOpen(false)}
-                    className="gradient-primary rounded-2xl px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft"
+                    className="rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-soft"
                   >
                     Найти компанию
                   </a>

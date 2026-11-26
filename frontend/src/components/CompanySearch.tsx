@@ -179,6 +179,7 @@ export const CompanySearch = ({
 
           <Button
             type="submit"
+            variant={isHero ? "solid" : "default"}
             size={isHero ? "lg" : "default"}
             className={isHero ? "px-6 sm:px-8" : "px-4"}
           >
